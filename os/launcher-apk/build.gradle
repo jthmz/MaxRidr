@@ -43,9 +43,25 @@ android {
             res.srcDirs = [new File(appDir, 'res')]
             assets.srcDirs = [new File(appDir, 'assets')]
         }
-        // Protocol tests: plain JVM, run with `gradle testReleaseUnitTest`.
+        // Tests run on the build machine, no phone needed:
+        // `gradle testReleaseUnitTest`.
         test {
             java.srcDirs = [new File(appDir, 'tests')]
+        }
+    }
+
+    testOptions {
+        unitTests {
+            // Lets the screen tests start the real activity with the app's
+            // own theme, fonts and manifest.
+            includeAndroidResources = true
+            all {
+                it.maxHeapSize = '2g'
+                it.testLogging {
+                    events 'passed', 'failed', 'skipped'
+                    exceptionFormat 'full'
+                }
+            }
         }
     }
 
@@ -80,4 +96,7 @@ android {
 
 dependencies {
     testImplementation 'junit:junit:4.13.2'
+    // Runs Android code on the JVM, with real drawing, for the screen and
+    // bike-link tests.
+    testImplementation 'org.robolectric:robolectric:4.14.1'
 }

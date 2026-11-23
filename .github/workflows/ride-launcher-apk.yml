@@ -69,6 +69,13 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
+      # The screen tests run Android's own code on the build machine, which
+      # needs a ~200 MB runtime download; keep it between runs.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-runtime-sdk35-v1
+
       - name: Signing key
         env:
           RIDE_KEYSTORE_B64: ${{ secrets.RIDE_KEYSTORE_B64 }}
@@ -117,8 +124,8 @@ jobs:
           echo "RIDE_KEYSTORE=$store" >> "$GITHUB_ENV"
           echo "RIDE_KEYSTORE_PASSWORD=$pass" >> "$GITHUB_ENV"
 
-      # The protocol tests run first: a build whose controller write frames
-      # are wrong must never reach a phone.
+      # The tests run first: a build whose controller write frames are wrong,
+      # or whose screens crash when laid out, must never reach a phone.
       - name: Test and build APK
         working-directory: os/launcher-apk
         run: gradle --no-daemon testReleaseUnitTest assembleRelease -PrideVersionCode=${{ github.run_number }}
@@ -132,15 +139,22 @@ jobs:
       - name: Attach APK to draft release
         run: |
           set -euo pipefail
-          gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
-            --jq ".[] | select(.draft and .tag_name == \"$BUILD_TAG\") | .id" \
-            | while read -r id; do
-                gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
-              done
+          # Upload the new build first and remove older ones only once it is
+          # safely up, so a refused upload never leaves nothing to download.
+          # No --target: a draft has no tag to pin, and the one upload that
+          # was refused (run 11) named a commit the branch had moved past.
           gh release create "$BUILD_TAG" maxapacity-ride.apk \
-            --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
+            --repo "$GITHUB_REPOSITORY" --draft \
             --title "MAXAPACITY Ride 1.0.${{ github.run_number }} (new app)" \
             --notes "MAXAPACITY ride launcher 1.0.${{ github.run_number }} from $GITHUB_SHA. First install: adb install maxapacity-ride.apk. After that the app updates itself."
+          ids=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.draft and .tag_name == \"$BUILD_TAG\") | .id" | sort -n)
+          newest=$(echo "$ids" | tail -n 1)
+          for id in $ids; do
+            if [ "$id" != "$newest" ]; then
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+            fi
+          done
 
       # Phones follow whatever this step publishes, so it only runs for main
       # and for runs started by hand, never for work-in-progress pushes.
@@ -168,8 +182,13 @@ jobs:
             gh release upload "$OTA_TAG" maxapacity-ride.apk --clobber --repo "$GITHUB_REPOSITORY"
             gh release edit "$OTA_TAG" --repo "$GITHUB_REPOSITORY" --notes-file latest.json
           else
+            # The tag is only an anchor for the release; the manifest names the
+            # commit. If pinning it to this commit is refused, let it default.
             gh release create "$OTA_TAG" maxapacity-ride.apk \
               --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false \
+              --title "Ride launcher over-the-air update" --notes-file latest.json \
+            || gh release create "$OTA_TAG" maxapacity-ride.apk \
+              --repo "$GITHUB_REPOSITORY" --latest=false \
               --title "Ride launcher over-the-air update" --notes-file latest.json
           fi
           echo "::notice::Published 1.0.$code over the air."
