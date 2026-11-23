@@ -108,7 +108,10 @@ final class Sheet extends FrameLayout {
             row.addView(Ui.icon(c, iconData, 20, danger ? Ui.DANGER : Ui.TEXT_2));
         } else if (image != null) {
             android.widget.ImageView iv = new android.widget.ImageView(c);
-            iv.setImageDrawable(image);
+            // Its own copy: the same icon object may already be on show in the
+            // app drawer at another size, and a drawable has only one size.
+            android.graphics.drawable.Drawable.ConstantState state = image.getConstantState();
+            iv.setImageDrawable(state == null ? image : state.newDrawable(c.getResources()));
             row.addView(iv, new LinearLayout.LayoutParams(Ui.dp(c, 32), Ui.dp(c, 32)));
         }
         LinearLayout text = Ui.column(c);
