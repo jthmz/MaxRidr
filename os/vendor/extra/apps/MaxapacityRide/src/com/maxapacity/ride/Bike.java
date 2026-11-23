@@ -44,6 +44,13 @@ import java.util.Map;
  */
 final class Bike {
 
+    /** Makes the two Bluetooth links. Tests swap in a simulated bike here. */
+    interface Links {
+        BleLink make(Context c, java.util.UUID characteristic, BleLink.Listener listener);
+    }
+
+    static Links links = BleLink::new;
+
     private static Bike instance;
 
     static Bike get(Context c) {
@@ -89,7 +96,7 @@ final class Bike {
         context = c;
         prefs = Units.prefs(c);
 
-        bmsLink = new BleLink(c, BleLink.uuid(0xFFE1), new BleLink.Listener() {
+        bmsLink = links.make(c, BleLink.uuid(0xFFE1), new BleLink.Listener() {
             @Override
             public void onReady() {
                 batteryStatus = "Reading";
@@ -130,7 +137,7 @@ final class Bike {
             }
         });
 
-        controllerLink = new BleLink(c, BleLink.uuid(0xFFEC), new BleLink.Listener() {
+        controllerLink = links.make(c, BleLink.uuid(0xFFEC), new BleLink.Listener() {
             @Override
             public void onReady() {
                 controllerStatus = "Reading";
@@ -464,6 +471,11 @@ final class Bike {
     /**
      * Step 1: write the changed settings to RAM, verifying each by reading it
      * back, then watch for a fault.
+     *
+     * If any part fails, what was written is put back and the attempt counts
+     * as not having happened. If even that cannot be done (the link dropped,
+     * the wheel started turning), the values stay "on trial" so Undo can
+     * finish the job later.
      */
     void tryValues(final Map<String, Integer> changes, final TuneCallback cb) {
         String blocked = writeBlocker();
@@ -475,6 +487,20 @@ final class Bike {
             cb.done(false, "Another change is still in progress");
             return;
         }
+        // Check the whole request before sending any of it, so a bad value
+        // late in the list cannot leave the earlier ones half applied.
+        for (Map.Entry<String, Integer> e : changes.entrySet()) {
+            Fardriver.Param p = Fardriver.param(e.getKey());
+            if (p == null || e.getValue() == null) {
+                cb.done(false, "That setting is not one this app can change");
+                return;
+            }
+            int max = Math.min(p.max, ceiling(p));
+            if (e.getValue() < p.min || e.getValue() > max) {
+                cb.done(false, p.name + " is outside its safe range. Nothing was changed");
+                return;
+            }
+        }
         if (!backedUp) {
             if (!saveBackup()) {
                 cb.done(false, "A backup of the current settings could not be saved, so"
@@ -483,34 +509,47 @@ final class Bike {
             }
             backedUp = true;
         }
+        final boolean wasTrying = tuneState == TRYING;
         final List<String> order = new ArrayList<>(changes.keySet());
+        // What each setting holds right now, to put a failed attempt back
+        // exactly; and what it held before any trial began, for Undo.
+        final Map<String, Integer> prior = new LinkedHashMap<>();
+        final List<String> newlyTracked = new ArrayList<>();
         for (String key : order) {
-            Fardriver.Param p = Fardriver.param(key);
-            if (p != null && !before.containsKey(key)) before.put(key, controllerMemory.raw(p));
+            int now = controllerMemory.raw(Fardriver.param(key));
+            prior.put(key, now);
+            if (!before.containsKey(key)) {
+                before.put(key, now);
+                newlyTracked.add(key);
+            }
         }
         final int faultsBefore = controllerMemory.word(0xE3) & 0x7FFF;
         tuneState = APPLYING;
         changed();
         writeSequence(order, changes, 0, (ok, message) -> {
-            if (!ok) {
-                // Put back whatever did get written.
-                final String why = message;
-                tuneState = REVERTING;
+            if (ok) {
+                tuneState = TRYING;
                 changed();
-                writeSequence(new ArrayList<>(before.keySet()), new LinkedHashMap<>(before), 0,
-                        (ok2, m2) -> {
-                            before.clear();
-                            tuneState = TUNE_IDLE;
-                            changed();
-                            cb.done(false, why + (ok2 ? ". Nothing was changed"
-                                    : ". Switch the bike off and on to restore its settings"));
-                        });
+                cb.done(true, "Live on the bike. Not saved yet");
+                watchForFault(faultsBefore, cb);
                 return;
             }
-            tuneState = TRYING;
+            final String why = message;
+            tuneState = REVERTING;
             changed();
-            cb.done(true, "Live on the bike. Not saved yet");
-            watchForFault(faultsBefore, cb);
+            writeSequence(order, prior, 0, (ok2, m2) -> {
+                if (ok2) {
+                    for (String key : newlyTracked) before.remove(key);
+                    tuneState = wasTrying ? TRYING : TUNE_IDLE;
+                    changed();
+                    cb.done(false, why + ". Nothing was changed");
+                } else {
+                    tuneState = TRYING;
+                    changed();
+                    cb.done(false, why + ". Part of the change is live on the bike. Tap Undo"
+                            + " once it is stopped and connected, or switch the bike off and on");
+                }
+            });
         });
     }
 
@@ -522,8 +561,9 @@ final class Bike {
                 if (tuneState != TRYING) return;
                 int now = controllerMemory.word(0xE3) & 0x7FFF;
                 if ((now & ~faultsBefore) != 0) {
-                    revert((ok, m) -> cb.done(false, "The controller raised a fault after the"
-                            + " change, so it was undone"));
+                    revert((ok, m) -> cb.done(false, ok
+                            ? "The controller raised a fault after the change, so it was undone"
+                            : "The controller raised a fault after the change. " + m));
                     return;
                 }
                 if (SystemClock.elapsedRealtime() < until) main.postDelayed(this, 500);
@@ -548,20 +588,22 @@ final class Bike {
             writeSequence(order, values, index + 1, cb);
             return;
         }
+        Fardriver.Live l = controller();
+        if (l == null) {
+            cb.done(false, "The controller stopped answering");
+            return;
+        }
+        if (l.rpm != 0) {
+            cb.done(false, "The wheel started turning");
+            return;
+        }
         final byte[] frame;
         final int expected;
         try {
-            // Reverting may need to go back above a lowered ceiling, so the
-            // only ceiling enforced here is the one read from the controller.
             frame = controllerMemory.writeFrame(p, target, ceiling(p));
             expected = controllerMemory.expectedWord(p, target);
         } catch (IllegalArgumentException e) {
             cb.done(false, p.name + " is outside its safe range");
-            return;
-        }
-        Fardriver.Live l = controller();
-        if (l == null || l.rpm != 0) {
-            cb.done(false, "The wheel started turning");
             return;
         }
         controllerLink.write(frame);
@@ -608,7 +650,10 @@ final class Bike {
         tuneState = TUNE_IDLE;
     }
 
-    /** Step 3: put back the values from before the try. */
+    /**
+     * Step 3: put back the values from before the trial. If that cannot be
+     * completed the trial stays open, so it can be tried again.
+     */
     void revert(final TuneCallback cb) {
         if (tuneState != TRYING) {
             cb.done(false, "There is nothing to undo");
@@ -618,12 +663,17 @@ final class Bike {
         changed();
         final Map<String, Integer> back = new LinkedHashMap<>(before);
         writeSequence(new ArrayList<>(back.keySet()), back, 0, (ok, message) -> {
-            before.clear();
-            tuneState = TUNE_IDLE;
-            changed();
-            cb.done(ok, ok ? "Back to the saved settings"
-                    : "Could not confirm the undo. Switch the bike off and on to restore its"
-                    + " saved settings");
+            if (ok) {
+                before.clear();
+                tuneState = TUNE_IDLE;
+                changed();
+                cb.done(true, "Undone. The bike is back to how it was");
+            } else {
+                tuneState = TRYING;
+                changed();
+                cb.done(false, "Could not undo: " + message + ". Try again, or switch the bike"
+                        + " off and on to restore its saved settings");
+            }
         });
     }
 
@@ -663,7 +713,8 @@ final class Bike {
                     tuneState = TRYING;
                     changed();
                     cb.done(false, "The controller did not confirm the save. The new values"
-                            + " are still live; try Save again");
+                            + " are still live; try Save again. If it keeps happening, switch"
+                            + " the bike off and on and see whether they stayed");
                 } else {
                     main.postDelayed(this, 300);
                 }

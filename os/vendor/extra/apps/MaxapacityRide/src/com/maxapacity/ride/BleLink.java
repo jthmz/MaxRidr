@@ -32,8 +32,11 @@ import java.util.UUID;
  * address at every power-up.
  *
  * Every callback is delivered on the main thread.
+ *
+ * Not final, so tests can stand a simulated battery or controller in for the
+ * radio and exercise everything above it.
  */
-final class BleLink {
+class BleLink {
 
     interface Listener {
         /** Notifications are on; it is now safe to write. */
