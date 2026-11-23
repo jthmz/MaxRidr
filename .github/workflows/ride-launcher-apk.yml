@@ -145,18 +145,18 @@ jobs:
           # was refused (run 11) named a commit the branch had moved past.
           # ride-test.sh goes up beside the APK: it installs the app on the
           # phone plugged in and photographs every screen.
+          title="MAXAPACITY Ride 1.0.${{ github.run_number }} (new app)"
           gh release create "$BUILD_TAG" maxapacity-ride.apk os/tools/ride-test.sh \
-            --repo "$GITHUB_REPOSITORY" --draft \
-            --title "MAXAPACITY Ride 1.0.${{ github.run_number }} (new app)" \
+            --repo "$GITHUB_REPOSITORY" --draft --title "$title" \
             --notes "MAXAPACITY ride launcher 1.0.${{ github.run_number }} from $GITHUB_SHA. Download both files, plug the phone in and run: bash ~/Downloads/ride-test.sh. That installs the app and saves a picture of every screen to the Desktop. After the first install the app updates itself."
-          ids=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
-            --jq ".[] | select(.draft and .tag_name == \"$BUILD_TAG\") | .id" | sort -n)
-          newest=$(echo "$ids" | tail -n 1)
-          for id in $ids; do
-            if [ "$id" != "$newest" ]; then
-              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
-            fi
-          done
+          # Older builds are told apart by title, not by which is newest in
+          # the listing: a release just created can be missing from it for a
+          # moment, and "keep the newest listed" then kept the old one too.
+          gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.draft and .tag_name == \"$BUILD_TAG\" and .name != \"$title\") | .id" \
+            | while read -r id; do
+                gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+              done
 
       # Phones follow whatever this step publishes, so it only runs for main
       # and for runs started by hand, never for work-in-progress pushes.
