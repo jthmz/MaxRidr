@@ -109,16 +109,22 @@ final class SettingsPanel extends Panel {
         int state = Updater.state();
         boolean busy = state == Updater.CHECKING || state == Updater.DOWNLOADING
                 || state == Updater.INSTALLING;
+        final boolean token = Updater.hasToken(c);
         link(app, Icons.REFRESH_CW, "Version " + Updater.versionName(c),
                 Updater.statusLine(c),
-                state == Updater.READY ? "Install" : busy ? "" : "Check",
+                !token ? "Add token" : state == Updater.READY ? "Install" : busy ? "" : "Check",
                 false, busy ? null : v -> {
-                    if (Updater.state() == Updater.READY) Updater.install(c);
+                    if (!Updater.hasToken(c)) host.editUpdateToken();
+                    else if (Updater.state() == Updater.READY) Updater.install(c);
                     else Updater.check(c, host, true);
                 });
+        if (token) {
+            link(app, Icons.KEY_ROUND, "Update token", "Read-only access to the app's releases",
+                    "Saved", true, v -> host.editUpdateToken());
+        }
         if (Updater.hasProblem(c)) {
             // The status line is the error; say so in colour.
-            LinearLayout row = (LinearLayout) app.getChildAt(app.getChildCount() - 1);
+            LinearLayout row = (LinearLayout) app.getChildAt(2);
             ((TextView) ((LinearLayout) row.getChildAt(1)).getChildAt(1)).setTextColor(Ui.DANGER);
         }
 

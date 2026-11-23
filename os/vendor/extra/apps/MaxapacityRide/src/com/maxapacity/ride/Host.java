@@ -31,6 +31,9 @@ interface Host {
 
     void connectStrava();
 
+    /** Ask for the read-only GitHub token that lets the app fetch updates. */
+    void editUpdateToken();
+
     void setChopEnabled(boolean enabled);
 
     /** A setting changed that the dashboard shows (units, effects). */

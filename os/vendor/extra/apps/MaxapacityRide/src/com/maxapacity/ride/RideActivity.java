@@ -326,6 +326,27 @@ public final class RideActivity extends Activity
     }
 
     @Override
+    public void editUpdateToken() {
+        final EditText token = Ui.input(this, "github_pat_...", true);
+        token.setText(prefs.getString(Updater.TOKEN_PREF, ""));
+        new Sheet(frame, "Update token",
+                "Updates come from the app's private GitHub repository, so the phone needs"
+                        + " permission to read it. On github.com open Settings, Developer"
+                        + " settings, Fine-grained tokens, and create one for the maxapacity"
+                        + " repository with Contents set to Read-only. Paste it here. It is"
+                        + " stored only on this phone.")
+                .view(token)
+                .action("Cancel", Ui.SECONDARY, true, null)
+                .action("Save", Ui.PRIMARY, true, () -> {
+                    prefs.edit().putString(Updater.TOKEN_PREF,
+                            token.getText().toString().trim()).remove("update_error").apply();
+                    settings.refresh();
+                    if (Updater.hasToken(this)) Updater.check(this, this, true);
+                })
+                .show();
+    }
+
+    @Override
     public void editDeckConnection() {
         final EditText address = Ui.input(this, "Mac address, e.g. 192.168.1.20", false);
         address.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
@@ -651,6 +672,9 @@ public final class RideActivity extends Activity
         stopsValue.setText(String.valueOf(state.stops()));
         climbValue.setText(Ui.withUnit(Units.climb(this, state.climbM()),
                 Units.climbLabel(this)));
+
+        // Also on the one-second tick, so a reading that went stale drops off.
+        renderBikeStrip();
 
         if (rideButton == null || rideButtonRecording != recording) {
             rideButtonRecording = recording;

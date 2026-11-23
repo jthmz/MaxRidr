@@ -12,6 +12,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
@@ -34,10 +35,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Over-the-air updates. CI publishes each build's APK next to a small
- * manifest (latest.json); the app reads the manifest, downloads a newer APK,
- * checks its SHA-256 against the manifest and hands it to the system
- * installer.
+ * Over-the-air updates. CI publishes each release build to a GitHub release
+ * (tag "ride-ota") in the app's own repository: the APK as an asset and a
+ * small JSON manifest as the release notes. The app reads the manifest,
+ * downloads a newer APK, checks its SHA-256 against the manifest and hands it
+ * to the system installer.
+ *
+ * The repository is private, so the phone needs a read-only GitHub token,
+ * pasted once in Settings.
  *
  * The first update on a phone needs one tap on the system's install prompt.
  * After that this app is its own "installer of record", which lets Android
@@ -46,16 +51,16 @@ import java.util.concurrent.Executors;
  *
  * Android only accepts an update signed with the same key as the installed
  * app, so a tampered or foreign APK cannot replace it even if the download
- * host were compromised.
+ * were intercepted.
  */
 final class Updater {
 
     private Updater() {
     }
 
-    /** Public bucket on the project's Supabase storage; CI writes it. */
-    static final String MANIFEST_URL = "https://dmrjgofvupbsgtjdzcct.supabase.co"
-            + "/storage/v1/object/public/ride-app/latest.json";
+    private static final String API = "https://api.github.com/repos/jthmz/maxapacity";
+    private static final String RELEASE_TAG = "ride-ota";
+    static final String TOKEN_PREF = "update_token";
 
     static final int IDLE = 0;
     static final int CHECKING = 1;
@@ -76,6 +81,7 @@ final class Updater {
     private static String error;
     private static String readyVersion;
     private static long readyCode;
+    private static long offeredCode = -1;
 
     static void addListener(Runnable r) {
         if (!LISTENERS.contains(r)) LISTENERS.add(r);
@@ -114,6 +120,10 @@ final class Updater {
         }
     }
 
+    static boolean hasToken(Context c) {
+        return !Units.prefs(c).getString(TOKEN_PREF, "").trim().isEmpty();
+    }
+
     static boolean autoEnabled(Context c) {
         return Units.prefs(c).getBoolean("auto_update", true);
     }
@@ -134,6 +144,7 @@ final class Updater {
             default:
                 break;
         }
+        if (!hasToken(c)) return "Add an update token to receive new versions";
         String lastError = Units.prefs(c).getString("update_error", "");
         if (!lastError.isEmpty()) return lastError;
         long checked = Units.prefs(c).getLong("update_checked", 0);
@@ -143,7 +154,7 @@ final class Updater {
 
     /** True when the status line is reporting a problem. */
     static boolean hasProblem(Context c) {
-        return state == FAILED || (state == IDLE
+        return state == FAILED || (state == IDLE && hasToken(c)
                 && !Units.prefs(c).getString("update_error", "").isEmpty());
     }
 
@@ -160,7 +171,7 @@ final class Updater {
 
     /** Background check on resume, at most every six hours. */
     static void autoCheck(Context context, Host host) {
-        if (!autoEnabled(context)) return;
+        if (!autoEnabled(context) || !hasToken(context)) return;
         if (state == READY) {
             offerInstall(context, host);
             return;
@@ -182,18 +193,37 @@ final class Updater {
         }
         final Context c = context.getApplicationContext();
         final long installed = versionCode(c);
+        final String token = Units.prefs(c).getString(TOKEN_PREF, "").trim();
+        if (token.isEmpty()) {
+            if (manual) host.editUpdateToken();
+            return;
+        }
         error = null;
         set(CHECKING);
         IO.execute(() -> {
             try {
-                JSONObject m = new JSONObject(new String(
-                        fetch(MANIFEST_URL + "?t=" + System.currentTimeMillis(), 1 << 16),
-                        StandardCharsets.UTF_8));
+                JSONObject release = new JSONObject(new String(fetch(
+                        API + "/releases/tags/" + RELEASE_TAG, token, "application/vnd.github+json",
+                        1 << 20), StandardCharsets.UTF_8));
+                // The manifest is the release notes: one JSON object.
+                String notes = release.optString("body");
+                int open = notes.indexOf('{');
+                int close = notes.lastIndexOf('}');
+                if (open < 0 || close < open) throw new JSONException("no manifest");
+                JSONObject m = new JSONObject(notes.substring(open, close + 1));
                 final long code = m.getLong("versionCode");
                 final String name = m.optString("versionName", String.valueOf(code));
-                final String url = m.getString("url");
                 final String sha256 = m.getString("sha256").toLowerCase(Locale.US);
                 final long size = m.optLong("size", 0);
+                final String assetName = m.getString("asset");
+                long assetId = -1;
+                JSONArray assets = release.optJSONArray("assets");
+                for (int i = 0; assets != null && i < assets.length(); i++) {
+                    JSONObject a = assets.optJSONObject(i);
+                    if (a != null && assetName.equals(a.optString("name"))) {
+                        assetId = a.optLong("id", -1);
+                    }
+                }
                 Units.prefs(c).edit()
                         .putLong("update_checked", System.currentTimeMillis())
                         .remove("update_error").apply();
@@ -204,6 +234,7 @@ final class Updater {
                     });
                     return;
                 }
+                if (assetId < 0) throw new IOException("The update file is missing");
                 MAIN.post(() -> {
                     readyVersion = name;
                     readyCode = code;
@@ -211,7 +242,7 @@ final class Updater {
                     set(DOWNLOADING);
                 });
                 File apk = apkFile(c);
-                download(url, apk, size);
+                download(API + "/releases/assets/" + assetId, token, apk, size);
                 if (!sha256.equals(sha256(apk))) {
                     apk.delete();
                     throw new IOException("The download did not match its checksum");
@@ -239,7 +270,13 @@ final class Updater {
     private static String offlineMessage(IOException e) {
         String m = e.getMessage();
         if (m != null && m.startsWith("The ")) return m;
-        if (m != null && m.startsWith("HTTP 4")) return "No update has been published yet";
+        if ("HTTP 401".equals(m) || "HTTP 403".equals(m)) {
+            return "GitHub refused the update token. Check it in Settings";
+        }
+        if ("HTTP 404".equals(m)) {
+            return "No update found. Either none is published yet or the token cannot"
+                    + " read the repository";
+        }
         return "Could not reach the update server. Check the connection and try again";
     }
 
@@ -250,6 +287,9 @@ final class Updater {
     // ---- Installing --------------------------------------------------------
 
     private static void offerInstall(Context c, Host host) {
+        // Say it once per downloaded update, not on every return to the dashboard.
+        if (readyCode == offeredCode) return;
+        offeredCode = readyCode;
         if (canInstallSilently(c)) {
             host.say("Update " + readyVersion + " downloaded. It installs when you leave"
                     + " this screen");
@@ -344,7 +384,7 @@ final class Updater {
                         try {
                             c.startActivity(confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
                         } catch (RuntimeException e) {
-                            fail(c, "Open Settings and tap Install update to finish");
+                            fail(c, "Open Settings and tap Install to finish the update");
                             state = READY;
                         }
                     }
@@ -378,11 +418,22 @@ final class Updater {
 
     // ---- Network -----------------------------------------------------------
 
-    private static byte[] fetch(String url, int maxBytes) throws IOException {
+    private static HttpURLConnection open(String url, String token, String accept)
+            throws IOException {
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
         conn.setConnectTimeout(8000);
-        conn.setReadTimeout(15000);
+        conn.setReadTimeout(30000);
         conn.setUseCaches(false);
+        conn.setRequestProperty("Authorization", "Bearer " + token);
+        conn.setRequestProperty("Accept", accept);
+        conn.setRequestProperty("X-GitHub-Api-Version", "2022-11-28");
+        conn.setRequestProperty("User-Agent", "maxapacity-ride");
+        return conn;
+    }
+
+    private static byte[] fetch(String url, String token, String accept, int maxBytes)
+            throws IOException {
+        HttpURLConnection conn = open(url, token, accept);
         try {
             int code = conn.getResponseCode();
             if (code != 200) throw new IOException("HTTP " + code);
@@ -401,13 +452,28 @@ final class Updater {
         }
     }
 
-    private static void download(String url, File to, long expectedSize) throws IOException {
-        if (!url.startsWith("https://")) throw new IOException("The update link is not secure");
-        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
-        conn.setConnectTimeout(8000);
-        conn.setReadTimeout(30000);
+    /**
+     * Downloads a release asset. GitHub answers with a redirect to a
+     * short-lived storage link; the token is sent to GitHub only, never on to
+     * the storage host.
+     */
+    private static void download(String url, String token, File to, long expectedSize)
+            throws IOException {
+        HttpURLConnection conn = open(url, token, "application/octet-stream");
+        conn.setInstanceFollowRedirects(false);
         try {
             int code = conn.getResponseCode();
+            if (code == 301 || code == 302 || code == 307) {
+                String location = conn.getHeaderField("Location");
+                conn.disconnect();
+                if (location == null || !location.startsWith("https://")) {
+                    throw new IOException("The update link is not secure");
+                }
+                conn = (HttpURLConnection) new URL(location).openConnection();
+                conn.setConnectTimeout(8000);
+                conn.setReadTimeout(30000);
+                code = conn.getResponseCode();
+            }
             if (code != 200) throw new IOException("HTTP " + code);
             long total = expectedSize > 0 ? expectedSize : conn.getContentLengthLong();
             try (InputStream in = conn.getInputStream();

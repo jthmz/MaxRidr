@@ -170,7 +170,8 @@ final class GaugeView extends View {
         else if (fx) drawSweep(canvas, cx, cy, radius);
         drawReadout(canvas, cx, cy, radius);
 
-        if (animate && (fx || settling)) postInvalidateOnAnimation();
+        // Redraw continuously only while something on the dial is actually moving.
+        if (animate && (settling || (fx && !hasPower))) postInvalidateOnAnimation();
     }
 
     /** The one glow: faint at rest, a little stronger with speed. */
