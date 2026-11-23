@@ -68,6 +68,7 @@ public final class RideActivity extends Activity
     private static final String DEFAULT_MAPS_PACKAGE = "app.organicmaps";
     private static final int SLOT_COUNT = 4;
     private static final int REQ_LOCATION = 1;
+    private static final int REQ_NOTIFY = 2;
 
     private static final float MPS_TO_MPH = 2.23694f;
     private static final float MPS_TO_KMH = 3.6f;
@@ -95,6 +96,7 @@ public final class RideActivity extends Activity
     private TextView avgValue;
     private TextView rideButton;
     private LinearLayout slotRow;
+    private TextView chopToggle;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -112,6 +114,8 @@ public final class RideActivity extends Activity
         if (RideState.get().isRecording()) {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         }
+        // Restart the gesture service if the system stopped it.
+        if (ChopService.isEnabled(this)) startChopService();
         renderSlots();
         handler.post(tick);
     }
@@ -239,6 +243,34 @@ public final class RideActivity extends Activity
         render();
     }
 
+    // ---- Flashlight gesture ---------------------------------------------
+
+    private void setChopEnabled(boolean enabled) {
+        prefs.edit().putBoolean(ChopService.PREF, enabled).apply();
+        if (enabled) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                    && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(
+                        new String[] {Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFY);
+            }
+            startChopService();
+            toast("Chop the phone twice to switch the flashlight. Paused during rides");
+        } else {
+            stopService(new Intent(this, ChopService.class));
+            toast("Flashlight gesture off");
+        }
+        render();
+    }
+
+    private void startChopService() {
+        try {
+            startForegroundService(new Intent(this, ChopService.class));
+        } catch (RuntimeException e) {
+            // Background-start restriction; retried on the next resume.
+        }
+    }
+
     @Override
     public void onRideStateChanged() {
         render();
@@ -295,6 +327,10 @@ public final class RideActivity extends Activity
         topValue.setText(formatSpeed(state.topSpeedMps()));
         timeValue.setText(formatDuration(state.durationMs()));
         avgValue.setText(formatSpeed(state.avgSpeedMps()));
+
+        boolean chop = ChopService.isEnabled(this);
+        chopToggle.setText(chop ? "Chop light: on" : "Chop light: off");
+        chopToggle.setTextColor(chop ? ACCENT : TEXT_DIM);
 
         rideButton.setText(recording ? "END RIDE" : "START RIDE");
         rideButton.setTextColor(recording ? DANGER : BG);
@@ -388,12 +424,19 @@ public final class RideActivity extends Activity
         addTool(tools, "Gearing", "/tools/sprocket-calculator");
         root.addView(tools, matchWrap());
 
+        // Bottom row: app drawer and the flashlight gesture switch.
+        LinearLayout bottom = row();
         TextView allApps = tile("All apps", null);
         allApps.setOnClickListener(v -> showAppPicker(-1));
-        LinearLayout.LayoutParams allLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
-        allLp.topMargin = dp(16);
-        root.addView(allApps, allLp);
+        bottom.addView(allApps, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        chopToggle = tile("", null);
+        chopToggle.setOnClickListener(v -> setChopEnabled(!ChopService.isEnabled(this)));
+        LinearLayout.LayoutParams chopLp = new LinearLayout.LayoutParams(0, dp(48), 1f);
+        chopLp.leftMargin = dp(8);
+        bottom.addView(chopToggle, chopLp);
+        LinearLayout.LayoutParams bottomLp = matchWrap();
+        bottomLp.topMargin = dp(16);
+        root.addView(bottom, bottomLp);
 
         return root;
     }
