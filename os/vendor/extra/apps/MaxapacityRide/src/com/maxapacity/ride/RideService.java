@@ -12,7 +12,10 @@ import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.os.Bundle;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
+import android.widget.Toast;
 
 /**
  * Foreground service that keeps GPS running for the length of a ride, so the
@@ -26,7 +29,27 @@ public final class RideService extends Service implements LocationListener {
     private static final String CHANNEL = "ride";
     private static final int NOTIFICATION_ID = 1;
 
+    /** A ride left stationary this long is ended and saved automatically. */
+    static final long AUTO_END_MS = 10 * 60 * 1000;
+
     private LocationManager locationManager;
+
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    /** Timer rather than a per-fix check: indoors, fixes stop arriving at all. */
+    private final Runnable idleCheck = new Runnable() {
+        @Override
+        public void run() {
+            RideState state = RideState.get();
+            if (state.isRecording() && state.idleMs() >= AUTO_END_MS
+                    && Units.prefs(RideService.this).getBoolean("auto_end", true)) {
+                Toast.makeText(RideService.this, RideStore.finish(RideService.this),
+                        Toast.LENGTH_LONG).show();
+                stopSelf();
+                return;
+            }
+            handler.postDelayed(this, 15000);
+        }
+    };
 
     @Override
     public void onCreate() {
@@ -67,13 +90,18 @@ public final class RideService extends Service implements LocationListener {
         }
 
         if (!RideState.get().isRecording()) RideState.get().start();
+        handler.removeCallbacks(idleCheck);
+        handler.postDelayed(idleCheck, 15000);
         return START_NOT_STICKY;
     }
 
     @Override
     public void onDestroy() {
+        handler.removeCallbacks(idleCheck);
         locationManager.removeUpdates(this);
-        RideState.get().stop();
+        // Normally already saved by RideStore.finish; this covers the system
+        // tearing the service down mid-ride.
+        if (RideState.get().isRecording()) RideStore.finish(this);
         super.onDestroy();
     }
 

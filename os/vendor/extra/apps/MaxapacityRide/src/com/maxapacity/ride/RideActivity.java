@@ -31,15 +31,18 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowManager;
+import android.text.InputType;
 import android.widget.BaseAdapter;
+import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextClock;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.io.File;
-import java.io.IOException;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -70,8 +73,9 @@ public final class RideActivity extends Activity
     private static final int REQ_LOCATION = 1;
     private static final int REQ_NOTIFY = 2;
 
-    private static final float MPS_TO_MPH = 2.23694f;
-    private static final float MPS_TO_KMH = 3.6f;
+    /** Sustained speed that starts a ride on its own (about 11 km/h, 7 mph). */
+    private static final float AUTO_START_MPS = 3f;
+    private static final int AUTO_START_FIXES = 5;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable tick = new Runnable() {
@@ -86,6 +90,9 @@ public final class RideActivity extends Activity
     private LocationManager locationManager;
     private boolean listening;
     private boolean startAfterGrant;
+    private int fastFixes;
+    /** Cleared by a manual End ride until the bike has come to a stop. */
+    private boolean autoStartArmed = true;
 
     private TextView gpsStatus;
     private TextView speedValue;
@@ -96,7 +103,8 @@ public final class RideActivity extends Activity
     private TextView avgValue;
     private TextView rideButton;
     private LinearLayout slotRow;
-    private TextView chopToggle;
+    private TextView stopsValue;
+    private TextView climbValue;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -111,9 +119,8 @@ public final class RideActivity extends Activity
         super.onResume();
         RideState.get().addListener(this);
         startPassiveGps();
-        if (RideState.get().isRecording()) {
-            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        }
+        // Rides recorded without signal go up once the phone is back online.
+        Strava.uploadPending(this);
         // Restart the gesture service if the system stopped it.
         if (ChopService.isEnabled(this)) startChopService();
         renderSlots();
@@ -161,6 +168,22 @@ public final class RideActivity extends Activity
     @Override
     public void onLocationChanged(Location location) {
         RideState.get().onLocation(location);
+        maybeAutoStart(location);
+    }
+
+    /** Starts recording after a few seconds of sustained riding speed. */
+    private void maybeAutoStart(Location l) {
+        boolean fast = l.hasSpeed() && l.getSpeed() >= AUTO_START_MPS
+                && (!l.hasAccuracy() || l.getAccuracy() <= 25f);
+        fastFixes = fast ? fastFixes + 1 : 0;
+        if (!l.hasSpeed() || l.getSpeed() < 1f) autoStartArmed = true;
+        if (fastFixes >= AUTO_START_FIXES && autoStartArmed
+                && !RideState.get().isRecording()
+                && prefs.getBoolean("auto_start", true)) {
+            fastFixes = 0;
+            startRide();
+            toast("Ride started automatically");
+        }
     }
 
     @Override
@@ -216,30 +239,22 @@ public final class RideActivity extends Activity
 
     private void startRide() {
         stopPassiveGps();
-        startForegroundService(new Intent(this, RideService.class)
-                .setAction(RideService.ACTION_START));
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        try {
+            startForegroundService(new Intent(this, RideService.class)
+                    .setAction(RideService.ACTION_START));
+        } catch (RuntimeException e) {
+            toast("Could not start ride recording");
+            startPassiveGps();
+        }
     }
 
     private void endRide() {
-        RideState state = RideState.get();
+        String result = RideStore.finish(this);
+        autoStartArmed = false;
+        fastFixes = 0;
         stopService(new Intent(this, RideService.class));
-        state.stop();
-        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         startPassiveGps();
-
-        if (state.track().size() < 2) {
-            toast("Ride ended. No GPS track was recorded");
-        } else {
-            try {
-                File dir = new File(getExternalFilesDir(null), "rides");
-                File f = GpxWriter.write(dir, state.startWallMs(), state.track());
-                toast("Ride saved: " + formatDistance(state.distanceM()) + " "
-                        + distanceUnit() + ", " + f.getName());
-            } catch (IOException e) {
-                toast("Ride ended, but the GPX file could not be saved");
-            }
-        }
+        toast(result);
         render();
     }
 
@@ -260,7 +275,6 @@ public final class RideActivity extends Activity
             stopService(new Intent(this, ChopService.class));
             toast("Flashlight gesture off");
         }
-        render();
     }
 
     private void startChopService() {
@@ -278,41 +292,24 @@ public final class RideActivity extends Activity
 
     // ---- Rendering -------------------------------------------------------
 
-    private boolean metric() {
-        if (prefs.contains("metric")) return prefs.getBoolean("metric", true);
-        String c = Locale.getDefault().getCountry();
-        return !("US".equals(c) || "GB".equals(c));
-    }
-
-    private String speedUnitLabel() {
-        return metric() ? "KM/H" : "MPH";
-    }
-
-    private String distanceUnit() {
-        return metric() ? "km" : "mi";
-    }
-
-    private String formatSpeed(float mps) {
-        return String.valueOf(Math.round(mps * (metric() ? MPS_TO_KMH : MPS_TO_MPH)));
-    }
-
-    private String formatDistance(double meters) {
-        double v = metric() ? meters / 1000.0 : meters / 1609.344;
-        return String.format(Locale.US, v < 100 ? "%.2f" : "%.1f", v);
-    }
-
-    private static String formatDuration(long ms) {
-        long s = ms / 1000;
-        return String.format(Locale.US, "%d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60);
-    }
-
     private void render() {
         RideState state = RideState.get();
         boolean recording = state.isRecording();
 
+        // The service can end a ride on its own, so the flag follows the state.
+        if (recording) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            startPassiveGps();
+        }
+
         if (!hasLocationPermission()) {
             gpsStatus.setText("LOCATION OFF");
             gpsStatus.setTextColor(DANGER);
+        } else if (state.isPaused()) {
+            gpsStatus.setText("PAUSED");
+            gpsStatus.setTextColor(WARN);
         } else if (state.hasFix()) {
             gpsStatus.setText(recording ? "RECORDING" : "GPS LOCKED");
             gpsStatus.setTextColor(OK);
@@ -321,22 +318,155 @@ public final class RideActivity extends Activity
             gpsStatus.setTextColor(WARN);
         }
 
-        speedValue.setText(state.hasFix() ? formatSpeed(state.speedMps()) : "--");
-        speedUnit.setText(speedUnitLabel());
-        tripValue.setText(formatDistance(state.distanceM()) + " " + distanceUnit());
-        topValue.setText(formatSpeed(state.topSpeedMps()));
-        timeValue.setText(formatDuration(state.durationMs()));
-        avgValue.setText(formatSpeed(state.avgSpeedMps()));
-
-        boolean chop = ChopService.isEnabled(this);
-        chopToggle.setText(chop ? "Chop light: on" : "Chop light: off");
-        chopToggle.setTextColor(chop ? ACCENT : TEXT_DIM);
+        speedValue.setText(state.hasFix() ? Units.speed(this, state.speedMps()) : "--");
+        speedUnit.setText(Units.speedLabel(this));
+        tripValue.setText(Units.distance(this, state.distanceM()) + " "
+                + Units.distanceLabel(this));
+        timeValue.setText(Units.duration(state.movingMs()));
+        topValue.setText(Units.speed(this, state.topSpeedMps()));
+        avgValue.setText(Units.speed(this, state.avgSpeedMps()));
+        stopsValue.setText(String.valueOf(state.stops()));
+        climbValue.setText(Units.climb(this, state.climbM()) + " " + Units.climbLabel(this));
 
         rideButton.setText(recording ? "END RIDE" : "START RIDE");
         rideButton.setTextColor(recording ? DANGER : BG);
         rideButton.setBackground(recording
                 ? panel(BG, DANGER, dp(10))
                 : panel(ACCENT, ACCENT, dp(10)));
+    }
+
+    // ---- Rides, settings, Strava -----------------------------------------
+
+    private void showRides() {
+        final JSONArray rides = RideStore.load(this);
+        if (rides.length() == 0) {
+            new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                    .setTitle("Rides")
+                    .setMessage("No rides yet. Tap Start ride, or just set off: recording"
+                            + " starts on its own once you are moving.")
+                    .setPositiveButton("OK", null)
+                    .show();
+            return;
+        }
+        // Newest first.
+        final List<JSONObject> list = new ArrayList<>();
+        for (int i = rides.length() - 1; i >= 0; i--) {
+            JSONObject r = rides.optJSONObject(i);
+            if (r != null) list.add(r);
+        }
+        String[] lines = new String[list.size()];
+        for (int i = 0; i < lines.length; i++) lines[i] = RideStore.describe(this, list.get(i));
+
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Rides")
+                .setItems(lines, (d, which) -> showRide(list.get(which)))
+                .show();
+    }
+
+    private void showRide(JSONObject r) {
+        final String file = r.optString("file");
+        String detail = "Distance  " + Units.distance(this, r.optDouble("distanceM")) + " "
+                + Units.distanceLabel(this)
+                + "\nMoving  " + Units.duration(r.optLong("movingMs"))
+                + "\nElapsed  " + Units.duration(r.optLong("elapsedMs"))
+                + "\nTop  " + Units.speed(this, (float) r.optDouble("topMps")) + " "
+                + Units.speedLabel(this).toLowerCase(Locale.US)
+                + "\nClimb  " + Units.climb(this, r.optDouble("climbM")) + " "
+                + Units.climbLabel(this)
+                + "\nStops  " + r.optInt("stops")
+                + "\n\n" + file;
+        AlertDialog.Builder b = new AlertDialog.Builder(this,
+                android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Ride")
+                .setMessage(detail)
+                .setPositiveButton("Close", null);
+        if (Strava.isConnected(this)
+                && !RideStore.STRAVA_UPLOADED.equals(r.optString("strava"))) {
+            b.setNeutralButton("Send to Strava", (d, w) -> {
+                Strava.queue(this, file);
+                toast("Sending to Strava");
+            });
+        }
+        b.show();
+    }
+
+    private void showSettings() {
+        final boolean autoStart = prefs.getBoolean("auto_start", true);
+        final boolean autoEnd = prefs.getBoolean("auto_end", true);
+        final boolean chop = ChopService.isEnabled(this);
+        final boolean strava = Strava.isConnected(this);
+        String[] items = {
+                "Start rides automatically: " + (autoStart ? "on" : "off"),
+                "End ride after 10 min stopped: " + (autoEnd ? "on" : "off"),
+                "Chop twice for flashlight: " + (chop ? "on" : "off"),
+                "Units: " + (Units.metric(this) ? "km/h" : "mph"),
+                strava ? "Strava: connected (tap to disconnect)" : "Connect Strava",
+        };
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Settings")
+                .setItems(items, (d, which) -> {
+                    switch (which) {
+                        case 0:
+                            prefs.edit().putBoolean("auto_start", !autoStart).apply();
+                            break;
+                        case 1:
+                            prefs.edit().putBoolean("auto_end", !autoEnd).apply();
+                            break;
+                        case 2:
+                            setChopEnabled(!chop);
+                            break;
+                        case 3:
+                            prefs.edit().putBoolean("metric", !Units.metric(this)).apply();
+                            break;
+                        default:
+                            if (strava) {
+                                Strava.disconnect(this);
+                                toast("Strava disconnected");
+                            } else {
+                                showStravaConnect();
+                            }
+                            return;
+                    }
+                    render();
+                    showSettings();
+                })
+                .setPositiveButton("Done", null)
+                .show();
+    }
+
+    private void showStravaConnect() {
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(24), dp(8), dp(24), 0);
+        final EditText id = new EditText(this);
+        id.setHint("Client ID");
+        id.setInputType(InputType.TYPE_CLASS_NUMBER);
+        id.setText(prefs.getString("strava_client_id", ""));
+        form.addView(id, matchWrap());
+        final EditText secret = new EditText(this);
+        secret.setHint("Client Secret");
+        secret.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        secret.setText(prefs.getString("strava_client_secret", ""));
+        form.addView(secret, matchWrap());
+
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Connect Strava")
+                .setMessage("Create an API application at strava.com/settings/api with"
+                        + " Authorization Callback Domain set to localhost, then enter its"
+                        + " Client ID and Client Secret.")
+                .setView(form)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Connect", (d, w) -> {
+                    String clientId = id.getText().toString().trim();
+                    String clientSecret = secret.getText().toString().trim();
+                    if (clientId.isEmpty() || clientSecret.isEmpty()) {
+                        toast("Both the Client ID and Client Secret are needed");
+                        return;
+                    }
+                    Strava.saveApp(this, clientId, clientSecret);
+                    open(new Intent(Intent.ACTION_VIEW, Strava.authorizeUri(this)));
+                })
+                .show();
     }
 
     // ---- UI construction -------------------------------------------------
@@ -374,7 +504,7 @@ public final class RideActivity extends Activity
         speedo.setOrientation(LinearLayout.VERTICAL);
         speedo.setGravity(Gravity.CENTER);
         speedValue = new TextView(this);
-        styleValue(speedValue, 128);
+        styleValue(speedValue, 112);
         speedValue.setIncludeFontPadding(false);
         speedValue.setGravity(Gravity.CENTER);
         speedo.addView(speedValue, matchWrap());
@@ -382,20 +512,29 @@ public final class RideActivity extends Activity
         speedUnit.setGravity(Gravity.CENTER);
         speedo.addView(speedUnit, matchWrap());
         speedo.setOnClickListener(v -> {
-            prefs.edit().putBoolean("metric", !metric()).apply();
+            prefs.edit().putBoolean("metric", !Units.metric(this)).apply();
             render();
         });
         root.addView(speedo, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
-        // Trip stats.
-        LinearLayout stats = row();
+        // Trip stats: two rows of three inside one panel.
+        LinearLayout stats = new LinearLayout(this);
+        stats.setOrientation(LinearLayout.VERTICAL);
         stats.setBackground(panel(SURFACE, HAIRLINE, dp(16)));
         stats.setPadding(dp(4), dp(16), dp(4), dp(16));
-        tripValue = stat(stats, "TRIP");
-        topValue = stat(stats, "TOP");
-        timeValue = stat(stats, "TIME");
-        avgValue = stat(stats, "AVG");
+        LinearLayout statsTop = row();
+        tripValue = stat(statsTop, "TRIP");
+        timeValue = stat(statsTop, "MOVING");
+        topValue = stat(statsTop, "TOP");
+        stats.addView(statsTop, matchWrap());
+        LinearLayout statsBottom = row();
+        avgValue = stat(statsBottom, "AVG");
+        stopsValue = stat(statsBottom, "STOPS");
+        climbValue = stat(statsBottom, "CLIMB");
+        LinearLayout.LayoutParams statsBottomLp = matchWrap();
+        statsBottomLp.topMargin = dp(16);
+        stats.addView(statsBottom, statsBottomLp);
         root.addView(stats, matchWrap());
 
         // Primary action.
@@ -424,16 +563,11 @@ public final class RideActivity extends Activity
         addTool(tools, "Gearing", "/tools/sprocket-calculator");
         root.addView(tools, matchWrap());
 
-        // Bottom row: app drawer and the flashlight gesture switch.
+        // Bottom row: app drawer, ride history, settings.
         LinearLayout bottom = row();
-        TextView allApps = tile("All apps", null);
-        allApps.setOnClickListener(v -> showAppPicker(-1));
-        bottom.addView(allApps, new LinearLayout.LayoutParams(0, dp(48), 1f));
-        chopToggle = tile("", null);
-        chopToggle.setOnClickListener(v -> setChopEnabled(!ChopService.isEnabled(this)));
-        LinearLayout.LayoutParams chopLp = new LinearLayout.LayoutParams(0, dp(48), 1f);
-        chopLp.leftMargin = dp(8);
-        bottom.addView(chopToggle, chopLp);
+        addBottomTile(bottom, "All apps", v -> showAppPicker(-1));
+        addBottomTile(bottom, "Rides", v -> showRides());
+        addBottomTile(bottom, "Settings", v -> showSettings());
         LinearLayout.LayoutParams bottomLp = matchWrap();
         bottomLp.topMargin = dp(16);
         root.addView(bottom, bottomLp);
@@ -457,6 +591,14 @@ public final class RideActivity extends Activity
         col.addView(v, lp);
         parent.addView(col, weighted());
         return v;
+    }
+
+    private void addBottomTile(LinearLayout parent, String name, View.OnClickListener click) {
+        TextView t = tile(name, null);
+        t.setOnClickListener(click);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(48), 1f);
+        if (parent.getChildCount() > 0) lp.leftMargin = dp(8);
+        parent.addView(t, lp);
     }
 
     private void addTool(LinearLayout parent, String name, String path) {
@@ -620,7 +762,7 @@ public final class RideActivity extends Activity
 
     /** Equal-width tile in a four-across row with an 8dp gutter. */
     private LinearLayout.LayoutParams tileParams(int index) {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(88), 1f);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(80), 1f);
         if (index > 0) lp.leftMargin = dp(8);
         return lp;
     }

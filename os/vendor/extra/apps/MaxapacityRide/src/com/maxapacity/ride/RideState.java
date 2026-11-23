@@ -39,6 +39,10 @@ final class RideState {
     private static final float MIN_SPEED_MPS = 0.5f;
     /** A fix older than this means we no longer have a usable signal. */
     private static final long FIX_STALE_MS = 5000;
+    /** Stationary this long shows as paused. */
+    private static final long PAUSE_AFTER_MS = 5000;
+    /** Stationary this long counts as one stop. */
+    private static final long STOP_MIN_MS = 10000;
 
     private static final RideState INSTANCE = new RideState();
 
@@ -54,6 +58,14 @@ final class RideState {
     private long startWallMs;
     private long endElapsedMs;
     private double distanceM;
+    private long movingMs;
+    private long lastMovingElapsedMs;
+    private boolean stopCounted;
+    private int stops;
+    private double climbM;
+    private double smoothedAlt;
+    private double climbRefAlt;
+    private boolean altSeeded;
     private float topSpeedMps;
     private float speedMps;
     private long lastFixElapsedMs;
@@ -82,6 +94,12 @@ final class RideState {
         startWallMs = System.currentTimeMillis();
         endElapsedMs = 0;
         distanceM = 0;
+        movingMs = 0;
+        lastMovingElapsedMs = startElapsedMs;
+        stopCounted = false;
+        stops = 0;
+        climbM = 0;
+        altSeeded = false;
         topSpeedMps = 0;
         lastTrackFix = null;
         track.clear();
@@ -96,13 +114,30 @@ final class RideState {
     }
 
     void onLocation(Location l) {
-        lastFixElapsedMs = SystemClock.elapsedRealtime();
+        long now = SystemClock.elapsedRealtime();
+        // Time since the previous fix, capped so a GPS dropout is not counted
+        // as riding time.
+        long dt = lastFixElapsedMs == 0 ? 0 : Math.min(now - lastFixElapsedMs, 5000);
+        lastFixElapsedMs = now;
         float s = l.hasSpeed() ? l.getSpeed() : 0f;
         speedMps = s < MIN_SPEED_MPS ? 0f : s;
+
+        if (recording) {
+            if (speedMps > 0f) {
+                movingMs += dt;
+                lastMovingElapsedMs = now;
+                stopCounted = false;
+            } else if (!stopCounted && distanceM > 0
+                    && now - lastMovingElapsedMs >= STOP_MIN_MS) {
+                stops++;
+                stopCounted = true;
+            }
+        }
 
         boolean accurate = !l.hasAccuracy() || l.getAccuracy() <= MAX_ACCURACY_M;
         if (recording && accurate) {
             if (speedMps > topSpeedMps) topSpeedMps = speedMps;
+            if (l.hasAltitude()) addAltitude(l.getAltitude());
             if (lastTrackFix == null) {
                 lastTrackFix = l;
                 track.add(new Point(l));
@@ -119,6 +154,23 @@ final class RideState {
             }
         }
         notifyListeners();
+    }
+
+    /** Climb with smoothing and a 3 m dead band, so GPS altitude noise is not counted. */
+    private void addAltitude(double alt) {
+        if (!altSeeded) {
+            smoothedAlt = alt;
+            climbRefAlt = alt;
+            altSeeded = true;
+            return;
+        }
+        smoothedAlt = 0.8 * smoothedAlt + 0.2 * alt;
+        if (smoothedAlt > climbRefAlt + 3) {
+            climbM += smoothedAlt - climbRefAlt;
+            climbRefAlt = smoothedAlt;
+        } else if (smoothedAlt < climbRefAlt - 3) {
+            climbRefAlt = smoothedAlt;
+        }
     }
 
     boolean isRecording() {
@@ -149,9 +201,33 @@ final class RideState {
         return Math.max(0, end - startElapsedMs);
     }
 
+    /** Time actually spent moving; stops and GPS dropouts are excluded. */
+    long movingMs() {
+        return movingMs;
+    }
+
+    /** How long the bike has been stationary (or without GPS) during a ride. */
+    long idleMs() {
+        if (!recording) return 0;
+        return SystemClock.elapsedRealtime() - lastMovingElapsedMs;
+    }
+
+    /** Recording but stopped: the moving clock is paused. */
+    boolean isPaused() {
+        return recording && idleMs() >= PAUSE_AFTER_MS;
+    }
+
+    int stops() {
+        return stops;
+    }
+
+    double climbM() {
+        return climbM;
+    }
+
+    /** Average over moving time, the way ride apps report it. */
     float avgSpeedMps() {
-        long ms = durationMs();
-        return ms < 1000 ? 0f : (float) (distanceM / (ms / 1000.0));
+        return movingMs < 1000 ? 0f : (float) (distanceM / (movingMs / 1000.0));
     }
 
     long startWallMs() {
