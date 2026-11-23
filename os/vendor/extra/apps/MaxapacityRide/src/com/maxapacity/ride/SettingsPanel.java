@@ -122,6 +122,10 @@ final class SettingsPanel extends Panel {
             link(app, Icons.KEY_ROUND, "Update token", "Read-only access to the app's releases",
                     "Saved", true, v -> host.editUpdateToken());
         }
+        if (CrashLog.read(c) != null) {
+            link(app, Icons.TRIANGLE_ALERT, "Last crash", "The app closed unexpectedly",
+                    "View", false, v -> host.showLastCrash());
+        }
         if (Updater.hasProblem(c)) {
             // The status line is the error; say so in colour.
             LinearLayout row = (LinearLayout) app.getChildAt(2);

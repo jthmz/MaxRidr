@@ -22,6 +22,7 @@ abstract class Panel extends LinearLayout {
     protected final Ui.Pill status;
     /** Slot on the right of the header for one screen-level action. */
     protected final FrameLayout headerAction;
+    private Runnable onToggle;
 
     Panel(Context context, String title) {
         super(context);
@@ -69,6 +70,11 @@ abstract class Panel extends LinearLayout {
         }
     }
 
+    /** Run whenever this screen becomes visible or has finished closing. */
+    void setOnToggle(Runnable r) {
+        onToggle = r;
+    }
+
     boolean isOpen() {
         return getVisibility() == VISIBLE;
     }
@@ -78,6 +84,7 @@ abstract class Panel extends LinearLayout {
         onOpen();
         animate().cancel();
         setVisibility(VISIBLE);
+        if (onToggle != null) onToggle.run();
         setAlpha(0f);
         setTranslationY(dp(24));
         animate().alpha(1f).translationY(0f).setDuration(Ui.MOTION_MS)
@@ -93,7 +100,10 @@ abstract class Panel extends LinearLayout {
         if (imm != null) imm.hideSoftInputFromWindow(getWindowToken(), 0);
         animate().cancel();
         animate().alpha(0f).translationY(dp(24)).setDuration(150)
-                .withEndAction(() -> setVisibility(GONE)).start();
+                .withEndAction(() -> {
+                    setVisibility(GONE);
+                    if (onToggle != null) onToggle.run();
+                }).start();
     }
 
     /** Called just before the panel becomes visible. */

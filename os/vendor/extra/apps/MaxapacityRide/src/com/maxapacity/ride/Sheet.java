@@ -151,7 +151,9 @@ final class Sheet extends FrameLayout {
     }
 
     Sheet show() {
-        if (current != null) current.remove();
+        if (current() != null) current.remove();
+        // A message bar left over from the last action would sit on the buttons.
+        Snack.clear(host);
         current = this;
         applyInsets();
         host.addView(this, new ViewGroup.LayoutParams(
@@ -170,7 +172,7 @@ final class Sheet extends FrameLayout {
     static void setInsets(int top, int bottom) {
         insetTop = top;
         insetBottom = bottom;
-        if (current != null) current.applyInsets();
+        if (current() != null) current.applyInsets();
     }
 
     private void applyInsets() {
@@ -199,13 +201,18 @@ final class Sheet extends FrameLayout {
         }
     }
 
+    /** The sheet on screen, if any. */
     static Sheet current() {
+        // The screen it belonged to may have been torn down and rebuilt (a
+        // font-size or language change does that); a sheet left over from
+        // before is no longer showing anywhere.
+        if (current != null && !current.isAttachedToWindow()) current = null;
         return current;
     }
 
     /** @return true if a sheet was showing and has been dismissed */
     static boolean dismissCurrent() {
-        if (current == null) return false;
+        if (current() == null) return false;
         current.dismiss();
         return true;
     }

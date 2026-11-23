@@ -24,10 +24,17 @@ final class Snack {
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static View showing;
     private static Runnable hide;
+    private static int topInsetPx;
     private static int bottomInsetPx;
 
-    static void setBottomInset(int px) {
-        bottomInsetPx = px;
+    static void setInsets(int top, int bottom) {
+        topInsetPx = top;
+        bottomInsetPx = bottom;
+    }
+
+    /** Takes down whatever is showing, at once. A sheet calls this as it opens. */
+    static void clear(ViewGroup host) {
+        dismissNow(host);
     }
 
     static void show(ViewGroup host, String message) {
@@ -67,13 +74,18 @@ final class Snack {
                     ViewGroup.LayoutParams.WRAP_CONTENT, Ui.dp(c, 40)));
         }
 
+        // Normally along the bottom. A sheet keeps its buttons there, so a
+        // message that arrives while one is open goes to the top instead.
+        final boolean atTop = Sheet.current() != null;
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM);
-        lp.setMargins(Ui.dp(c, 16), 0, Ui.dp(c, 16), Ui.dp(c, 16) + bottomInsetPx);
+                atTop ? Gravity.TOP : Gravity.BOTTOM);
+        lp.setMargins(Ui.dp(c, 16), atTop ? Ui.dp(c, 16) + topInsetPx : 0, Ui.dp(c, 16),
+                atTop ? 0 : Ui.dp(c, 16) + bottomInsetPx);
         host.addView(bar, lp);
+        final float slide = Ui.dp(c, atTop ? -16 : 16);
         bar.setAlpha(0f);
-        bar.setTranslationY(Ui.dp(c, 16));
+        bar.setTranslationY(slide);
         bar.animate().alpha(1f).translationY(0f).setDuration(Ui.MOTION_MS).start();
         bar.announceForAccessibility(message);
 
@@ -81,7 +93,7 @@ final class Snack {
         hide = () -> {
             if (showing != bar) return;
             showing = null;
-            bar.animate().alpha(0f).translationY(Ui.dp(bar.getContext(), 16)).setDuration(150)
+            bar.animate().alpha(0f).translationY(slide).setDuration(150)
                     .withEndAction(() -> host.removeView(bar)).start();
         };
         // Long enough to read, longer when there is something to tap.

@@ -76,6 +76,7 @@ public final class RideActivity extends Activity
     private SharedPreferences prefs;
     private LocationManager locationManager;
     private boolean listening;
+    private boolean resumed;
     private boolean startAfterGrant;
     private Runnable afterBluetooth;
     private int fastFixes;
@@ -131,6 +132,11 @@ public final class RideActivity extends Activity
         getWindow().setNavigationBarColor(Ui.BG);
         RideStore.purgeRemoved(this);
         setContentView(buildUi());
+        if (CrashLog.read(this) != null) {
+            // Posted so the message bar is laid out over a finished screen.
+            handler.post(() -> say("The app closed unexpectedly last time", "DETAILS",
+                    this::showLastCrash));
+        }
 
         gestures = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
             @Override
@@ -166,6 +172,9 @@ public final class RideActivity extends Activity
     @Override
     protected void onDestroy() {
         unregisterReceiver(packageChanges);
+        // Screens that were open are listening to the bike link, the updater
+        // or the network; let each of them let go before this one is discarded.
+        for (Panel p : panels) if (p.isOpen()) p.onClose();
         copilot.shutdown();
         super.onDestroy();
     }
@@ -196,7 +205,8 @@ public final class RideActivity extends Activity
         if (ChopService.isEnabled(this)) startChopService();
         renderSlots();
         gauge.setFx(prefs.getBoolean("fx", true));
-        gauge.setRunning(true);
+        resumed = true;
+        updateDial();
         Bike.get(this).addListener(bikeChanged);
         Bike.get(this).resume();
         for (Panel p : panels) if (p.isOpen()) p.onHostResume();
@@ -208,7 +218,8 @@ public final class RideActivity extends Activity
     protected void onPause() {
         super.onPause();
         handler.removeCallbacks(tick);
-        gauge.setRunning(false);
+        resumed = false;
+        updateDial();
         for (Panel p : panels) if (p.isOpen()) p.onHostPause();
         Bike.get(this).removeListener(bikeChanged);
         // The bike link stays up during a ride so telemetry keeps flowing
@@ -225,6 +236,11 @@ public final class RideActivity extends Activity
         if (Sheet.dismissCurrent()) return;
         Panel top = topPanel();
         if (top != null) top.close();
+    }
+
+    /** The dial animates only while it is actually on show. */
+    private void updateDial() {
+        gauge.setRunning(resumed && topPanel() == null);
     }
 
     private Panel topPanel() {
@@ -322,6 +338,36 @@ public final class RideActivity extends Activity
                     settings.refresh();
                     say(Gemini.hasKey(this) ? "Copilot is ready" : "Copilot key removed");
                 })
+                .show();
+    }
+
+    @Override
+    public void showLastCrash() {
+        final String note = CrashLog.read(this);
+        if (note == null) return;
+        // The first lines say what failed and where; the rest is for whoever fixes it.
+        String[] lines = note.split("\n");
+        StringBuilder head = new StringBuilder();
+        for (int i = 0; i < Math.min(lines.length, 14); i++) head.append(lines[i]).append('\n');
+        TextView text = Ui.small(this, head.toString().trim(), Ui.TEXT_2);
+        text.setTypeface(Ui.mono);
+        text.setTextSize(TypedValue.COMPLEX_UNIT_SP, Ui.T_LABEL);
+        text.setTextIsSelectable(true);
+        text.setBackground(Ui.panel(this, Ui.BG, Ui.HAIRLINE, 10));
+        text.setPadding(dp(12), dp(12), dp(12), dp(12));
+        new Sheet(frame, "What went wrong",
+                "The app stopped unexpectedly. This note says where. Share it with whoever"
+                        + " looks after the app so it can be fixed. It holds the app version,"
+                        + " the phone model and the error, nothing else.")
+                .view(text)
+                .action("Dismiss", Ui.SECONDARY, true, () -> {
+                    CrashLog.clear(this);
+                    settings.refresh();
+                })
+                .action("Share", Ui.PRIMARY, true, () -> launch(Intent.createChooser(
+                        new Intent(Intent.ACTION_SEND).setType("text/plain")
+                                .putExtra(Intent.EXTRA_SUBJECT, "MAXAPACITY Ride crash")
+                                .putExtra(Intent.EXTRA_TEXT, note), null)))
                 .show();
     }
 
@@ -789,18 +835,23 @@ public final class RideActivity extends Activity
         for (Panel p : panels) {
             frame.addView(p, new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            p.setOnToggle(this::updateDial);
         }
 
         frame.setOnApplyWindowInsetsListener((v, insets) -> {
-            Insets bars = insets.getInsets(WindowInsets.Type.systemBars()
-                    | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
+            int system = WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout();
+            Insets bars = insets.getInsets(system);
+            Insets typing = insets.getInsets(system | WindowInsets.Type.ime());
+            // The dashboard has nothing to type into, so it stays put behind
+            // the keyboard; screens and sheets move up to stay reachable.
             root.setPadding(dp(16) + bars.left, dp(4) + bars.top,
                     dp(16) + bars.right, dp(12) + bars.bottom);
             for (Panel p : panels) {
-                p.setPadding(dp(16) + bars.left, bars.top, dp(16) + bars.right, bars.bottom);
+                p.setPadding(dp(16) + typing.left, typing.top,
+                        dp(16) + typing.right, typing.bottom);
             }
-            Sheet.setInsets(bars.top, bars.bottom);
-            Snack.setBottomInset(bars.bottom);
+            Sheet.setInsets(typing.top, typing.bottom);
+            Snack.setInsets(typing.top, typing.bottom);
             return insets;
         });
 

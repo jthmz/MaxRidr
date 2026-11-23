@@ -136,6 +136,10 @@ final class Bike {
                 controllerStatus = "Reading";
                 controllerMemory.reset();
                 backedUp = false;
+                // Values on trial when the link went away may or may not have
+                // survived (a power cycle discards them): look again once the
+                // settings have been read back.
+                tryNeedsRecheck = tuneState == TRYING;
                 main.removeCallbacks(hello);
                 main.post(hello);
                 changed();
@@ -144,6 +148,7 @@ final class Bike {
             @Override
             public void onData(byte[] value) {
                 if (!controllerMemory.feed(value)) return;
+                if (tryNeedsRecheck && controllerMemory.settingsLoaded()) recheckTry();
                 Fardriver.Live l = controllerMemory.live();
                 if (l == null) return;
                 controller = l;
@@ -157,7 +162,9 @@ final class Bike {
                 main.removeCallbacks(hello);
                 controller = null;
                 controllerStatus = why;
-                abortTuning("The controller link dropped");
+                // A change in flight notices the dead link itself and reports
+                // it. Values already on trial are kept, so Undo still knows
+                // what to put back when the link returns.
                 changed();
                 retryLater();
             }
@@ -294,7 +301,7 @@ final class Bike {
             controllerLink.close();
             controller = null;
             controllerStatus = "Not linked";
-            abortTuning(null);
+            abortTuning();
             prefs.edit().remove("bike_ctl_name").apply();
         }
         changed();
@@ -416,6 +423,7 @@ final class Bike {
     }
 
     private int tuneState = TUNE_IDLE;
+    private boolean tryNeedsRecheck;
     /** Values on the controller before the current try, by setting key. */
     private final Map<String, Integer> before = new LinkedHashMap<>();
 
@@ -530,6 +538,10 @@ final class Bike {
             cb.done(true, null);
             return;
         }
+        if (!controllerLink.isReady()) {
+            cb.done(false, "The controller link dropped");
+            return;
+        }
         final Fardriver.Param p = Fardriver.param(order.get(index));
         final Integer target = values.get(order.get(index));
         if (p == null || target == null || controllerMemory.raw(p) == target) {
@@ -579,6 +591,21 @@ final class Bike {
                 }
             }
         }, 200);
+    }
+
+    /**
+     * After a reconnect: if every setting on trial reads as it did before the
+     * trial, the controller was restarted and the trial is over.
+     */
+    private void recheckTry() {
+        tryNeedsRecheck = false;
+        if (tuneState != TRYING) return;
+        for (Map.Entry<String, Integer> e : before.entrySet()) {
+            Fardriver.Param p = Fardriver.param(e.getKey());
+            if (p != null && controllerMemory.raw(p) != e.getValue()) return; // still live
+        }
+        before.clear();
+        tuneState = TUNE_IDLE;
     }
 
     /** Step 3: put back the values from before the try. */
@@ -644,9 +671,10 @@ final class Bike {
         }, 1500);
     }
 
-    private void abortTuning(String why) {
-        if (tuneState == TUNE_IDLE) return;
+    /** Forget any trial in progress (the controller is being unlinked). */
+    private void abortTuning() {
         before.clear();
+        tryNeedsRecheck = false;
         tuneState = TUNE_IDLE;
     }
 

@@ -160,14 +160,23 @@ final class GaugeView extends View {
         // The dial is a 270 degree arc, so its visual centre sits above the
         // middle of its bounding circle; nudge down to centre what is drawn.
         float radius = Math.min(w / 2f - 8 * density, h / 1.72f - 8 * density);
+        // The dial gets whatever height the dashboard has left over, which is
+        // next to nothing while the keyboard is up. Below this size there is
+        // no room for a readable dial, so draw nothing rather than a smudge
+        // (and a gradient cannot be built with no radius at all).
+        if (radius < 40 * density) return;
+        // A cramped dial keeps only the ticks and the number.
+        boolean roomy = radius >= 96 * density;
         float cy = h / 2f + radius * 0.14f;
         float fraction = Math.min(1f, toUnits(shownMps) / fullScaleUnits());
 
         if (fx) drawGlow(canvas, cx, cy, radius, fraction);
         drawTicks(canvas, cx, cy, radius, fraction);
-        drawScale(canvas, cx, cy, radius);
-        if (hasPower) drawPower(canvas, cx, cy, radius);
-        else if (fx) drawSweep(canvas, cx, cy, radius);
+        if (roomy) {
+            drawScale(canvas, cx, cy, radius);
+            if (hasPower) drawPower(canvas, cx, cy, radius);
+            else if (fx) drawSweep(canvas, cx, cy, radius);
+        }
         drawReadout(canvas, cx, cy, radius);
 
         // Redraw continuously only while something on the dial is actually moving.

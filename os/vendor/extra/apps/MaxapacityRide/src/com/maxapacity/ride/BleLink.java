@@ -212,12 +212,22 @@ final class BleLink {
                     });
                 }
 
-                // The two-argument form is called on every Android version.
+                // Android 13 and later hand the bytes over directly.
+                @Override
+                public void onCharacteristicChanged(BluetoothGatt g,
+                        BluetoothGattCharacteristic c, byte[] value) {
+                    deliver(value);
+                }
+
+                // Android 12 leaves them on the characteristic.
                 @Override
                 @SuppressWarnings("deprecation")
                 public void onCharacteristicChanged(BluetoothGatt g,
                         BluetoothGattCharacteristic c) {
-                    final byte[] value = c.getValue();
+                    deliver(c.getValue());
+                }
+
+                private void deliver(byte[] value) {
                     if (value == null) return;
                     final byte[] copy = value.clone();
                     main.post(() -> {

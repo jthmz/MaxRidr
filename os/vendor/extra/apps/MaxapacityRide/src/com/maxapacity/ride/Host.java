@@ -31,6 +31,9 @@ interface Host {
 
     void connectStrava();
 
+    /** Show the note left by the last crash, with a way to share it. */
+    void showLastCrash();
+
     /** Ask for the read-only GitHub token that lets the app fetch updates. */
     void editUpdateToken();
 

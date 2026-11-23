@@ -480,11 +480,12 @@ final class Ui {
         e.setHintTextColor(TEXT_3);
         e.setTextColor(TEXT);
         e.setTextSize(TypedValue.COMPLEX_UNIT_SP, T_BODY);
-        e.setTypeface(secret ? mono : sans);
         e.setSingleLine(true);
         e.setInputType(secret
                 ? InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD
                 : InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        // After the input type: choosing a password type resets the typeface.
+        e.setTypeface(secret ? mono : sans);
         e.setPadding(dp(c, 16), 0, dp(c, 16), 0);
         e.setBackground(panel(c, BG, HAIRLINE_HI, 10));
         e.setOnFocusChangeListener((v, focused) -> v.setBackground(
