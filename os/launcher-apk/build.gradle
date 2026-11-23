@@ -1,6 +1,6 @@
 // Builds the ride launcher as a standalone APK from the same sources the ROM
 // build uses (os/vendor/extra/apps/MaxapacityRide), for installing on a stock
-// LineageOS phone with `adb install`.
+// LineageOS phone with `adb install` and for over-the-air updates after that.
 plugins {
     id 'com.android.application' version '8.7.3'
 }
@@ -14,6 +14,16 @@ manifestCopy.parentFile.mkdirs()
 manifestCopy.text = new File(appDir, 'AndroidManifest.xml').text
         .replaceFirst(/\s+package="[^"]+"/, '')
 
+// CI passes its run number, so every build is newer than the last and the
+// in-app updater can tell which is which. Local builds are version 1.
+def rideVersionCode = (project.findProperty('rideVersionCode') ?: '1') as int
+
+// Updates only install over an app signed with the same key, so release
+// builds use one long-lived key (CI supplies it through the environment).
+// Without it the build falls back to the throwaway debug key.
+def keystorePath = System.getenv('RIDE_KEYSTORE')
+def hasReleaseKey = keystorePath != null && file(keystorePath).isFile()
+
 android {
     namespace 'com.maxapacity.ride'
     compileSdk 35
@@ -22,8 +32,8 @@ android {
         applicationId 'com.maxapacity.ride'
         minSdk 31
         targetSdk 35
-        versionCode 1
-        versionName '1.0'
+        versionCode rideVersionCode
+        versionName "1.0.${rideVersionCode}"
     }
 
     sourceSets {
@@ -31,6 +41,29 @@ android {
             manifest.srcFile manifestCopy
             java.srcDirs = [new File(appDir, 'src')]
             res.srcDirs = [new File(appDir, 'res')]
+            assets.srcDirs = [new File(appDir, 'assets')]
+        }
+        // Protocol tests: plain JVM, run with `gradle testReleaseUnitTest`.
+        test {
+            java.srcDirs = [new File(appDir, 'tests')]
+        }
+    }
+
+    signingConfigs {
+        release {
+            if (hasReleaseKey) {
+                storeFile file(keystorePath)
+                storePassword System.getenv('RIDE_KEYSTORE_PASSWORD')
+                keyAlias 'ride'
+                keyPassword System.getenv('RIDE_KEYSTORE_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig hasReleaseKey ? signingConfigs.release : signingConfigs.debug
         }
     }
 
@@ -41,5 +74,10 @@ android {
 
     lint {
         abortOnError false
+        checkReleaseBuilds false
     }
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
 }

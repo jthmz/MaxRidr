@@ -124,6 +124,60 @@ final class RideStore {
         }
     }
 
+    /**
+     * Takes a ride out of the history. The GPX file is only set aside, so
+     * {@link #restore} can put the ride back; {@link #purgeRemoved} deletes
+     * set-aside files for good.
+     *
+     * @return the removed entry and its position, or null if it was not found
+     */
+    static Removed remove(Context c, String file) {
+        JSONArray rides = load(c);
+        for (int i = 0; i < rides.length(); i++) {
+            JSONObject r = rides.optJSONObject(i);
+            if (r == null || !file.equals(r.optString("file"))) continue;
+            rides.remove(i);
+            save(c, rides);
+            new File(dir(c), file).renameTo(new File(dir(c), file + REMOVED_SUFFIX));
+            return new Removed(r, i);
+        }
+        return null;
+    }
+
+    static void restore(Context c, Removed removed) {
+        String file = removed.ride.optString("file");
+        new File(dir(c), file + REMOVED_SUFFIX).renameTo(new File(dir(c), file));
+        JSONArray rides = load(c);
+        JSONArray out = new JSONArray();
+        int at = Math.min(removed.index, rides.length());
+        for (int i = 0; i <= rides.length(); i++) {
+            if (i == at) out.put(removed.ride);
+            if (i < rides.length()) out.put(rides.opt(i));
+        }
+        save(c, out);
+    }
+
+    /** Deletes the files of rides removed in an earlier session. */
+    static void purgeRemoved(Context c) {
+        File[] files = dir(c).listFiles();
+        if (files == null) return;
+        for (File f : files) {
+            if (f.getName().endsWith(REMOVED_SUFFIX)) f.delete();
+        }
+    }
+
+    static final class Removed {
+        final JSONObject ride;
+        final int index;
+
+        Removed(JSONObject ride, int index) {
+            this.ride = ride;
+            this.index = index;
+        }
+    }
+
+    private static final String REMOVED_SUFFIX = ".removed";
+
     /** "Nov 23, 08:14  12.40 mi  0:42:10" for the history list. */
     static String describe(Context c, JSONObject r) {
         SimpleDateFormat fmt = new SimpleDateFormat("MMM d, HH:mm", Locale.getDefault());

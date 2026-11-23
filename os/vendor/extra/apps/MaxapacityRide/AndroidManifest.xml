@@ -17,6 +17,21 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Bike link: ANT BMS battery and Fardriver controller over Bluetooth LE.
+         Scan results are only used to find those two devices, never to
+         work out where the phone is. -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-feature
+        android:name="android.hardware.bluetooth_le"
+        android:required="false" />
+    <!-- Over-the-air updates: the app downloads its own newer build and hands
+         it to the system installer. The second permission lets later updates
+         install without a prompt once this app is its own installer. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
     <!-- Needed to list installed apps for the app drawer and ride-app slots. -->
     <queries>
@@ -86,6 +101,10 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Motion gesture that toggles the flashlight" />
         </service>
+
+        <receiver
+            android:name=".Updater$Receiver"
+            android:exported="false" />
 
         <receiver
             android:name=".ChopService$BootReceiver"

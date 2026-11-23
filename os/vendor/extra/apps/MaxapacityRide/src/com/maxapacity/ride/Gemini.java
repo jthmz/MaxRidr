@@ -158,6 +158,23 @@ final class Gemini {
         } else {
             sb.append("no ride in progress.");
         }
+        Bike bike = Bike.get(c);
+        AntBms.Data b = bike.battery();
+        if (b != null) {
+            sb.append(String.format(java.util.Locale.US,
+                    " Battery (live from the BMS): %d%% charge, %.1f V, %.1f A, %d cells,"
+                            + " cell spread %d mV, %.1f Ah remaining.",
+                    b.soc, b.volts, b.amps, b.cellVolts.length,
+                    Math.round(b.deltaCellV() * 1000), b.remainingAh));
+            if (b.hasProblem()) sb.append(" BMS reports: ").append(b.problems).append('.');
+        }
+        Fardriver.Live l = bike.controller();
+        if (l != null) {
+            sb.append(String.format(java.util.Locale.US,
+                    " Controller (live): %.1f kW, %d rpm, controller %d C, %s speed mode.",
+                    l.powerW() / 1000f, l.rpm, l.mosfetTempC, l.speedModeName()));
+            if (l.faults != 0) sb.append(" Controller faults: ").append(l.faultNames()).append('.');
+        }
         JSONArray rides = RideStore.load(c);
         if (rides.length() > 0) {
             sb.append(" Recent rides, newest first: ");

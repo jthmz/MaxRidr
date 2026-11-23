@@ -1,19 +1,58 @@
 name: Ride launcher APK
 
+# Builds the phone app on every push that touches it, attaches the APK to a
+# draft release, and (from main, or when run by hand) publishes it as the
+# over-the-air update that installed phones pick up on their own.
+#
+# HOW UPDATES REACH PHONES
+#   1. This workflow signs every build with one long-lived key. Android only
+#      installs an update over an app signed with the same key.
+#   2. A publishing run uploads the APK and a small manifest (latest.json) to
+#      a public bucket on the project's Supabase storage.
+#   3. The app reads latest.json, downloads a newer APK, checks its SHA-256
+#      and installs it (see Updater.java).
+#
+# THE SIGNING KEY
+#   Kept in a PRIVATE Supabase storage bucket (ride-signing), created the
+#   first time this runs. No one has to generate or paste a key. To manage the
+#   key yourself instead, add repo secrets RIDE_KEYSTORE_B64 (base64 of a
+#   keystore whose key alias is "ride") and RIDE_KEYSTORE_PASSWORD; they take
+#   precedence.
+#
+# The only secret this needs is SUPABASE_ACCESS_TOKEN, which the repo already
+# has for deploying functions.
+
 on:
   push:
     paths:
       - 'os/**'
       - '.github/workflows/ride-launcher-apk.yml'
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish this build to phones as an over-the-air update'
+        type: boolean
+        default: true
 
 # contents: write is needed to attach the APK to a draft release.
 permissions:
   contents: write
 
+# One at a time: two first runs must not both create a signing key, and
+# latest.json must end up pointing at the newest build.
+concurrency:
+  group: ride-launcher-apk
+  cancel-in-progress: false
+
+env:
+  SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF || 'dmrjgofvupbsgtjdzcct' }}
+  APP_BUCKET: ride-app
+  KEY_BUCKET: ride-signing
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -23,11 +62,110 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
+
+      # Resolves the storage credentials once. Everything below that talks to
+      # Supabase is skipped when the access token is not configured, and the
+      # build then falls back to a debug-signed APK as before.
+      - name: Storage access
+        id: storage
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ]; then
+            echo "::warning::SUPABASE_ACCESS_TOKEN is not set: building a debug-signed APK, no over-the-air publish."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          keys=$(curl -fsS -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+            "https://api.supabase.com/v1/projects/$SUPABASE_PROJECT_REF/api-keys?reveal=true")
+          key=$(echo "$keys" | jq -r '
+            ([.[] | select(.name == "service_role") | .api_key][0])
+            // ([.[] | select(.type == "secret") | .api_key][0]) // empty')
+          if [ -z "$key" ] || [ "$key" = "null" ]; then
+            echo "::error::Could not read the project's service key with SUPABASE_ACCESS_TOKEN."
+            exit 1
+          fi
+          echo "::add-mask::$key"
+          echo "SERVICE_KEY=$key" >> "$GITHUB_ENV"
+          echo "STORAGE=https://$SUPABASE_PROJECT_REF.supabase.co/storage/v1" >> "$GITHUB_ENV"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure storage buckets
+        if: steps.storage.outputs.ready == 'true'
+        run: |
+          ensure() { # name public
+            code=$(curl -sS -o /tmp/bucket.json -w '%{http_code}' -X POST "$STORAGE/bucket" \
+              -H "Authorization: Bearer $SERVICE_KEY" -H "apikey: $SERVICE_KEY" \
+              -H 'Content-Type: application/json' \
+              -d "{\"id\":\"$1\",\"name\":\"$1\",\"public\":$2}")
+            if [ "$code" = "200" ]; then echo "Created bucket $1"; return; fi
+            # Anything else must be "already exists"; confirm by reading it back.
+            curl -fsS -o /tmp/bucket.json "$STORAGE/bucket/$1" \
+              -H "Authorization: Bearer $SERVICE_KEY" -H "apikey: $SERVICE_KEY"
+            if [ "$(jq -r .public /tmp/bucket.json)" != "$2" ]; then
+              echo "::error::Bucket $1 exists but its public setting is not $2."
+              exit 1
+            fi
+          }
+          ensure "$APP_BUCKET" true
+          ensure "$KEY_BUCKET" false
+
+      - name: Signing key
+        id: key
+        env:
+          RIDE_KEYSTORE_B64: ${{ secrets.RIDE_KEYSTORE_B64 }}
+          RIDE_KEYSTORE_PASSWORD_SECRET: ${{ secrets.RIDE_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          store="$RUNNER_TEMP/ride.jks"
+          if [ -n "${RIDE_KEYSTORE_B64:-}" ]; then
+            echo "$RIDE_KEYSTORE_B64" | base64 -d > "$store"
+            pass="$RIDE_KEYSTORE_PASSWORD_SECRET"
+            echo "Using the signing key from repo secrets."
+          elif [ "${{ steps.storage.outputs.ready }}" = "true" ]; then
+            auth=(-H "Authorization: Bearer $SERVICE_KEY" -H "apikey: $SERVICE_KEY")
+            # List the bucket rather than guessing from a failed download: a key
+            # must only ever be created when it is certain none exists, because
+            # a second key would lock every installed phone out of updates.
+            list=$(curl -fsS -X POST "$STORAGE/object/list/$KEY_BUCKET" "${auth[@]}" \
+              -H 'Content-Type: application/json' -d '{"prefix":"","limit":100}')
+            echo "$list" | jq -e 'type == "array"' > /dev/null
+            if echo "$list" | jq -e 'any(.[]; .name == "ride.jks.b64")' > /dev/null; then
+              curl -fsS "$STORAGE/object/$KEY_BUCKET/ride.jks.b64" "${auth[@]}" | base64 -d > "$store"
+              pass=$(curl -fsS "$STORAGE/object/$KEY_BUCKET/ride.jks.pass" "${auth[@]}")
+              echo "Using the signing key from private storage."
+            else
+              pass=$(openssl rand -hex 24)
+              keytool -genkeypair -keystore "$store" -storetype JKS -alias ride \
+                -keyalg RSA -keysize 2048 -validity 10950 \
+                -storepass "$pass" -keypass "$pass" -dname "CN=MAXAPACITY Ride"
+              base64 -w0 "$store" > "$RUNNER_TEMP/ride.jks.b64"
+              printf '%s' "$pass" > "$RUNNER_TEMP/ride.jks.pass"
+              # No upsert: if another run got there first this fails rather
+              # than replacing the key.
+              curl -fsS -X POST "$STORAGE/object/$KEY_BUCKET/ride.jks.pass" "${auth[@]}" \
+                -H 'Content-Type: text/plain' --data-binary "@$RUNNER_TEMP/ride.jks.pass" > /dev/null
+              curl -fsS -X POST "$STORAGE/object/$KEY_BUCKET/ride.jks.b64" "${auth[@]}" \
+                -H 'Content-Type: text/plain' --data-binary "@$RUNNER_TEMP/ride.jks.b64" > /dev/null
+              echo "::notice::Created the app's signing key and stored it in the private $KEY_BUCKET bucket."
+            fi
+          else
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::add-mask::$pass"
+          keytool -list -keystore "$store" -storepass "$pass" -alias ride > /dev/null
+          echo "RIDE_KEYSTORE=$store" >> "$GITHUB_ENV"
+          echo "RIDE_KEYSTORE_PASSWORD=$pass" >> "$GITHUB_ENV"
+          echo "stable=true" >> "$GITHUB_OUTPUT"
+
       - name: Build APK
         working-directory: os/launcher-apk
-        run: gradle --no-daemon assembleDebug
+        run: gradle --no-daemon testReleaseUnitTest assembleRelease -PrideVersionCode=${{ github.run_number }}
+
       - name: Rename APK
-        run: cp os/launcher-apk/build/outputs/apk/debug/*.apk maxapacity-ride.apk
+        run: cp os/launcher-apk/build/outputs/apk/release/*.apk maxapacity-ride.apk
+
       # Delivered as a draft release (visible to collaborators only) rather
       # than a workflow artifact, which counts against the Actions storage quota.
       - name: Attach APK to draft release
@@ -43,4 +181,36 @@ jobs:
           gh release create ride-launcher-latest maxapacity-ride.apk \
             --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
             --title "$TITLE" \
-            --notes "Debug build of the MAXAPACITY ride launcher from $GITHUB_SHA. Install with: adb install -r maxapacity-ride.apk"
+            --notes "MAXAPACITY ride launcher 1.0.${{ github.run_number }} from $GITHUB_SHA. First install: adb install maxapacity-ride.apk. After that the app updates itself."
+
+      # Phones follow whatever this step publishes, so it only runs for main
+      # and for runs started by hand, never for work-in-progress pushes.
+      - name: Publish over-the-air update
+        if: >-
+          steps.key.outputs.stable == 'true' &&
+          ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+           (github.event_name == 'workflow_dispatch' && inputs.publish))
+        run: |
+          set -euo pipefail
+          code=${{ github.run_number }}
+          name="maxapacity-ride-$code.apk"
+          auth=(-H "Authorization: Bearer $SERVICE_KEY" -H "apikey: $SERVICE_KEY")
+          curl -fsS -X POST "$STORAGE/object/$APP_BUCKET/$name" "${auth[@]}" \
+            -H 'x-upsert: true' -H 'Content-Type: application/vnd.android.package-archive' \
+            --data-binary @maxapacity-ride.apk > /dev/null
+          jq -n \
+            --argjson versionCode "$code" \
+            --arg versionName "1.0.$code" \
+            --arg url "$STORAGE/object/public/$APP_BUCKET/$name" \
+            --arg sha256 "$(sha256sum maxapacity-ride.apk | cut -d' ' -f1)" \
+            --argjson size "$(stat -c %s maxapacity-ride.apk)" \
+            --arg commit "$GITHUB_SHA" \
+            '{versionCode: $versionCode, versionName: $versionName, url: $url,
+              sha256: $sha256, size: $size, commit: $commit}' > latest.json
+          # The manifest goes last, so phones never see a version whose APK is
+          # not there yet.
+          curl -fsS -X POST "$STORAGE/object/$APP_BUCKET/latest.json" "${auth[@]}" \
+            -H 'x-upsert: true' -H 'Content-Type: application/json' \
+            -H 'cache-control: max-age=60' --data-binary @latest.json > /dev/null
+          echo "::notice::Published 1.0.$code over the air."
+          cat latest.json

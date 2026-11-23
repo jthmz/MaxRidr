@@ -5,9 +5,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
-import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
-import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.provider.Settings;
 import android.text.Editable;
@@ -19,12 +17,12 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
-import android.view.inputmethod.InputMethodManager;
 import android.widget.BaseAdapter;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.GridView;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.PopupMenu;
 import android.widget.TextView;
 
 import java.util.ArrayList;
@@ -33,18 +31,13 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * Full-screen app drawer: search box over a four-column icon grid.
- * Tap opens an app; long-press offers pin, app info and uninstall.
+ * App drawer: search, the MAXAPACITY site tools, then every installed app in a
+ * four-column grid. Tap opens an app; press and hold offers pin, app info and
+ * uninstall.
  */
-final class AppDrawer extends LinearLayout {
+final class AppDrawer extends Panel {
 
-    interface Host {
-        void launch(Intent intent);
-
-        void pin(ComponentName app);
-    }
-
-    private static final class App {
+    static final class App {
         final String label;
         final String key;
         final Drawable icon;
@@ -58,17 +51,13 @@ final class AppDrawer extends LinearLayout {
         }
     }
 
-    private static final int SCRIM = 0xF2131316;
-    private static final int SURFACE = 0xFF1C1C21;
-    private static final int HAIRLINE = 0xFF2E2E36;
-    private static final int TEXT = 0xFFF7F5F0;
-    private static final int TEXT_DIM = 0xFF9A9AA3;
+    private static final String SITE = "https://maxapacity.com";
 
     private final Host host;
-    private final float density;
     private final EditText search;
     private final GridView grid;
-    private final TextView empty;
+    private final FrameLayout emptySlot;
+    private final LinearLayout tools;
     private final List<App> all = new ArrayList<>();
     private final List<App> shown = new ArrayList<>();
     private boolean loaded;
@@ -91,49 +80,47 @@ final class AppDrawer extends LinearLayout {
 
         @Override
         public View getView(int position, View convertView, ViewGroup parent) {
-            TextView cell = (TextView) convertView;
+            LinearLayout cell = (LinearLayout) convertView;
             if (cell == null) {
-                cell = new TextView(getContext());
-                cell.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-                cell.setTextColor(TEXT);
+                Context c = getContext();
+                cell = Ui.column(c);
                 cell.setGravity(Gravity.CENTER_HORIZONTAL);
-                cell.setSingleLine(true);
-                cell.setEllipsize(TextUtils.TruncateAt.END);
-                cell.setCompoundDrawablePadding(dp(8));
                 cell.setPadding(dp(4), dp(12), dp(4), dp(12));
+                cell.addView(new ImageView(c), new LinearLayout.LayoutParams(dp(48), dp(48)));
+                TextView name = Ui.small(c, "", Ui.TEXT_2);
+                name.setTextSize(TypedValue.COMPLEX_UNIT_SP, Ui.T_LABEL);
+                name.setGravity(Gravity.CENTER_HORIZONTAL);
+                name.setSingleLine(true);
+                name.setEllipsize(TextUtils.TruncateAt.END);
+                cell.addView(name, Ui.top(c, Ui.matchWrap(), 8));
             }
             App app = shown.get(position);
-            app.icon.setBounds(0, 0, dp(48), dp(48));
-            cell.setCompoundDrawables(null, app.icon, null, null);
-            cell.setText(app.label);
+            ((ImageView) cell.getChildAt(0)).setImageDrawable(app.icon);
+            ((TextView) cell.getChildAt(1)).setText(app.label);
             return cell;
         }
     };
 
     AppDrawer(Context context, Host host) {
-        super(context);
+        super(context, "Apps");
         this.host = host;
-        density = getResources().getDisplayMetrics().density;
-        setOrientation(VERTICAL);
-        setBackgroundColor(SCRIM);
-        setClickable(true); // swallow touches so the dashboard underneath stays put
-        setVisibility(GONE);
 
+        // Search field with a leading icon.
+        LinearLayout box = Ui.row(context);
+        box.setBackground(Ui.panel(context, Ui.SURFACE, Ui.HAIRLINE, 10));
+        box.setPadding(dp(16), 0, dp(4), 0);
+        box.addView(Ui.icon(context, Icons.SEARCH, 18, Ui.TEXT_3));
         search = new EditText(context);
         search.setHint("Search apps");
-        search.setHintTextColor(TEXT_DIM);
-        search.setTextColor(TEXT);
-        search.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        search.setTypeface(Typeface.MONOSPACE);
+        search.setHintTextColor(Ui.TEXT_3);
+        search.setTextColor(Ui.TEXT);
+        search.setTextSize(TypedValue.COMPLEX_UNIT_SP, Ui.T_BODY);
+        search.setTypeface(Ui.sans);
         search.setSingleLine(true);
         search.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         search.setImeOptions(EditorInfo.IME_ACTION_GO);
-        search.setPadding(dp(16), 0, dp(16), 0);
-        GradientDrawable box = new GradientDrawable();
-        box.setColor(SURFACE);
-        box.setCornerRadius(dp(10));
-        box.setStroke(Math.max(1, dp(1)), HAIRLINE);
-        search.setBackground(box);
+        search.setBackground(null);
+        search.setPadding(dp(12), 0, dp(12), 0);
         search.addTextChangedListener(new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {
@@ -153,34 +140,76 @@ final class AppDrawer extends LinearLayout {
             if (!shown.isEmpty()) open(shown.get(0));
             return true;
         });
-        addView(search, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+        box.addView(search, new LinearLayout.LayoutParams(
+                0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        final View clear = Ui.iconButton(context, Icons.X, "Clear search");
+        clear.setOnClickListener(v -> search.setText(""));
+        box.addView(clear, new LinearLayout.LayoutParams(dp(40), dp(40)));
+        clear.setPadding(dp(11), dp(11), dp(11), dp(11));
+        clear.setVisibility(INVISIBLE);
+        search.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
 
-        empty = new TextView(context);
-        empty.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        empty.setTextColor(TEXT_DIM);
-        empty.setGravity(Gravity.CENTER);
-        empty.setPadding(0, dp(48), 0, 0);
-        empty.setVisibility(GONE);
-        addView(empty, new LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                clear.setVisibility(s.length() == 0 ? INVISIBLE : VISIBLE);
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+            }
+        });
+        addView(box, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+
+        // MAXAPACITY site tools.
+        tools = Ui.row(context);
+        addTool("Garage", Icons.WAREHOUSE, "/garage");
+        addTool("Picker", Icons.SLIDERS_HORIZONTAL, "/picker");
+        addTool("Guides", Icons.BOOK_OPEN, "/guides");
+        addTool("Gearing", Icons.COG, "/tools/sprocket-calculator");
+        addView(tools, Ui.top(context, Ui.matchWrap(), 12));
+
+        emptySlot = new FrameLayout(context);
+        emptySlot.setVisibility(GONE);
+        addView(emptySlot, Ui.matchWrap());
 
         grid = new GridView(context);
         grid.setNumColumns(4);
-        grid.setVerticalSpacing(dp(4));
-        grid.setSelector(new android.graphics.drawable.ColorDrawable(0x22FFFFFF));
+        grid.setVerticalScrollBarEnabled(false);
+        grid.setSelector(Ui.ghost(context, 16));
+        grid.setDrawSelectorOnTop(true);
+        grid.setClipToPadding(false);
+        grid.setPadding(0, 0, 0, dp(16));
         grid.setAdapter(adapter);
         grid.setOnItemClickListener((parent, view, position, id) -> open(shown.get(position)));
         grid.setOnItemLongClickListener((parent, view, position, id) -> {
-            showMenu(view, shown.get(position));
+            showMenu(shown.get(position));
             return true;
         });
-        LayoutParams gridLp = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
-        gridLp.topMargin = dp(16);
-        addView(grid, gridLp);
+        addView(grid, Ui.top(context, new LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f), 12));
     }
 
-    boolean isOpen() {
-        return getVisibility() == VISIBLE;
+    private void addTool(String name, String icon, final String path) {
+        Context c = getContext();
+        LinearLayout tile = Ui.row(c);
+        tile.setGravity(Gravity.CENTER);
+        tile.setBackground(Ui.pressable(c, Ui.SURFACE, Ui.HAIRLINE, 10));
+        tile.addView(Ui.icon(c, icon, 16, Ui.TEXT_2));
+        TextView l = Ui.small(c, name, Ui.TEXT);
+        l.setSingleLine(true);
+        l.setIncludeFontPadding(false);
+        tile.addView(l, Ui.left(c, Ui.wrap(), 6));
+        tile.setOnClickListener(v -> {
+            host.launch(new Intent(Intent.ACTION_VIEW, Uri.parse(SITE + path)));
+            close();
+        });
+        Ui.press(tile);
+        LayoutParams lp = new LayoutParams(0, dp(40), 1f);
+        if (tools.getChildCount() > 0) lp.leftMargin = dp(8);
+        tools.addView(tile, lp);
     }
 
     /** True when the grid is scrolled to the top, so a downward swipe may close it. */
@@ -188,26 +217,23 @@ final class AppDrawer extends LinearLayout {
         return !grid.canScrollVertically(-1);
     }
 
-    void open() {
-        if (isOpen()) return;
+    @Override
+    protected void onOpen() {
         if (!loaded) load();
         search.setText("");
         filter();
         grid.setSelection(0);
-        setVisibility(VISIBLE);
-        setAlpha(0f);
-        setTranslationY(dp(48));
-        animate().alpha(1f).translationY(0f).setDuration(180).start();
     }
 
-    void close() {
-        if (!isOpen()) return;
-        InputMethodManager imm = (InputMethodManager)
-                getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
-        imm.hideSoftInputFromWindow(getWindowToken(), 0);
+    @Override
+    protected void onClose() {
         search.clearFocus();
-        animate().alpha(0f).translationY(dp(48)).setDuration(150)
-                .withEndAction(() -> setVisibility(GONE)).start();
+    }
+
+    /** Installed apps, alphabetical; loaded on first use. */
+    List<App> apps() {
+        if (!loaded) load();
+        return all;
     }
 
     /** Forget the cached list after an app is installed, removed or updated. */
@@ -234,53 +260,54 @@ final class AppDrawer extends LinearLayout {
     }
 
     private void filter() {
-        String q = search.getText().toString().trim().toLowerCase(Locale.getDefault());
+        String typed = search.getText().toString().trim();
+        String q = typed.toLowerCase(Locale.getDefault());
         shown.clear();
         for (App app : all) {
             if (q.isEmpty() || app.key.contains(q)) shown.add(app);
         }
         adapter.notifyDataSetChanged();
+        status.set(all.isEmpty() ? "" : shown.size() + (shown.size() == 1 ? " APP" : " APPS"),
+                Ui.TEXT_3);
+        // The site tools are a browsing aid; they step aside while searching.
+        tools.setVisibility(q.isEmpty() ? VISIBLE : GONE);
+        emptySlot.removeAllViews();
         if (shown.isEmpty()) {
-            empty.setText(all.isEmpty() ? "No apps installed yet"
-                    : "No app matches \"" + search.getText().toString().trim() + "\"");
+            emptySlot.addView(all.isEmpty()
+                    ? Ui.emptyState(getContext(), Icons.LAYOUT_GRID, "No apps yet",
+                            "Apps you install show up here.", null, 0, null)
+                    : Ui.emptyState(getContext(), Icons.SEARCH, "No match for \"" + typed + "\"",
+                            "Check the spelling or clear the search.", "Clear search",
+                            Ui.SECONDARY, v -> search.setText("")));
         }
-        empty.setVisibility(shown.isEmpty() ? VISIBLE : GONE);
+        emptySlot.setVisibility(shown.isEmpty() ? VISIBLE : GONE);
+        grid.setVisibility(shown.isEmpty() ? GONE : VISIBLE);
+    }
+
+    static Intent launchIntent(ComponentName cn) {
+        return new Intent(Intent.ACTION_MAIN)
+                .addCategory(Intent.CATEGORY_LAUNCHER)
+                .setComponent(cn)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                        | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
     }
 
     private void open(App app) {
-        host.launch(new Intent(Intent.ACTION_MAIN)
-                .addCategory(Intent.CATEGORY_LAUNCHER)
-                .setComponent(app.component)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                        | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED));
+        host.launch(launchIntent(app.component));
         close();
     }
 
-    private void showMenu(View anchor, final App app) {
-        PopupMenu menu = new PopupMenu(getContext(), anchor);
-        menu.getMenu().add(0, 1, 0, "Pin to ride apps");
-        menu.getMenu().add(0, 2, 1, "App info");
-        menu.getMenu().add(0, 3, 2, "Uninstall");
-        menu.setOnMenuItemClickListener(item -> {
-            Uri pkg = Uri.fromParts("package", app.component.getPackageName(), null);
-            switch (item.getItemId()) {
-                case 1:
-                    host.pin(app.component);
-                    break;
-                case 2:
-                    host.launch(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg));
-                    break;
-                default:
-                    // The system asks for confirmation and refuses built-in apps.
-                    host.launch(new Intent(Intent.ACTION_DELETE, pkg));
-                    break;
-            }
-            return true;
-        });
-        menu.show();
-    }
-
-    private int dp(int v) {
-        return Math.round(v * density);
+    private void showMenu(final App app) {
+        final Uri pkg = Uri.fromParts("package", app.component.getPackageName(), null);
+        new Sheet(host.frame(), app.label, null)
+                .item(Icons.PIN, "Pin to ride apps", "One-tap access from the dashboard", false,
+                        () -> host.pin(app.component))
+                .item(Icons.INFO, "App info", "Permissions, storage and notifications", false,
+                        () -> host.launch(new Intent(
+                                Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg)))
+                // The system asks for confirmation and refuses built-in apps.
+                .item(Icons.TRASH_2, "Uninstall", null, true,
+                        () -> host.launch(new Intent(Intent.ACTION_DELETE, pkg)))
+                .show();
     }
 }

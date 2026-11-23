@@ -1,19 +1,13 @@
 package com.maxapacity.ride;
 
 import android.content.Context;
-import android.graphics.Typeface;
-import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
-import android.util.TypedValue;
-import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -26,6 +20,7 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -38,95 +33,56 @@ import java.util.concurrent.Executors;
  * Talks to the Deck's /api/state and /api/action over the local network (with
  * the Deck's phone token) or over USB through `adb reverse`.
  */
-final class DeckView extends LinearLayout {
-
-    interface Host {
-        void connectDeck();
-    }
-
-    private static final int SCRIM = 0xF2131316;
-    private static final int BG = 0xFF131316;
-    private static final int SURFACE = 0xFF1C1C21;
-    private static final int HAIRLINE = 0xFF2E2E36;
-    private static final int TEXT = 0xFFF7F5F0;
-    private static final int TEXT_DIM = 0xFF9A9AA3;
-    private static final int ACCENT = 0xFFFFEB1A;
-    private static final int OK = 0xFF4ADE80;
-    private static final int WARN = 0xFFFBBF24;
-    private static final int DANGER = 0xFFF87171;
+final class DeckView extends Panel {
 
     private static final long POLL_MS = 2000;
 
     private final Host host;
-    private final float density;
-    private final TextView status;
     private final LinearLayout content;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
     private boolean loadedOnce;
     private int generation;
+    /** What is on screen, so a poll that changes nothing does not rebuild it. */
+    private String shownState = "";
 
     private final Runnable poll = this::fetchState;
 
     DeckView(Context context, Host host) {
-        super(context);
+        super(context, "Deck");
         this.host = host;
-        density = getResources().getDisplayMetrics().density;
-        setOrientation(VERTICAL);
-        setBackgroundColor(SCRIM);
-        setClickable(true);
-        setVisibility(GONE);
-
-        LinearLayout header = new LinearLayout(context);
-        header.setOrientation(HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        header.addView(label("DECK"), new LayoutParams(0, dp(32), 1f));
-        status = label("");
-        status.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        header.addView(status, new LayoutParams(0, dp(32), 2f));
-        addView(header, matchWrap());
-
-        content = new LinearLayout(context);
-        content.setOrientation(VERTICAL);
-        ScrollView scroll = new ScrollView(context);
-        scroll.addView(content, new ScrollView.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        addView(scroll, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        View edit = Ui.iconButton(context, Icons.LINK, "Deck connection");
+        edit.setOnClickListener(v -> host.editDeckConnection());
+        setHeaderAction(edit);
+        content = addScrollContent();
     }
 
-    boolean isOpen() {
-        return getVisibility() == VISIBLE;
-    }
-
-    void open() {
-        if (isOpen()) return;
-        setVisibility(VISIBLE);
-        setAlpha(0f);
-        setTranslationY(dp(48));
-        animate().alpha(1f).translationY(0f).setDuration(180).start();
+    @Override
+    protected void onOpen() {
         restart();
     }
 
-    void close() {
-        if (!isOpen()) return;
+    @Override
+    protected void onClose() {
         stopPolling();
-        animate().alpha(0f).translationY(dp(48)).setDuration(150)
-                .withEndAction(() -> setVisibility(GONE)).start();
     }
 
     /** Stop talking to the Mac while the launcher is in the background. */
-    void pause() {
+    @Override
+    void onHostPause() {
         stopPolling();
     }
 
-    void resume() {
-        if (isOpen()) restart();
+    @Override
+    void onHostResume() {
+        restart();
     }
 
     /** Called after the address or token changes. */
     void restart() {
         stopPolling();
         loadedOnce = false;
+        shownState = "";
         if (address().isEmpty()) {
             showEmpty();
             return;
@@ -190,8 +146,7 @@ final class DeckView extends LinearLayout {
                     showError(fError);
                 } else {
                     // Keep the last good screen; just say the link dropped.
-                    status.setText("RECONNECTING");
-                    status.setTextColor(WARN);
+                    status.set("RECONNECTING", Ui.WARN);
                 }
                 main.postDelayed(poll, POLL_MS);
             });
@@ -201,7 +156,7 @@ final class DeckView extends LinearLayout {
     private void act(final JSONObject action, String toast) {
         final String url = baseUrl() + "/api/action";
         final String token = Units.prefs(getContext()).getString("deck_token", "");
-        if (toast != null) Toast.makeText(getContext(), toast, Toast.LENGTH_SHORT).show();
+        if (toast != null) host.say(toast);
         io.execute(() -> {
             boolean ok;
             try {
@@ -220,9 +175,7 @@ final class DeckView extends LinearLayout {
                 ok = false;
             }
             if (!ok) {
-                main.post(() -> Toast.makeText(getContext(),
-                        "The Mac did not get that. Check the Deck connection",
-                        Toast.LENGTH_LONG).show());
+                main.post(() -> host.say("The Mac did not get that. Check the Deck connection"));
             }
         });
     }
@@ -247,54 +200,48 @@ final class DeckView extends LinearLayout {
         }
     }
 
-    // ---- States ----------------------------------------------------------
+    // ---- States ---------------------------------------------------------
 
     private void showEmpty() {
-        status.setText("NOT CONNECTED");
-        status.setTextColor(TEXT_DIM);
+        status.set("NOT CONNECTED", Ui.TEXT_3);
         content.removeAllViews();
-        content.addView(message("Your desk dashboard on the phone: channel, video pipeline,"
-                + " Claude's progress and Mac controls."), topMargin(48));
-        TextView connect = button("CONNECT DECK", true);
-        connect.setOnClickListener(v -> host.connectDeck());
-        LayoutParams lp = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
-        lp.topMargin = dp(16);
-        content.addView(connect, lp);
+        content.addView(Ui.emptyState(getContext(), Icons.MONITOR, "Your desk, in your pocket",
+                "Channel numbers, the video pipeline, Claude's progress and Mac controls,"
+                        + " from the Deck service running on your Mac.",
+                "Connect Deck", Ui.PRIMARY, v -> host.editDeckConnection()));
     }
 
     /** Layout-matched placeholders rather than a spinner. */
     private void showLoading() {
-        status.setText("CONNECTING");
-        status.setTextColor(WARN);
+        status.set("CONNECTING", Ui.WARN);
         content.removeAllViews();
-        int[] heights = {112, 72, 96, 72};
-        for (int h : heights) {
-            View block = new View(getContext());
-            block.setBackground(panel(SURFACE, HAIRLINE, 16));
-            LayoutParams lp = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(h));
-            lp.topMargin = dp(8);
-            content.addView(block, lp);
+        int[] heights = {132, 148, 120, 112};
+        for (int i = 0; i < heights.length; i++) {
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(heights[i]));
+            if (i > 0) lp.topMargin = dp(12);
+            content.addView(Ui.skeleton(getContext(), heights[i]), lp);
         }
     }
 
     private void showError(String text) {
-        status.setText("OFFLINE");
-        status.setTextColor(DANGER);
+        status.set("OFFLINE", Ui.DANGER);
         content.removeAllViews();
-        content.addView(message(text), topMargin(48));
-        TextView change = button("CHANGE CONNECTION", false);
-        change.setOnClickListener(v -> host.connectDeck());
-        LayoutParams lp = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
-        lp.topMargin = dp(16);
-        content.addView(change, lp);
+        content.addView(Ui.emptyState(getContext(), Icons.UNLINK, "Deck is out of reach", text,
+                "Change connection", Ui.SECONDARY, v -> host.editDeckConnection()));
     }
 
     private void showState(JSONObject s) {
         // The Deck's own link to the Car Thing: "connected", "no Car Thing on USB", ...
         String link = s.optString("link", "unknown");
         boolean linked = "connected".equals(link);
-        status.setText(("CAR THING: " + link).toUpperCase(java.util.Locale.US));
-        status.setTextColor(linked ? OK : WARN);
+        status.set(linked ? "CAR THING LINKED" : "CAR THING OFF", linked ? Ui.OK : Ui.WARN);
+
+        // Polled every two seconds: rebuild only when something actually changed,
+        // so the screen does not flicker or lose its scroll position.
+        String now = s.toString();
+        if (now.equals(shownState)) return;
+        shownState = now;
 
         content.removeAllViews();
         addChannel(s.optJSONObject("yt"));
@@ -306,247 +253,199 @@ final class DeckView extends LinearLayout {
     }
 
     private void addChannel(JSONObject yt) {
-        LinearLayout card = card("CHANNEL");
+        LinearLayout card = card(Icons.YOUTUBE, "CHANNEL");
         if (yt == null || !yt.optBoolean("ok")) {
-            card.addView(body("Channel numbers are not available right now", TEXT_DIM));
+            card.addView(note("Channel numbers are not available right now"));
             return;
         }
-        card.addView(value(yt.optString("subs") + " subscribers", 20));
+        Context c = getContext();
+        TextView subs = Ui.value(c, "", 28);
+        subs.setText(Ui.withUnit(yt.optString("subs"), "subscribers"));
+        card.addView(subs);
         if (!yt.isNull("toGoal")) {
-            card.addView(bar(yt.optInt("goalPct")), barParams());
-            card.addView(body(yt.optInt("toGoal") + " to " + yt.optInt("goal"), TEXT_DIM));
+            card.addView(Ui.bar(c, yt.optInt("goalPct"), Ui.ACCENT), Ui.top(c, barParams(), 12));
+            card.addView(Ui.small(c, String.format(Locale.US, "%,d to go to %,d",
+                    yt.optInt("toGoal"), yt.optInt("goal")),
+                    Ui.TEXT_3), Ui.top(c, Ui.matchWrap(), 8));
         }
-        card.addView(body("+" + yt.optInt("day") + " views in the last "
-                + yt.optDouble("daySpan", 24) + " h", TEXT));
+        int day = yt.optInt("day");
+        TextView views = Ui.small(c, (day >= 0 ? "+" : "") + String.format(Locale.US, "%,d", day)
+                + " views in the last "
+                + Math.round(yt.optDouble("daySpan", 24)) + " h", day > 0 ? Ui.OK : Ui.TEXT_2);
+        card.addView(views, Ui.top(c, Ui.matchWrap(), 8));
     }
 
     private void addPipeline(JSONObject board) {
-        LinearLayout card = card("PIPELINE");
+        LinearLayout card = card(Icons.LIST_CHECKS, "PIPELINE");
         if (board == null || board.has("error")) {
-            card.addView(body("The board file could not be read on the Mac", TEXT_DIM));
+            card.addView(note("The board file could not be read on the Mac"));
             return;
         }
+        Context c = getContext();
         JSONArray owed = board.optJSONArray("owed");
         JSONArray inflight = board.optJSONArray("inflight");
         JSONArray blocked = board.optJSONArray("blocked");
-        LinearLayout row = new LinearLayout(getContext());
-        row.setOrientation(HORIZONTAL);
-        row.addView(stat("VIDEOS", owed == null ? 0 : owed.length()), weighted());
-        row.addView(stat("IN FLIGHT", inflight == null ? 0 : inflight.length()), weighted());
-        row.addView(stat("WAITING ON YOU", blocked == null ? 0 : blocked.length()), weighted());
-        card.addView(row, matchWrap());
+        int waiting = blocked == null ? 0 : blocked.length();
+        LinearLayout row = Ui.row(c);
+        row.addView(stat("VIDEOS", owed == null ? 0 : owed.length(), Ui.TEXT), Ui.weighted());
+        row.addView(stat("IN FLIGHT", inflight == null ? 0 : inflight.length(), Ui.TEXT),
+                Ui.weighted());
+        // Amber only when something is actually waiting on the rider.
+        row.addView(stat("WAITING ON YOU", waiting, waiting > 0 ? Ui.WARN : Ui.TEXT),
+                Ui.weighted());
+        card.addView(row, Ui.matchWrap());
         for (int i = 0; owed != null && i < Math.min(owed.length(), 4); i++) {
             JSONObject o = owed.optJSONObject(i);
             if (o == null) continue;
-            card.addView(body(o.optString("title"), TEXT), topMargin(8));
-            card.addView(bar(o.optInt("pct")), barParams());
-            card.addView(body(o.optString("status"), TEXT_DIM));
+            card.addView(line(o.optString("title"), Ui.TEXT), Ui.top(c, Ui.matchWrap(), 16));
+            card.addView(Ui.bar(c, o.optInt("pct"), Ui.ACCENT), Ui.top(c, barParams(), 8));
+            card.addView(Ui.small(c, o.optString("status"), Ui.TEXT_3),
+                    Ui.top(c, Ui.matchWrap(), 8));
         }
     }
 
     private void addClaude(JSONArray sessions) {
-        LinearLayout card = card("CLAUDE");
+        LinearLayout card = card(Icons.BOT, "CLAUDE");
         if (sessions == null || sessions.length() == 0) {
-            card.addView(body("No recent Claude sessions", TEXT_DIM));
+            card.addView(note("No recent Claude sessions"));
             return;
         }
+        Context c = getContext();
         for (int i = 0; i < Math.min(sessions.length(), 4); i++) {
-            JSONObject c = sessions.optJSONObject(i);
-            if (c == null) continue;
-            card.addView(body(c.optString("title"), TEXT), topMargin(i == 0 ? 0 : 8));
-            int total = c.optInt("total");
+            JSONObject s = sessions.optJSONObject(i);
+            if (s == null) continue;
+            card.addView(line(s.optString("title"), Ui.TEXT),
+                    Ui.top(c, Ui.matchWrap(), i == 0 ? 0 : 16));
+            int total = s.optInt("total");
+            boolean working = s.optBoolean("working");
             if (total > 0) {
-                card.addView(bar(100 * c.optInt("done") / total), barParams());
+                card.addView(Ui.bar(c, 100 * s.optInt("done") / total,
+                        working ? Ui.ACCENT : Ui.TEXT_3), Ui.top(c, barParams(), 8));
             }
-            String line = c.optBoolean("working") ? "Working" : "Idle " + c.optString("ago");
-            if (total > 0) line += "  " + c.optInt("done") + "/" + total;
-            String active = c.optString("active");
-            if (!active.isEmpty() && !"null".equals(active)) line += "  " + active;
-            card.addView(body(line, c.optBoolean("working") ? OK : TEXT_DIM));
+            String text = working ? "Working" : "Idle " + s.optString("ago");
+            if (total > 0) text += "  \u00B7  " + s.optInt("done") + "/" + total;
+            String active = s.optString("active");
+            if (!active.isEmpty() && !"null".equals(active)) text += "  \u00B7  " + active;
+            TextView t = Ui.small(c, text, working ? Ui.OK : Ui.TEXT_3);
+            t.setSingleLine(true);
+            t.setEllipsize(TextUtils.TruncateAt.END);
+            card.addView(t, Ui.top(c, Ui.matchWrap(), 8));
         }
     }
 
     private void addAlerts(JSONArray alerts) {
         if (alerts == null || alerts.length() == 0) return;
-        LinearLayout card = card("JUST HAPPENED");
+        LinearLayout card = card(Icons.BELL, "JUST HAPPENED");
+        Context c = getContext();
         for (int i = 0; i < Math.min(alerts.length(), 4); i++) {
             JSONObject a = alerts.optJSONObject(i);
             if (a == null) continue;
-            card.addView(body(a.optString("text") + "  " + a.optString("ago"), TEXT),
-                    topMargin(i == 0 ? 0 : 4));
+            LinearLayout row = Ui.row(c);
+            row.addView(line(a.optString("text"), Ui.TEXT), Ui.weighted());
+            row.addView(Ui.small(c, a.optString("ago"), Ui.TEXT_3), Ui.left(c, Ui.wrap(), 12));
+            card.addView(row, Ui.top(c, Ui.matchWrap(), i == 0 ? 0 : 8));
         }
     }
 
     private void addMac(JSONObject s) {
-        LinearLayout card = card("MAC");
+        LinearLayout card = card(Icons.LAPTOP, "MAC");
+        Context c = getContext();
         JSONObject vol = s.optJSONObject("vol");
         boolean muted = vol != null && vol.optBoolean("muted");
         String level = vol == null || vol.isNull("v") ? "--" : String.valueOf(vol.optInt("v"));
-        card.addView(body("Volume " + level + (muted ? "  muted" : "")
-                + "   Load " + s.optInt("load") + "%", TEXT));
+        LinearLayout stats = Ui.row(c);
+        LinearLayout v = Ui.column(c);
+        v.addView(Ui.label(c, muted ? "VOLUME (MUTED)" : "VOLUME"));
+        TextView vv = Ui.value(c, level, Ui.T_TITLE);
+        if (muted) vv.setTextColor(Ui.TEXT_3);
+        v.addView(vv, Ui.top(c, Ui.wrap(), 8));
+        stats.addView(v, Ui.weighted());
+        LinearLayout l = Ui.column(c);
+        l.addView(Ui.label(c, "LOAD"));
+        TextView lv = Ui.value(c, "", Ui.T_TITLE);
+        lv.setText(Ui.withUnit(String.valueOf(s.optInt("load")), "%"));
+        l.addView(lv, Ui.top(c, Ui.wrap(), 8));
+        stats.addView(l, Ui.weighted());
+        card.addView(stats, Ui.matchWrap());
 
-        LinearLayout row = new LinearLayout(getContext());
-        row.setOrientation(HORIZONTAL);
-        TextView down = button("VOL -", false);
-        down.setOnClickListener(v -> act(action("vol", "d", -6), null));
-        row.addView(down, new LayoutParams(0, dp(48), 1f));
-        TextView mute = button(muted ? "UNMUTE" : "MUTE", false);
-        mute.setOnClickListener(v -> act(action("mute", null, null), null));
-        row.addView(mute, gap(new LayoutParams(0, dp(48), 1f)));
-        TextView up = button("VOL +", false);
-        up.setOnClickListener(v -> act(action("vol", "d", 6), null));
-        row.addView(up, gap(new LayoutParams(0, dp(48), 1f)));
-        card.addView(row, topMargin(8));
+        LinearLayout row = Ui.row(c);
+        LinearLayout down = Ui.button(c, "DOWN", Icons.VOLUME_1, Ui.SECONDARY);
+        down.setOnClickListener(x -> act(action("vol", "d", -6), null));
+        row.addView(down, new LinearLayout.LayoutParams(0, dp(48), 1f));
+        LinearLayout mute = Ui.button(c, muted ? "UNMUTE" : "MUTE", Icons.VOLUME_X, Ui.SECONDARY);
+        mute.setOnClickListener(x -> act(action("mute", null, null), null));
+        row.addView(mute, Ui.left(c, new LinearLayout.LayoutParams(0, dp(48), 1f), 8));
+        LinearLayout up = Ui.button(c, "UP", Icons.VOLUME_2, Ui.SECONDARY);
+        up.setOnClickListener(x -> act(action("vol", "d", 6), null));
+        row.addView(up, Ui.left(c, new LinearLayout.LayoutParams(0, dp(48), 1f), 8));
+        card.addView(row, Ui.top(c, Ui.matchWrap(), 16));
     }
 
     private void addApps(JSONArray apps) {
         if (apps == null || apps.length() == 0) return;
-        LinearLayout card = card("LAUNCH ON MAC");
+        LinearLayout card = card(Icons.ROCKET, "LAUNCH ON MAC");
+        Context c = getContext();
         LinearLayout row = null;
         for (int i = 0; i < apps.length(); i++) {
             final JSONObject app = apps.optJSONObject(i);
             if (app == null) continue;
             if (i % 3 == 0) {
-                row = new LinearLayout(getContext());
-                row.setOrientation(HORIZONTAL);
-                card.addView(row, topMargin(i == 0 ? 0 : 8));
+                row = Ui.row(c);
+                card.addView(row, Ui.top(c, Ui.matchWrap(), i == 0 ? 0 : 8));
             }
             final String name = app.optString("label");
-            TextView tile = button(name.toUpperCase(java.util.Locale.US), false);
+            LinearLayout tile = Ui.button(c, name.toUpperCase(Locale.US), null, Ui.SECONDARY);
+            tile.setPadding(dp(8), 0, dp(8), 0);
             tile.setOnClickListener(v -> act(action("app", "key", app.optString("key")),
                     "Opening " + name + " on the Mac"));
-            LayoutParams lp = new LayoutParams(0, dp(48), 1f);
-            row.addView(tile, i % 3 == 0 ? lp : gap(lp));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(48), 1f);
+            if (i % 3 != 0) lp.leftMargin = dp(8);
+            row.addView(tile, lp);
         }
         // Pad the last row so tiles keep the same width.
         for (int i = apps.length(); i % 3 != 0; i++) {
-            row.addView(new View(getContext()), gap(new LayoutParams(0, dp(48), 1f)));
+            row.addView(new View(c), Ui.left(c,
+                    new LinearLayout.LayoutParams(0, dp(48), 1f), 8));
         }
     }
 
     // ---- View helpers ----------------------------------------------------
 
-    private LinearLayout card(String title) {
-        LinearLayout card = new LinearLayout(getContext());
-        card.setOrientation(VERTICAL);
-        card.setBackground(panel(SURFACE, HAIRLINE, 16));
-        card.setPadding(dp(16), dp(12), dp(16), dp(16));
-        TextView t = label(title);
-        t.setPadding(0, 0, 0, dp(8));
-        card.addView(t);
-        content.addView(card, topMargin(8));
+    private LinearLayout card(String icon, String name) {
+        Context c = getContext();
+        LinearLayout card = Ui.card(c);
+        LinearLayout head = Ui.row(c);
+        head.addView(Ui.icon(c, icon, 16, Ui.TEXT_3));
+        head.addView(Ui.label(c, name), Ui.left(c, Ui.weighted(), 8));
+        LinearLayout.LayoutParams hlp = Ui.matchWrap();
+        hlp.bottomMargin = dp(16);
+        card.addView(head, hlp);
+        content.addView(card, Ui.top(c, Ui.matchWrap(), content.getChildCount() == 0 ? 0 : 12));
         return card;
     }
 
-    private LinearLayout stat(String name, int count) {
-        LinearLayout col = new LinearLayout(getContext());
-        col.setOrientation(VERTICAL);
-        col.addView(label(name));
-        col.addView(value(String.valueOf(count), 20));
+    private LinearLayout stat(String name, int count, int color) {
+        Context c = getContext();
+        LinearLayout col = Ui.column(c);
+        col.addView(Ui.label(c, name));
+        TextView v = Ui.value(c, String.valueOf(count), Ui.T_TITLE);
+        v.setTextColor(color);
+        col.addView(v, Ui.top(c, Ui.wrap(), 8));
         return col;
     }
 
-    private View bar(int pct) {
-        final int clamped = Math.max(0, Math.min(100, pct));
-        LinearLayout track = new LinearLayout(getContext());
-        track.setBackground(panel(HAIRLINE, HAIRLINE, 3));
-        View fill = new View(getContext());
-        fill.setBackground(panel(ACCENT, ACCENT, 3));
-        track.addView(fill, new LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, clamped));
-        track.addView(new View(getContext()),
-                new LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 100 - clamped));
-        return track;
-    }
-
-    private LayoutParams barParams() {
-        LayoutParams lp = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(6));
-        lp.topMargin = dp(8);
-        lp.bottomMargin = dp(4);
-        return lp;
-    }
-
-    private TextView label(String text) {
-        TextView t = new TextView(getContext());
-        t.setText(text);
-        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        t.setTextColor(TEXT_DIM);
-        t.setLetterSpacing(0.12f);
-        t.setTypeface(Typeface.MONOSPACE);
-        t.setSingleLine(true);
-        t.setEllipsize(TextUtils.TruncateAt.END);
-        return t;
-    }
-
-    private TextView value(String text, int sp) {
-        TextView t = new TextView(getContext());
-        t.setText(text);
-        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
-        t.setTextColor(TEXT);
-        t.setTypeface(Typeface.create(Typeface.MONOSPACE, Typeface.BOLD));
-        t.setFontFeatureSettings("tnum");
-        return t;
-    }
-
-    private TextView body(String text, int color) {
-        TextView t = new TextView(getContext());
-        t.setText(text);
-        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        t.setTextColor(color);
+    private TextView line(String text, int color) {
+        TextView t = Ui.body(getContext(), text, color);
         t.setMaxLines(2);
         t.setEllipsize(TextUtils.TruncateAt.END);
         return t;
     }
 
-    private TextView message(String text) {
-        TextView t = body(text, TEXT_DIM);
-        t.setMaxLines(6);
-        t.setGravity(Gravity.CENTER);
-        return t;
+    private TextView note(String text) {
+        return Ui.small(getContext(), text, Ui.TEXT_3);
     }
 
-    private TextView button(String text, boolean primary) {
-        TextView b = new TextView(getContext());
-        b.setText(text);
-        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        b.setLetterSpacing(0.08f);
-        b.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
-        b.setGravity(Gravity.CENTER);
-        b.setSingleLine(true);
-        b.setEllipsize(TextUtils.TruncateAt.END);
-        b.setTextColor(primary ? BG : TEXT);
-        b.setBackground(primary ? panel(ACCENT, ACCENT, 10) : panel(BG, HAIRLINE, 10));
-        return b;
-    }
-
-    private GradientDrawable panel(int fill, int stroke, int radiusDp) {
-        GradientDrawable d = new GradientDrawable();
-        d.setColor(fill);
-        d.setCornerRadius(dp(radiusDp));
-        d.setStroke(Math.max(1, dp(1)), stroke);
-        return d;
-    }
-
-    private static LayoutParams matchWrap() {
-        return new LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-    }
-
-    private static LayoutParams weighted() {
-        return new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-    }
-
-    private LayoutParams topMargin(int marginDp) {
-        LayoutParams lp = matchWrap();
-        lp.topMargin = dp(marginDp);
-        return lp;
-    }
-
-    private LayoutParams gap(LayoutParams lp) {
-        lp.leftMargin = dp(8);
-        return lp;
-    }
-
-    private int dp(int v) {
-        return Math.round(v * density);
+    private LinearLayout.LayoutParams barParams() {
+        return new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(6));
     }
 }

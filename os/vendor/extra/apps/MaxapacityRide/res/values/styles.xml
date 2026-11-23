@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="graphite">#131316</color>
+    <color name="graphite">#0B0B0D</color>
     <color name="voltage">#FFEB1A</color>
 
     <style name="RideTheme" parent="@android:style/Theme.DeviceDefault.NoActionBar">

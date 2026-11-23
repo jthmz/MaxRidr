@@ -2,7 +2,6 @@ package com.maxapacity.ride;
 
 import android.Manifest;
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
@@ -12,20 +11,18 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
-import android.content.res.ColorStateList;
 import android.graphics.Insets;
-import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.RippleDrawable;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.speech.RecognizerIntent;
+import android.text.InputType;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.GestureDetector;
@@ -35,50 +32,33 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowManager;
-import android.speech.RecognizerIntent;
-import android.text.InputType;
-import android.widget.BaseAdapter;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextClock;
 import android.widget.TextView;
-import android.widget.Toast;
 
-import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
 
 /**
- * MAXAPACITY home screen: speedometer, trip stats, ride recorder, four
- * assignable ride-app slots, site tools and an app drawer.
+ * MAXAPACITY home screen. The dashboard (speedometer, trip stats, the ride
+ * button, the bike link and four ride-app shortcuts) is always underneath;
+ * every other destination is a {@link Panel} layered over it, and anything
+ * that interrupts is a {@link Sheet}.
  */
 public final class RideActivity extends Activity
-        implements RideState.Listener, LocationListener, AppDrawer.Host, CopilotView.Host, DeckView.Host {
+        implements RideState.Listener, LocationListener, Host {
 
-    // Brand palette: graphite surfaces, grayscale text ramp, one voltage accent,
-    // semantic green/red/amber for status only.
-    private static final int BG = 0xFF131316;
-    private static final int SURFACE = 0xFF1C1C21;
-    private static final int HAIRLINE = 0xFF2E2E36;
-    private static final int TEXT = 0xFFF7F5F0;
-    private static final int TEXT_DIM = 0xFF9A9AA3;
-    private static final int ACCENT = 0xFFFFEB1A;
-    private static final int OK = 0xFF4ADE80;
-    private static final int WARN = 0xFFFBBF24;
-    private static final int DANGER = 0xFFF87171;
-
-    private static final String SITE = "https://maxapacity.com";
     private static final String DEFAULT_MAPS_PACKAGE = "app.organicmaps";
     private static final int SLOT_COUNT = 4;
     private static final int REQ_LOCATION = 1;
     private static final int REQ_NOTIFY = 2;
     private static final int REQ_SPEECH = 3;
+    private static final int REQ_BLUETOOTH = 4;
 
     /** Sustained speed that starts a ride on its own (about 11 km/h, 7 mph). */
     private static final float AUTO_START_MPS = 3f;
@@ -97,25 +77,38 @@ public final class RideActivity extends Activity
     private LocationManager locationManager;
     private boolean listening;
     private boolean startAfterGrant;
+    private Runnable afterBluetooth;
     private int fastFixes;
     /** Cleared by a manual End ride until the bike has come to a stop. */
     private boolean autoStartArmed = true;
 
-    private TextView gpsStatus;
-    private TextView speedValue;
-    private TextView speedUnit;
+    private FrameLayout frame;
+    private Ui.Pill gpsStatus;
+    private GaugeView gauge;
     private TextView tripValue;
     private TextView topValue;
     private TextView timeValue;
     private TextView avgValue;
-    private TextView rideButton;
-    private LinearLayout slotRow;
     private TextView stopsValue;
-    private FxView fx;
-    private AppDrawer drawer;
-    private CopilotView copilot;
-    private DeckView deck;
+    private TextView climbValue;
+    private FrameLayout rideButtonSlot;
+    private LinearLayout rideButton;
+    private boolean rideButtonRecording;
+    private LinearLayout bikeStrip;
+    private String bikeStripKey = "";
+    private LinearLayout slotRow;
     private GestureDetector gestures;
+
+    private AppDrawer drawer;
+    private RidesPanel rides;
+    private RideDetailPanel rideDetail;
+    private CopilotView copilot;
+    private BikePanel bike;
+    private TunePanel tune;
+    private DeckView deck;
+    private SettingsPanel settings;
+    /** Back to front. Back closes the front-most open one. */
+    private final List<Panel> panels = new ArrayList<>();
 
     /** Keeps the drawer in step with installs, removals and updates. */
     private final BroadcastReceiver packageChanges = new BroadcastReceiver() {
@@ -125,26 +118,32 @@ public final class RideActivity extends Activity
             renderSlots();
         }
     };
-    private TextView climbValue;
+
+    private final Runnable bikeChanged = this::renderBikeStrip;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        prefs = getSharedPreferences("ride", Context.MODE_PRIVATE);
+        Ui.init(this);
+        prefs = Units.prefs(this);
         locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+        getWindow().setStatusBarColor(Ui.BG);
+        getWindow().setNavigationBarColor(Ui.BG);
+        RideStore.purgeRemoved(this);
         setContentView(buildUi());
 
         gestures = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
             @Override
             public boolean onFling(MotionEvent down, MotionEvent up, float vx, float vy) {
                 if (down == null || Math.abs(vy) < Math.abs(vx) * 1.5f) return false;
+                if (Sheet.current() != null) return false;
                 float dy = up.getY() - down.getY();
-                if (copilot.isOpen() || deck.isOpen()) return false;
-                if (!drawer.isOpen() && dy < -dp(72)) {
+                Panel top = topPanel();
+                if (top == null && dy < -dp(72)) {
                     drawer.open();
                     return true;
                 }
-                if (drawer.isOpen() && dy > dp(72) && drawer.atTop()) {
+                if (top == drawer && dy > dp(72) && drawer.atTop()) {
                     drawer.close();
                     return true;
                 }
@@ -182,9 +181,8 @@ public final class RideActivity extends Activity
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
-        drawer.close();
-        copilot.close();
-        deck.close();
+        Sheet.dismissCurrent();
+        for (Panel p : panels) p.close();
     }
 
     @Override
@@ -197,8 +195,12 @@ public final class RideActivity extends Activity
         // Restart the gesture service if the system stopped it.
         if (ChopService.isEnabled(this)) startChopService();
         renderSlots();
-        fx.setRunning(prefs.getBoolean("fx", true));
-        deck.resume();
+        gauge.setFx(prefs.getBoolean("fx", true));
+        gauge.setRunning(true);
+        Bike.get(this).addListener(bikeChanged);
+        Bike.get(this).resume();
+        for (Panel p : panels) if (p.isOpen()) p.onHostResume();
+        Updater.autoCheck(this, this);
         handler.post(tick);
     }
 
@@ -206,57 +208,82 @@ public final class RideActivity extends Activity
     protected void onPause() {
         super.onPause();
         handler.removeCallbacks(tick);
-        fx.setRunning(false);
-        deck.pause();
+        gauge.setRunning(false);
+        for (Panel p : panels) if (p.isOpen()) p.onHostPause();
+        Bike.get(this).removeListener(bikeChanged);
+        // The bike link stays up during a ride so telemetry keeps flowing
+        // with the screen off; otherwise it is dropped to save both batteries.
+        if (!RideState.get().isRecording()) Bike.get(this).pause();
+        Updater.installIfQuiet(this);
         RideState.get().removeListener(this);
         stopPassiveGps();
     }
 
-    /** Home screen: Back only closes the drawer. */
+    /** Home screen: Back steps out of a sheet, then a screen, and stops at the dashboard. */
     @Override
     public void onBackPressed() {
-        drawer.close();
-        copilot.close();
-        deck.close();
+        if (Sheet.dismissCurrent()) return;
+        Panel top = topPanel();
+        if (top != null) top.close();
     }
 
-    // ---- DeckView.Host ---------------------------------------------------
+    private Panel topPanel() {
+        for (int i = panels.size() - 1; i >= 0; i--) {
+            if (panels.get(i).isOpen()) return panels.get(i);
+        }
+        return null;
+    }
+
+    // ---- Host --------------------------------------------------------------
 
     @Override
-    public void connectDeck() {
-        LinearLayout form = new LinearLayout(this);
-        form.setOrientation(LinearLayout.VERTICAL);
-        form.setPadding(dp(24), dp(8), dp(24), 0);
-        final EditText address = new EditText(this);
-        address.setHint("Mac address, e.g. 192.168.1.20");
-        address.setSingleLine(true);
-        address.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        address.setText(prefs.getString("deck_host", ""));
-        form.addView(address, matchWrap());
-        final EditText token = new EditText(this);
-        token.setHint("Phone token (Wi-Fi only)");
-        token.setSingleLine(true);
-        token.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        token.setText(prefs.getString("deck_token", ""));
-        form.addView(token, matchWrap());
-        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                .setTitle("Connect Deck")
-                .setMessage("Over Wi-Fi: the Mac's address and the phoneToken from the Deck's"
-                        + " config.json. Over USB: enter 127.0.0.1, leave the token empty and"
-                        + " run adb reverse tcp:8791 tcp:8791 on the Mac.")
-                .setView(form)
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Save", (d, w) -> {
-                    prefs.edit()
-                            .putString("deck_host", address.getText().toString().trim())
-                            .putString("deck_token", token.getText().toString().trim())
-                            .apply();
-                    if (deck.isOpen()) deck.restart();
-                })
-                .show();
+    public ViewGroup frame() {
+        return frame;
     }
 
-    // ---- CopilotView.Host ------------------------------------------------
+    @Override
+    public void say(String message) {
+        Snack.show(frame, message);
+    }
+
+    @Override
+    public void say(String message, String action, Runnable run) {
+        Snack.show(frame, message, action, run);
+    }
+
+    @Override
+    public void launch(Intent intent) {
+        try {
+            startActivity(intent);
+        } catch (ActivityNotFoundException | SecurityException e) {
+            say("Nothing installed can open that");
+        }
+    }
+
+    @Override
+    public void settingsChanged() {
+        gauge.setFx(prefs.getBoolean("fx", true));
+        render();
+    }
+
+    @Override
+    public void showRide(JSONObject ride) {
+        rideDetail.show(ride);
+    }
+
+    @Override
+    public void ridesChanged() {
+        if (rides.isOpen()) rides.refresh();
+    }
+
+    @Override
+    public void showBike() {
+        bike.open();
+    }
+
+    void showTune() {
+        tune.open();
+    }
 
     @Override
     public void listen() {
@@ -266,7 +293,7 @@ public final class RideActivity extends Activity
                             RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                     .putExtra(RecognizerIntent.EXTRA_PROMPT, "Ask Copilot"), REQ_SPEECH);
         } catch (ActivityNotFoundException e) {
-            toast("Voice input needs the Google app installed");
+            say("Voice input needs a speech recognition app, such as the Google app");
         }
     }
 
@@ -279,35 +306,82 @@ public final class RideActivity extends Activity
     }
 
     @Override
-    public void addGeminiKey() {
-        final EditText key = new EditText(this);
-        key.setHint("API key");
-        key.setSingleLine(true);
-        key.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+    public void editGeminiKey() {
+        final EditText key = Ui.input(this, "API key", true);
         key.setText(prefs.getString("gemini_key", ""));
-        LinearLayout form = new LinearLayout(this);
-        form.setPadding(dp(24), dp(8), dp(24), 0);
-        form.addView(key, matchWrap());
-        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                .setTitle("Gemini API key")
-                .setMessage("Create a free key at aistudio.google.com/apikey and paste it"
-                        + " here. It is stored only on this phone.")
-                .setView(form)
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Save", (d, w) -> {
+        new Sheet(frame, "Gemini API key",
+                "Copilot answers with Google Gemini. Create a free key at"
+                        + " aistudio.google.com/apikey and paste it here. It is stored only on"
+                        + " this phone.")
+                .view(key)
+                .action("Cancel", Ui.SECONDARY, true, null)
+                .action("Save", Ui.PRIMARY, true, () -> {
                     prefs.edit().putString("gemini_key", key.getText().toString().trim())
                             .apply();
                     copilot.refreshEmptyState();
-                    toast(Gemini.hasKey(this) ? "Copilot is ready" : "Copilot key removed");
+                    settings.refresh();
+                    say(Gemini.hasKey(this) ? "Copilot is ready" : "Copilot key removed");
                 })
                 .show();
     }
 
-    // ---- AppDrawer.Host --------------------------------------------------
+    @Override
+    public void editDeckConnection() {
+        final EditText address = Ui.input(this, "Mac address, e.g. 192.168.1.20", false);
+        address.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        address.setText(prefs.getString("deck_host", ""));
+        final EditText token = Ui.input(this, "Phone token (Wi-Fi only)", true);
+        token.setText(prefs.getString("deck_token", ""));
+        LinearLayout form = Ui.column(this);
+        form.addView(address);
+        form.addView(token, Ui.top(this, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)), 8));
+        new Sheet(frame, "Connect Deck",
+                "Over Wi-Fi: the Mac's address and the phoneToken from the Deck's config.json."
+                        + " Over USB: enter 127.0.0.1, leave the token empty and run"
+                        + " adb reverse tcp:8791 tcp:8791 on the Mac.")
+                .view(form)
+                .action("Cancel", Ui.SECONDARY, true, null)
+                .action("Save", Ui.PRIMARY, true, () -> {
+                    prefs.edit()
+                            .putString("deck_host", address.getText().toString().trim())
+                            .putString("deck_token", token.getText().toString().trim())
+                            .apply();
+                    settings.refresh();
+                    if (deck.isOpen()) deck.restart();
+                })
+                .show();
+    }
 
     @Override
-    public void launch(Intent intent) {
-        open(intent);
+    public void connectStrava() {
+        final EditText id = Ui.input(this, "Client ID", false);
+        id.setInputType(InputType.TYPE_CLASS_NUMBER);
+        id.setText(prefs.getString("strava_client_id", ""));
+        final EditText secret = Ui.input(this, "Client Secret", true);
+        secret.setText(prefs.getString("strava_client_secret", ""));
+        LinearLayout form = Ui.column(this);
+        form.addView(id);
+        form.addView(secret, Ui.top(this, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)), 8));
+        new Sheet(frame, "Connect Strava",
+                "Create an API application at strava.com/settings/api with Authorization"
+                        + " Callback Domain set to localhost, then enter its Client ID and"
+                        + " Client Secret. Rides upload on their own after that.")
+                .view(form)
+                .action("Cancel", Ui.SECONDARY, true, null)
+                .action("Connect", Ui.PRIMARY, false, () -> {
+                    String clientId = id.getText().toString().trim();
+                    String clientSecret = secret.getText().toString().trim();
+                    if (clientId.isEmpty() || clientSecret.isEmpty()) {
+                        say("Both the Client ID and Client Secret are needed");
+                        return;
+                    }
+                    Sheet.dismissCurrent();
+                    Strava.saveApp(this, clientId, clientSecret);
+                    launch(new Intent(Intent.ACTION_VIEW, Strava.authorizeUri(this)));
+                })
+                .show();
     }
 
     /** Pin from the drawer: first free ride-app slot, or ask which to replace. */
@@ -315,34 +389,94 @@ public final class RideActivity extends Activity
     public void pin(final ComponentName app) {
         for (int i = 0; i < SLOT_COUNT; i++) {
             if (slotIntent(i) == null) {
-                setSlot(i, app);
+                setSlot(i, app.flattenToString(), "Pinned to ride apps");
                 return;
             }
         }
         PackageManager pm = getPackageManager();
-        String[] names = new String[SLOT_COUNT];
+        Sheet sheet = new Sheet(frame, "Ride apps are full", "Choose one to replace.");
         for (int i = 0; i < SLOT_COUNT; i++) {
+            final int slot = i;
             ResolveInfo info = pm.resolveActivity(slotIntent(i), 0);
-            names[i] = "Replace " + (info == null ? "slot " + (i + 1) : info.loadLabel(pm));
+            String name = info == null ? "Slot " + (i + 1) : info.loadLabel(pm).toString();
+            sheet.item(Icons.PIN, "Replace " + name, null, false,
+                    () -> setSlot(slot, app.flattenToString(), "Pinned to ride apps"));
         }
-        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                .setTitle("Ride apps are full")
-                .setItems(names, (d, which) -> setSlot(which, app))
-                .show();
+        sheet.show();
     }
 
-    private void setSlot(int slot, ComponentName app) {
-        prefs.edit().putString("slot" + slot, app.flattenToString()).apply();
+    /** Changes a slot and offers to put back what was there. */
+    private void setSlot(final int slot, String value, String message) {
+        final String key = "slot" + slot;
+        final boolean had = prefs.contains(key);
+        final String before = prefs.getString(key, null);
+        prefs.edit().putString(key, value).apply();
         renderSlots();
-        toast("Pinned to ride apps");
+        say(message, "UNDO", () -> {
+            if (had) prefs.edit().putString(key, before).apply();
+            else prefs.edit().remove(key).apply();
+            renderSlots();
+        });
     }
 
-    // ---- GPS -------------------------------------------------------------
+    // ---- Permissions -------------------------------------------------------
 
     private boolean hasLocationPermission() {
         return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
                 == PackageManager.PERMISSION_GRANTED;
     }
+
+    private void requestLocation(boolean thenStart) {
+        startAfterGrant = thenStart;
+        List<String> wanted = new ArrayList<>();
+        wanted.add(Manifest.permission.ACCESS_FINE_LOCATION);
+        wanted.add(Manifest.permission.ACCESS_COARSE_LOCATION);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            wanted.add(Manifest.permission.POST_NOTIFICATIONS);
+        }
+        requestPermissions(wanted.toArray(new String[0]), REQ_LOCATION);
+    }
+
+    @Override
+    public void withBluetooth(Runnable then) {
+        if (checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT)
+                == PackageManager.PERMISSION_GRANTED
+                && checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN)
+                == PackageManager.PERMISSION_GRANTED) {
+            then.run();
+            return;
+        }
+        afterBluetooth = then;
+        requestPermissions(new String[] {Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_CONNECT}, REQ_BLUETOOTH);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions,
+            int[] grantResults) {
+        if (requestCode == REQ_BLUETOOTH) {
+            Runnable then = afterBluetooth;
+            afterBluetooth = null;
+            boolean granted = grantResults.length > 0;
+            for (int r : grantResults) granted &= r == PackageManager.PERMISSION_GRANTED;
+            if (granted && then != null) then.run();
+            else if (!granted) say("Allow Nearby devices to link the battery and controller");
+            return;
+        }
+        if (requestCode != REQ_LOCATION) return;
+        boolean granted = hasLocationPermission();
+        if (granted && startAfterGrant) {
+            startRide();
+        } else if (granted) {
+            startPassiveGps();
+        } else {
+            say("Location is needed for speed and ride recording");
+        }
+        startAfterGrant = false;
+        render();
+    }
+
+    // ---- GPS ---------------------------------------------------------------
 
     /** Live speed while no ride is recording; RideService feeds state otherwise. */
     private void startPassiveGps() {
@@ -379,7 +513,7 @@ public final class RideActivity extends Activity
                 && prefs.getBoolean("auto_start", true)) {
             fastFixes = 0;
             startRide();
-            toast("Ride started automatically");
+            say("Ride started automatically");
         }
     }
 
@@ -395,38 +529,11 @@ public final class RideActivity extends Activity
     public void onStatusChanged(String provider, int status, Bundle extras) {
     }
 
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions,
-            int[] grantResults) {
-        if (requestCode != REQ_LOCATION) return;
-        boolean granted = hasLocationPermission();
-        if (granted && startAfterGrant) {
-            startRide();
-        } else if (granted) {
-            startPassiveGps();
-        } else {
-            toast("Location is needed for speed and ride recording");
-        }
-        startAfterGrant = false;
-        render();
-    }
-
-    private void requestLocation(boolean thenStart) {
-        startAfterGrant = thenStart;
-        List<String> wanted = new ArrayList<>();
-        wanted.add(Manifest.permission.ACCESS_FINE_LOCATION);
-        wanted.add(Manifest.permission.ACCESS_COARSE_LOCATION);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            wanted.add(Manifest.permission.POST_NOTIFICATIONS);
-        }
-        requestPermissions(wanted.toArray(new String[0]), REQ_LOCATION);
-    }
-
-    // ---- Ride ------------------------------------------------------------
+    // ---- Ride --------------------------------------------------------------
 
     private void toggleRide() {
         if (RideState.get().isRecording()) {
-            endRide();
+            confirmEndRide();
         } else if (hasLocationPermission()) {
             startRide();
         } else {
@@ -440,9 +547,22 @@ public final class RideActivity extends Activity
             startForegroundService(new Intent(this, RideService.class)
                     .setAction(RideService.ACTION_START));
         } catch (RuntimeException e) {
-            toast("Could not start ride recording");
+            say("Could not start ride recording");
             startPassiveGps();
         }
+    }
+
+    /** Ending cannot be undone, so it asks first, with what is about to be saved. */
+    private void confirmEndRide() {
+        RideState s = RideState.get();
+        new Sheet(frame, "End this ride?",
+                Units.distance(this, s.distanceM()) + " " + Units.distanceLabel(this)
+                        + " in " + Units.duration(s.movingMs()) + " moving."
+                        + (Strava.isConnected(this) ? " It will be saved and sent to Strava."
+                        : " It will be saved to this phone."))
+                .action("Keep riding", Ui.SECONDARY, true, null)
+                .action("End ride", Ui.DANGER_OUTLINE, true, this::endRide)
+                .show();
     }
 
     private void endRide() {
@@ -451,13 +571,18 @@ public final class RideActivity extends Activity
         fastFixes = 0;
         stopService(new Intent(this, RideService.class));
         startPassiveGps();
-        toast(result);
+        if (RideStore.load(this).length() > 0 && result.startsWith("Ride saved")) {
+            say(result, "VIEW", () -> rides.open());
+        } else {
+            say(result);
+        }
         render();
     }
 
-    // ---- Flashlight gesture ---------------------------------------------
+    // ---- Flashlight gesture ------------------------------------------------
 
-    private void setChopEnabled(boolean enabled) {
+    @Override
+    public void setChopEnabled(boolean enabled) {
         prefs.edit().putBoolean(ChopService.PREF, enabled).apply();
         if (enabled) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
@@ -467,10 +592,9 @@ public final class RideActivity extends Activity
                         new String[] {Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFY);
             }
             startChopService();
-            toast("Chop the phone twice to switch the flashlight. Paused during rides");
+            say("Chop the phone twice to switch the flashlight. Paused during rides");
         } else {
             stopService(new Intent(this, ChopService.class));
-            toast("Flashlight gesture off");
         }
     }
 
@@ -487,7 +611,7 @@ public final class RideActivity extends Activity
         render();
     }
 
-    // ---- Rendering -------------------------------------------------------
+    // ---- Rendering ---------------------------------------------------------
 
     private void render() {
         RideState state = RideState.get();
@@ -502,352 +626,281 @@ public final class RideActivity extends Activity
         }
 
         if (!hasLocationPermission()) {
-            gpsStatus.setText("LOCATION OFF");
-            gpsStatus.setTextColor(DANGER);
+            gpsStatus.set("LOCATION OFF", Ui.DANGER);
         } else if (state.isPaused()) {
-            gpsStatus.setText("PAUSED");
-            gpsStatus.setTextColor(WARN);
+            gpsStatus.set("PAUSED", Ui.WARN);
         } else if (state.hasFix()) {
-            gpsStatus.setText(recording ? "RECORDING" : "GPS LOCKED");
-            gpsStatus.setTextColor(OK);
+            gpsStatus.set(recording ? "RECORDING" : "GPS LOCKED", Ui.OK);
         } else {
-            gpsStatus.setText("SEARCHING GPS");
-            gpsStatus.setTextColor(WARN);
+            gpsStatus.set("SEARCHING GPS", Ui.WARN);
         }
 
-        fx.setSpeed(state.speedMps());
-        speedValue.setText(state.hasFix() ? Units.speed(this, state.speedMps()) : "--");
-        speedUnit.setText(Units.speedLabel(this));
-        tripValue.setText(Units.distance(this, state.distanceM()) + " "
-                + Units.distanceLabel(this));
-        timeValue.setText(Units.duration(state.movingMs()));
-        topValue.setText(Units.speed(this, state.topSpeedMps()));
-        avgValue.setText(Units.speed(this, state.avgSpeedMps()));
-        stopsValue.setText(String.valueOf(state.stops()));
-        climbValue.setText(Units.climb(this, state.climbM()) + " " + Units.climbLabel(this));
+        gauge.setMetric(Units.metric(this));
+        gauge.setSpeed(state.speedMps(), state.hasFix());
+        gauge.setTopSpeed(recording ? state.topSpeedMps() : 0f);
+        gauge.setContentDescription(state.hasFix()
+                ? Units.speed(this, state.speedMps()) + " " + Units.speedLabel(this)
+                : "Speed unavailable, no GPS fix");
 
-        rideButton.setText(recording ? "END RIDE" : "START RIDE");
-        rideButton.setTextColor(recording ? DANGER : BG);
-        rideButton.setBackground(recording
-                ? panel(BG, DANGER, dp(10))
-                : panel(ACCENT, ACCENT, dp(10)));
+        String speedUnit = Units.speedLabel(this).toLowerCase(java.util.Locale.US);
+        tripValue.setText(Ui.withUnit(Units.distance(this, state.distanceM()),
+                Units.distanceLabel(this)));
+        timeValue.setText(Units.duration(state.movingMs()));
+        topValue.setText(Ui.withUnit(Units.speed(this, state.topSpeedMps()), speedUnit));
+        avgValue.setText(Ui.withUnit(Units.speed(this, state.avgSpeedMps()), speedUnit));
+        stopsValue.setText(String.valueOf(state.stops()));
+        climbValue.setText(Ui.withUnit(Units.climb(this, state.climbM()),
+                Units.climbLabel(this)));
+
+        if (rideButton == null || rideButtonRecording != recording) {
+            rideButtonRecording = recording;
+            rideButton = recording
+                    ? Ui.button(this, "END RIDE", Icons.SQUARE, Ui.DANGER_OUTLINE)
+                    : Ui.button(this, "START RIDE", Icons.PLAY, Ui.PRIMARY);
+            rideButton.setOnClickListener(v -> toggleRide());
+            rideButtonSlot.removeAllViews();
+            rideButtonSlot.addView(rideButton, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
     }
 
-    // ---- Rides, settings, Strava -----------------------------------------
+    /** The powertrain at a glance; rebuilt only when what it shows changes. */
+    private void renderBikeStrip() {
+        Bike link = Bike.get(this);
+        AntBms.Data b = link.battery();
+        Fardriver.Live c = link.controller();
+        gauge.setPower(b != null || c != null, link.powerW(), link.peakPowerW());
+        String key = link.summaryKey();
+        if (key.equals(bikeStripKey)) return;
+        bikeStripKey = key;
+        bikeStrip.removeAllViews();
 
-    private void showRides() {
-        final JSONArray rides = RideStore.load(this);
-        if (rides.length() == 0) {
-            new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                    .setTitle("Rides")
-                    .setMessage("No rides yet. Tap Start ride, or just set off: recording"
-                            + " starts on its own once you are moving.")
-                    .setPositiveButton("OK", null)
-                    .show();
+        if (b == null && c == null) {
+            // Nothing live: say what to do, or what the link is doing.
+            boolean linked = link.anyConfigured();
+            bikeStrip.addView(Ui.icon(this, Icons.BLUETOOTH, 20, Ui.TEXT_2));
+            LinearLayout text = Ui.column(this);
+            TextView t = Ui.body(this, linked ? "Bike link" : "Link your bike", Ui.TEXT);
+            t.setSingleLine(true);
+            text.addView(t);
+            TextView d = Ui.small(this, !linked ? "Live battery, power and tuning"
+                    : link.batteryLinked() ? link.batteryStatus() : link.controllerStatus(),
+                    Ui.TEXT_3);
+            d.setSingleLine(true);
+            d.setEllipsize(TextUtils.TruncateAt.END);
+            text.addView(d, Ui.top(this, Ui.matchWrap(), 2));
+            bikeStrip.addView(text, Ui.left(this, Ui.weighted(), 12));
+            bikeStrip.addView(Ui.icon(this, Icons.CHEVRON_RIGHT, 20, Ui.TEXT_3));
             return;
         }
-        // Newest first.
-        final List<JSONObject> list = new ArrayList<>();
-        for (int i = rides.length() - 1; i >= 0; i--) {
-            JSONObject r = rides.optJSONObject(i);
-            if (r != null) list.add(r);
+
+        int soc = b != null ? b.soc : c.soc;
+        addBikeCell("BATTERY", soc < 0 ? null : String.valueOf(soc), "%",
+                b != null && b.hasProblem() ? Ui.DANGER
+                        : soc >= 0 && soc <= 15 ? Ui.DANGER : soc >= 0 && soc <= 30 ? Ui.WARN
+                        : Ui.TEXT, true);
+        float kw = link.powerW() / 1000f;
+        addBikeCell("POWER", String.format(java.util.Locale.US, "%.1f", Math.abs(kw)), "kW",
+                kw < -0.05f ? Ui.OK : Ui.TEXT, false);
+        // The hotter of controller and battery, since either can cut power.
+        int temp = Integer.MIN_VALUE;
+        if (c != null) temp = Math.max(temp, c.mosfetTempC);
+        if (b != null) temp = Math.max(temp, Math.max(b.maxTempC(), b.mosfetTempC));
+        addBikeCell("TEMP", temp == Integer.MIN_VALUE ? null : String.valueOf(temp), "\u00B0C",
+                temp >= 85 ? Ui.DANGER : temp >= 70 ? Ui.WARN : Ui.TEXT, false);
+        boolean fault = c != null && c.faults != 0;
+        addBikeCell(fault ? "FAULT" : "MODE", c == null ? null : fault ? "!" : c.speedModeName(),
+                "", fault ? Ui.DANGER : Ui.TEXT, false);
+        bikeStrip.addView(Ui.icon(this, Icons.CHEVRON_RIGHT, 20, Ui.TEXT_3));
+    }
+
+    private void addBikeCell(String name, String value, String unit, int color, boolean first) {
+        if (!first) {
+            LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(
+                    Math.max(1, dp(1)), ViewGroup.LayoutParams.MATCH_PARENT);
+            rlp.setMargins(0, dp(6), dp(12), dp(6));
+            bikeStrip.addView(Ui.divider(this), rlp);
         }
-        String[] lines = new String[list.size()];
-        for (int i = 0; i < lines.length; i++) lines[i] = RideStore.describe(this, list.get(i));
-
-        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                .setTitle("Rides")
-                .setItems(lines, (d, which) -> showRide(list.get(which)))
-                .show();
-    }
-
-    private void showRide(JSONObject r) {
-        final String file = r.optString("file");
-        String detail = "Distance  " + Units.distance(this, r.optDouble("distanceM")) + " "
-                + Units.distanceLabel(this)
-                + "\nMoving  " + Units.duration(r.optLong("movingMs"))
-                + "\nElapsed  " + Units.duration(r.optLong("elapsedMs"))
-                + "\nTop  " + Units.speed(this, (float) r.optDouble("topMps")) + " "
-                + Units.speedLabel(this).toLowerCase(Locale.US)
-                + "\nClimb  " + Units.climb(this, r.optDouble("climbM")) + " "
-                + Units.climbLabel(this)
-                + "\nStops  " + r.optInt("stops")
-                + "\n\n" + file;
-        AlertDialog.Builder b = new AlertDialog.Builder(this,
-                android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                .setTitle("Ride")
-                .setMessage(detail)
-                .setPositiveButton("Close", null);
-        if (Strava.isConnected(this)
-                && !RideStore.STRAVA_UPLOADED.equals(r.optString("strava"))) {
-            b.setNeutralButton("Send to Strava", (d, w) -> {
-                Strava.queue(this, file);
-                toast("Sending to Strava");
-            });
+        LinearLayout cell = Ui.column(this);
+        cell.addView(Ui.label(this, name));
+        TextView v = Ui.value(this, "", 17);
+        if (value == null) {
+            v.setText("--");
+            v.setTextColor(Ui.TEXT_3);
+        } else {
+            v.setText(Ui.withUnit(value, unit));
+            v.setTextColor(color);
         }
-        b.show();
+        cell.addView(v, Ui.top(this, Ui.matchWrap(), 6));
+        bikeStrip.addView(cell, Ui.weighted());
     }
 
-    private void showSettings() {
-        final boolean autoStart = prefs.getBoolean("auto_start", true);
-        final boolean autoEnd = prefs.getBoolean("auto_end", true);
-        final boolean chop = ChopService.isEnabled(this);
-        final boolean strava = Strava.isConnected(this);
-        String[] items = {
-                "Start rides automatically: " + (autoStart ? "on" : "off"),
-                "End ride after 10 min stopped: " + (autoEnd ? "on" : "off"),
-                "Chop twice for flashlight: " + (chop ? "on" : "off"),
-                "Units: " + (Units.metric(this) ? "km/h" : "mph"),
-                "Visual effects: " + (prefs.getBoolean("fx", true) ? "on" : "off"),
-                strava ? "Strava: connected (tap to disconnect)" : "Connect Strava",
-                Gemini.hasKey(this) ? "Copilot: change Gemini key" : "Copilot: add Gemini key",
-                "Deck: " + (prefs.getString("deck_host", "").isEmpty()
-                        ? "connect" : prefs.getString("deck_host", "")),
-        };
-        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                .setTitle("Settings")
-                .setItems(items, (d, which) -> {
-                    switch (which) {
-                        case 0:
-                            prefs.edit().putBoolean("auto_start", !autoStart).apply();
-                            break;
-                        case 1:
-                            prefs.edit().putBoolean("auto_end", !autoEnd).apply();
-                            break;
-                        case 2:
-                            setChopEnabled(!chop);
-                            break;
-                        case 3:
-                            prefs.edit().putBoolean("metric", !Units.metric(this)).apply();
-                            break;
-                        case 4:
-                            boolean fxOn = !prefs.getBoolean("fx", true);
-                            prefs.edit().putBoolean("fx", fxOn).apply();
-                            fx.setRunning(fxOn);
-                            fx.setVisibility(fxOn ? View.VISIBLE : View.INVISIBLE);
-                            break;
-                        case 5:
-                            if (strava) {
-                                Strava.disconnect(this);
-                                toast("Strava disconnected");
-                            } else {
-                                showStravaConnect();
-                            }
-                            return;
-                        case 6:
-                            addGeminiKey();
-                            return;
-                        default:
-                            connectDeck();
-                            return;
-                    }
-                    render();
-                    showSettings();
-                })
-                .setPositiveButton("Done", null)
-                .show();
-    }
-
-    private void showStravaConnect() {
-        LinearLayout form = new LinearLayout(this);
-        form.setOrientation(LinearLayout.VERTICAL);
-        form.setPadding(dp(24), dp(8), dp(24), 0);
-        final EditText id = new EditText(this);
-        id.setHint("Client ID");
-        id.setInputType(InputType.TYPE_CLASS_NUMBER);
-        id.setText(prefs.getString("strava_client_id", ""));
-        form.addView(id, matchWrap());
-        final EditText secret = new EditText(this);
-        secret.setHint("Client Secret");
-        secret.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        secret.setText(prefs.getString("strava_client_secret", ""));
-        form.addView(secret, matchWrap());
-
-        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                .setTitle("Connect Strava")
-                .setMessage("Create an API application at strava.com/settings/api with"
-                        + " Authorization Callback Domain set to localhost, then enter its"
-                        + " Client ID and Client Secret.")
-                .setView(form)
-                .setNegativeButton("Cancel", null)
-                .setPositiveButton("Connect", (d, w) -> {
-                    String clientId = id.getText().toString().trim();
-                    String clientSecret = secret.getText().toString().trim();
-                    if (clientId.isEmpty() || clientSecret.isEmpty()) {
-                        toast("Both the Client ID and Client Secret are needed");
-                        return;
-                    }
-                    Strava.saveApp(this, clientId, clientSecret);
-                    open(new Intent(Intent.ACTION_VIEW, Strava.authorizeUri(this)));
-                })
-                .show();
-    }
-
-    // ---- UI construction -------------------------------------------------
+    // ---- UI construction ---------------------------------------------------
 
     private View buildUi() {
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
+        final LinearLayout root = Ui.column(this);
 
-        // Layers, back to front: animated backdrop, dashboard, app drawer.
-        final FrameLayout frame = new FrameLayout(this);
-        frame.setBackgroundColor(BG);
-        fx = new FxView(this);
-        fx.setVisibility(prefs.getBoolean("fx", true) ? View.VISIBLE : View.INVISIBLE);
-        drawer = new AppDrawer(this, this);
-        frame.addView(fx, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        // Layers, back to front: dashboard, screens, then sheets and messages.
+        frame = new FrameLayout(this);
+        frame.setBackgroundColor(Ui.BG);
         frame.addView(root, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        frame.addView(drawer, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        deck = new DeckView(this, this);
-        frame.addView(deck, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        drawer = new AppDrawer(this, this);
+        rides = new RidesPanel(this, this);
+        rideDetail = new RideDetailPanel(this, this);
         copilot = new CopilotView(this, this);
-        frame.addView(copilot, new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        bike = new BikePanel(this, this);
+        tune = new TunePanel(this, this);
+        deck = new DeckView(this, this);
+        settings = new SettingsPanel(this, this);
+        panels.add(drawer);
+        panels.add(rides);
+        panels.add(rideDetail);
+        panels.add(copilot);
+        panels.add(bike);
+        panels.add(tune);
+        panels.add(deck);
+        panels.add(settings);
+        for (Panel p : panels) {
+            frame.addView(p, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+
         frame.setOnApplyWindowInsetsListener((v, insets) -> {
             Insets bars = insets.getInsets(WindowInsets.Type.systemBars()
                     | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
-            root.setPadding(dp(16) + bars.left, dp(8) + bars.top,
-                    dp(16) + bars.right, dp(16) + bars.bottom);
-            drawer.setPadding(dp(16) + bars.left, dp(16) + bars.top,
-                    dp(16) + bars.right, dp(8) + bars.bottom);
-            copilot.setPadding(dp(16) + bars.left, dp(8) + bars.top,
-                    dp(16) + bars.right, dp(16) + bars.bottom);
-            deck.setPadding(dp(16) + bars.left, dp(8) + bars.top,
-                    dp(16) + bars.right, dp(16) + bars.bottom);
+            root.setPadding(dp(16) + bars.left, dp(4) + bars.top,
+                    dp(16) + bars.right, dp(12) + bars.bottom);
+            for (Panel p : panels) {
+                p.setPadding(dp(16) + bars.left, bars.top, dp(16) + bars.right, bars.bottom);
+            }
+            Sheet.setInsets(bars.top, bars.bottom);
+            Snack.setBottomInset(bars.bottom);
             return insets;
         });
 
-        // Header: clock on the left, GPS status on the right.
-        LinearLayout header = row();
+        // Header: time and date on the left, GPS status and settings on the right.
+        LinearLayout header = Ui.row(this);
+        LinearLayout time = Ui.column(this);
         TextClock clock = new TextClock(this);
         clock.setFormat12Hour("h:mm");
         clock.setFormat24Hour("HH:mm");
-        styleValue(clock, 20);
-        header.addView(clock, weighted());
-        gpsStatus = label("");
-        gpsStatus.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        gpsStatus.setMinHeight(dp(48));
+        clock.setTextSize(TypedValue.COMPLEX_UNIT_SP, Ui.T_TITLE);
+        clock.setTextColor(Ui.TEXT);
+        clock.setTypeface(Ui.monoBold);
+        clock.setFontFeatureSettings("tnum");
+        clock.setIncludeFontPadding(false);
+        time.addView(clock);
+        TextClock date = new TextClock(this);
+        date.setFormat12Hour("EEE d MMM");
+        date.setFormat24Hour("EEE d MMM");
+        date.setAllCaps(true);
+        date.setTextSize(TypedValue.COMPLEX_UNIT_SP, Ui.T_LABEL);
+        date.setTextColor(Ui.TEXT_3);
+        date.setTypeface(Ui.mono);
+        date.setLetterSpacing(0.1f);
+        date.setIncludeFontPadding(false);
+        time.addView(date, Ui.top(this, Ui.wrap(), 4));
+        header.addView(time, Ui.weighted());
+        gpsStatus = new Ui.Pill(this);
         gpsStatus.setOnClickListener(v -> {
             if (!hasLocationPermission()) requestLocation(false);
         });
-        header.addView(gpsStatus, weighted());
-        root.addView(header, matchWrap());
+        header.addView(gpsStatus, Ui.wrap());
+        View gear = Ui.iconButton(this, Icons.SETTINGS, "Settings");
+        gear.setOnClickListener(v -> settings.open());
+        header.addView(gear, Ui.left(this, new LinearLayout.LayoutParams(dp(48), dp(48)), 4));
+        LinearLayout.LayoutParams headerLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(56));
+        headerLp.rightMargin = -dp(12); // the gear's glyph sits on the page margin
+        root.addView(header, headerLp);
 
         // Speedometer. Takes the spare height; tap switches mph / km/h.
-        LinearLayout speedo = new LinearLayout(this);
-        speedo.setOrientation(LinearLayout.VERTICAL);
-        speedo.setGravity(Gravity.CENTER);
-        speedValue = new TextView(this);
-        styleValue(speedValue, 112);
-        speedValue.setIncludeFontPadding(false);
-        speedValue.setGravity(Gravity.CENTER);
-        speedo.addView(speedValue, matchWrap());
-        speedUnit = label("");
-        speedUnit.setGravity(Gravity.CENTER);
-        speedo.addView(speedUnit, matchWrap());
-        speedo.setOnClickListener(v -> {
-            prefs.edit().putBoolean("metric", !Units.metric(this)).apply();
+        gauge = new GaugeView(this);
+        gauge.setOnClickListener(v -> {
+            final boolean was = Units.metric(this);
+            prefs.edit().putBoolean("metric", !was).apply();
             render();
+            settings.refresh();
         });
-        root.addView(speedo, new LinearLayout.LayoutParams(
+        root.addView(gauge, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-        // The backdrop centres its gauge arc, bolt and grid on the speedometer.
-        speedo.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) ->
-                fx.setFocus(l, t, r, b));
 
-        // Trip stats: two rows of three inside one panel.
-        LinearLayout stats = new LinearLayout(this);
-        stats.setOrientation(LinearLayout.VERTICAL);
-        stats.setBackground(panel(SURFACE, HAIRLINE, dp(16)));
-        stats.setPadding(dp(4), dp(16), dp(4), dp(16));
-        LinearLayout statsTop = row();
+        // Trip stats: two rows of three inside one card.
+        LinearLayout stats = Ui.column(this);
+        stats.setBackground(Ui.panel(this, Ui.SURFACE, Ui.HAIRLINE, 16));
+        stats.setPadding(dp(16), dp(16), dp(16), dp(16));
+        LinearLayout statsTop = Ui.row(this);
         tripValue = stat(statsTop, "TRIP");
         timeValue = stat(statsTop, "MOVING");
         topValue = stat(statsTop, "TOP");
-        stats.addView(statsTop, matchWrap());
-        LinearLayout statsBottom = row();
+        stats.addView(statsTop, Ui.matchWrap());
+        View rule = Ui.divider(this);
+        LinearLayout.LayoutParams ruleLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(1)));
+        ruleLp.topMargin = dp(12);
+        ruleLp.bottomMargin = dp(12);
+        stats.addView(rule, ruleLp);
+        LinearLayout statsBottom = Ui.row(this);
         avgValue = stat(statsBottom, "AVG");
         stopsValue = stat(statsBottom, "STOPS");
         climbValue = stat(statsBottom, "CLIMB");
-        LinearLayout.LayoutParams statsBottomLp = matchWrap();
-        statsBottomLp.topMargin = dp(16);
-        stats.addView(statsBottom, statsBottomLp);
-        root.addView(stats, matchWrap());
+        stats.addView(statsBottom, Ui.matchWrap());
+        root.addView(stats, Ui.matchWrap());
 
         // Primary action.
-        rideButton = new TextView(this);
-        rideButton.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
-        rideButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        rideButton.setLetterSpacing(0.08f);
-        rideButton.setGravity(Gravity.CENTER);
-        rideButton.setOnClickListener(v -> toggleRide());
-        LinearLayout.LayoutParams buttonLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(64));
-        buttonLp.topMargin = dp(16);
-        root.addView(rideButton, buttonLp);
+        rideButtonSlot = new FrameLayout(this);
+        root.addView(rideButtonSlot, Ui.top(this, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(56)), 12));
 
-        // Ride apps: tap to open, long-press to assign.
-        root.addView(section("RIDE APPS"), matchWrap());
-        slotRow = row();
-        root.addView(slotRow, matchWrap());
+        // Bike link: battery and controller at a glance.
+        bikeStrip = Ui.row(this);
+        bikeStrip.setBackground(Ui.pressable(this, Ui.SURFACE, Ui.HAIRLINE, 16));
+        bikeStrip.setPadding(dp(16), dp(8), dp(12), dp(8));
+        bikeStrip.setOnClickListener(v -> bike.open());
+        root.addView(bikeStrip, Ui.top(this, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(64)), 12));
+        renderBikeStrip();
 
-        // Site tools.
-        root.addView(section("MAXAPACITY"), matchWrap());
-        LinearLayout tools = row();
-        addTool(tools, "Garage", "/garage");
-        addTool(tools, "Picker", "/picker");
-        addTool(tools, "Guides", "/guides");
-        addTool(tools, "Gearing", "/tools/sprocket-calculator");
-        root.addView(tools, matchWrap());
+        // Ride apps: tap to open, long-press to change.
+        slotRow = Ui.row(this);
+        root.addView(slotRow, Ui.top(this, Ui.matchWrap(), 12));
 
-        // Bottom row: app drawer, ride history, settings.
-        LinearLayout bottom = row();
-        addBottomTile(bottom, "Apps", v -> drawer.open());
-        addBottomTile(bottom, "Rides", v -> showRides());
-        addBottomTile(bottom, "Copilot", v -> copilot.open());
-        addBottomTile(bottom, "Deck", v -> deck.open());
-        addBottomTile(bottom, "Setup", v -> showSettings());
-        LinearLayout.LayoutParams bottomLp = matchWrap();
-        bottomLp.topMargin = dp(16);
-        root.addView(bottom, bottomLp);
+        // Dock: the other destinations.
+        LinearLayout dock = Ui.row(this);
+        addDock(dock, Icons.LAYOUT_GRID, "Apps", v -> drawer.open());
+        addDock(dock, Icons.ROUTE, "Rides", v -> rides.open());
+        addDock(dock, Icons.SPARKLES, "Copilot", v -> copilot.open());
+        addDock(dock, Icons.MONITOR, "Deck", v -> deck.open());
+        root.addView(dock, Ui.top(this, Ui.matchWrap(), 4));
 
         return frame;
     }
 
     private TextView stat(LinearLayout parent, String name) {
-        LinearLayout col = new LinearLayout(this);
-        col.setOrientation(LinearLayout.VERTICAL);
-        col.setGravity(Gravity.CENTER);
-        TextView l = label(name);
-        l.setGravity(Gravity.CENTER);
-        col.addView(l, matchWrap());
-        TextView v = new TextView(this);
-        styleValue(v, 20);
-        v.setGravity(Gravity.CENTER);
-        v.setSingleLine(true);
-        LinearLayout.LayoutParams lp = matchWrap();
-        lp.topMargin = dp(4);
-        col.addView(v, lp);
-        parent.addView(col, weighted());
+        LinearLayout col = Ui.column(this);
+        col.addView(Ui.label(this, name), Ui.matchWrap());
+        TextView v = Ui.value(this, "", Ui.T_TITLE);
+        col.addView(v, Ui.top(this, Ui.matchWrap(), 8));
+        parent.addView(col, Ui.weighted());
         return v;
     }
 
-    private void addBottomTile(LinearLayout parent, String name, View.OnClickListener click) {
-        TextView t = tile(name, null);
-        t.setOnClickListener(click);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(48), 1f);
-        if (parent.getChildCount() > 0) lp.leftMargin = dp(8);
-        parent.addView(t, lp);
-    }
-
-    private void addTool(LinearLayout parent, String name, String path) {
-        TextView t = tile(name, null);
-        t.setOnClickListener(v -> open(new Intent(Intent.ACTION_VIEW, Uri.parse(SITE + path))));
-        parent.addView(t, tileParams(parent.getChildCount()));
+    private void addDock(LinearLayout parent, String icon, String name,
+            View.OnClickListener click) {
+        LinearLayout item = Ui.column(this);
+        item.setGravity(Gravity.CENTER);
+        item.setBackground(Ui.ghost(this, 12));
+        item.addView(Ui.icon(this, icon, 22, Ui.TEXT));
+        TextView l = Ui.small(this, name, Ui.TEXT_2);
+        l.setTextSize(TypedValue.COMPLEX_UNIT_SP, Ui.T_LABEL);
+        l.setIncludeFontPadding(false);
+        item.addView(l, Ui.top(this, Ui.wrap(), 6));
+        item.setOnClickListener(click);
+        item.setContentDescription(name);
+        Ui.press(item);
+        parent.addView(item, new LinearLayout.LayoutParams(0, dp(56), 1f));
     }
 
     private void renderSlots() {
@@ -857,21 +910,54 @@ public final class RideActivity extends Activity
             final int slot = i;
             final Intent launch = slotIntent(slot);
             ResolveInfo info = launch == null ? null : pm.resolveActivity(launch, 0);
-            TextView t;
+            LinearLayout t;
             if (info == null) {
-                t = tile("Assign", null);
-                t.setTextColor(TEXT_DIM);
+                t = slotTile(null, "Add app");
                 t.setOnClickListener(v -> showAppPicker(slot));
             } else {
-                t = tile(info.loadLabel(pm).toString(), info.loadIcon(pm));
-                t.setOnClickListener(v -> open(launch));
+                t = slotTile(info.loadIcon(pm), info.loadLabel(pm).toString());
+                t.setOnClickListener(v -> launch(launch));
             }
             t.setOnLongClickListener(v -> {
                 showAppPicker(slot);
                 return true;
             });
-            slotRow.addView(t, tileParams(i));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(72), 1f);
+            if (i > 0) lp.leftMargin = dp(8);
+            slotRow.addView(t, lp);
         }
+    }
+
+    /** A filled slot shows the app; an empty one is a dashed outline with a plus. */
+    private LinearLayout slotTile(Drawable appIcon, String name) {
+        LinearLayout t = Ui.column(this);
+        t.setGravity(Gravity.CENTER);
+        ImageView icon = new ImageView(this);
+        if (appIcon != null) {
+            icon.setImageDrawable(appIcon);
+            t.setBackground(Ui.pressable(this, Ui.SURFACE, Ui.HAIRLINE, 16));
+            t.addView(icon, new LinearLayout.LayoutParams(dp(28), dp(28)));
+        } else {
+            icon.setImageDrawable(Icons.of(this, Icons.PLUS, Ui.TEXT_3));
+            GradientDrawable dashed = new GradientDrawable();
+            dashed.setCornerRadius(dp(16));
+            dashed.setStroke(Math.max(1, dp(1)), Ui.HAIRLINE_HI, dp(4), dp(4));
+            t.setBackground(new android.graphics.drawable.RippleDrawable(
+                    android.content.res.ColorStateList.valueOf(0x24FFFFFF), dashed,
+                    Ui.panel(this, 0xFFFFFFFF, 0, 16)));
+            t.addView(icon, new LinearLayout.LayoutParams(dp(20), dp(20)));
+        }
+        TextView l = Ui.small(this, name, appIcon == null ? Ui.TEXT_3 : Ui.TEXT_2);
+        l.setTextSize(TypedValue.COMPLEX_UNIT_SP, Ui.T_LABEL);
+        l.setSingleLine(true);
+        l.setEllipsize(TextUtils.TruncateAt.END);
+        l.setGravity(Gravity.CENTER);
+        l.setIncludeFontPadding(false);
+        l.setPadding(dp(4), 0, dp(4), 0);
+        t.addView(l, Ui.top(this, Ui.matchWrap(), appIcon == null ? 8 : 6));
+        t.setContentDescription(name);
+        Ui.press(t);
+        return t;
     }
 
     /** The app assigned to a slot, or the bundled maps app for an unset slot 0. */
@@ -879,7 +965,7 @@ public final class RideActivity extends Activity
         String saved = prefs.getString("slot" + slot, null);
         if (saved != null) {
             ComponentName cn = ComponentName.unflattenFromString(saved);
-            return cn == null ? null : launchIntent(cn);
+            return cn == null ? null : AppDrawer.launchIntent(cn);
         }
         if (slot == 0) {
             return getPackageManager().getLaunchIntentForPackage(DEFAULT_MAPS_PACKAGE);
@@ -887,176 +973,26 @@ public final class RideActivity extends Activity
         return null;
     }
 
-    private static Intent launchIntent(ComponentName cn) {
-        return new Intent(Intent.ACTION_MAIN)
-                .addCategory(Intent.CATEGORY_LAUNCHER)
-                .setComponent(cn)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                        | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
-    }
-
-    /** App list. slot >= 0 assigns the choice to that slot; -1 just launches it. */
+    /** Pick the app for a slot, or clear it. */
     private void showAppPicker(final int slot) {
-        final PackageManager pm = getPackageManager();
-        Intent main = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
-        final List<ResolveInfo> apps = new ArrayList<>();
-        for (ResolveInfo r : pm.queryIntentActivities(main, 0)) {
-            if (!getPackageName().equals(r.activityInfo.packageName)) apps.add(r);
+        Sheet sheet = new Sheet(frame, "Ride app " + (slot + 1),
+                "Shown on the dashboard for one-tap access while riding.");
+        if (slotIntent(slot) != null) {
+            // An empty value (rather than removal) keeps slot 0 from falling
+            // back to the bundled maps app again.
+            sheet.item(Icons.X, "Clear this slot", null, true,
+                    () -> setSlot(slot, "", "Slot cleared"));
         }
-        Collections.sort(apps, new ResolveInfo.DisplayNameComparator(pm));
-
-        BaseAdapter adapter = new BaseAdapter() {
-            @Override
-            public int getCount() {
-                return apps.size();
-            }
-
-            @Override
-            public Object getItem(int position) {
-                return apps.get(position);
-            }
-
-            @Override
-            public long getItemId(int position) {
-                return position;
-            }
-
-            @Override
-            public View getView(int position, View convertView, ViewGroup parent) {
-                LinearLayout item = (LinearLayout) convertView;
-                if (item == null) {
-                    item = row();
-                    item.setGravity(Gravity.CENTER_VERTICAL);
-                    item.setMinimumHeight(dp(56));
-                    item.setPadding(dp(24), dp(8), dp(24), dp(8));
-                    item.addView(new ImageView(RideActivity.this),
-                            new LinearLayout.LayoutParams(dp(32), dp(32)));
-                    TextView name = new TextView(RideActivity.this);
-                    name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-                    name.setTextColor(TEXT);
-                    name.setPadding(dp(16), 0, 0, 0);
-                    item.addView(name, weighted());
-                }
-                ResolveInfo r = apps.get(position);
-                ((ImageView) item.getChildAt(0)).setImageDrawable(r.loadIcon(pm));
-                ((TextView) item.getChildAt(1)).setText(r.loadLabel(pm));
-                return item;
-            }
-        };
-
-        AlertDialog.Builder b = new AlertDialog.Builder(this,
-                android.R.style.Theme_DeviceDefault_Dialog_Alert)
-                .setTitle(slot < 0 ? "All apps" : "Assign ride app")
-                .setAdapter(adapter, (d, which) -> {
-                    ResolveInfo r = apps.get(which);
-                    ComponentName cn = new ComponentName(
-                            r.activityInfo.packageName, r.activityInfo.name);
-                    if (slot < 0) {
-                        open(launchIntent(cn));
-                    } else {
-                        prefs.edit().putString("slot" + slot, cn.flattenToString()).apply();
-                        renderSlots();
-                    }
-                });
-        if (slot >= 0 && slotIntent(slot) != null) {
-            b.setNeutralButton("Clear slot", (d, w) -> {
-                // An empty value (rather than removal) keeps slot 0 from
-                // falling back to the bundled maps app again.
-                prefs.edit().putString("slot" + slot, "").apply();
-                renderSlots();
-            });
+        List<AppDrawer.App> apps = drawer.apps();
+        for (final AppDrawer.App app : apps) {
+            sheet.item(app.icon, app.label, () -> setSlot(slot,
+                    app.component.flattenToString(), app.label + " pinned"));
         }
-        if (apps.isEmpty()) b.setMessage("No apps installed yet");
-        b.show();
+        if (apps.isEmpty()) sheet.view(Ui.body(this, "No apps installed yet", Ui.TEXT_3));
+        sheet.show();
     }
-
-    private void open(Intent intent) {
-        try {
-            startActivity(intent);
-        } catch (ActivityNotFoundException | SecurityException e) {
-            toast("Nothing installed can open that");
-        }
-    }
-
-    private void toast(String message) {
-        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
-    }
-
-    // ---- View helpers ----------------------------------------------------
 
     private int dp(int v) {
-        return Math.round(v * getResources().getDisplayMetrics().density);
-    }
-
-    private LinearLayout row() {
-        LinearLayout l = new LinearLayout(this);
-        l.setOrientation(LinearLayout.HORIZONTAL);
-        return l;
-    }
-
-    private static LinearLayout.LayoutParams matchWrap() {
-        return new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-    }
-
-    private static LinearLayout.LayoutParams weighted() {
-        return new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-    }
-
-    /** Equal-width tile in a four-across row with an 8dp gutter. */
-    private LinearLayout.LayoutParams tileParams(int index) {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(80), 1f);
-        if (index > 0) lp.leftMargin = dp(8);
-        return lp;
-    }
-
-    private TextView label(String text) {
-        TextView t = new TextView(this);
-        t.setText(text);
-        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        t.setTextColor(TEXT_DIM);
-        t.setLetterSpacing(0.12f);
-        t.setTypeface(Typeface.MONOSPACE);
-        return t;
-    }
-
-    private TextView section(String text) {
-        TextView t = label(text);
-        t.setPadding(0, dp(24), 0, dp(8));
-        return t;
-    }
-
-    private void styleValue(TextView t, int sp) {
-        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
-        t.setTextColor(TEXT);
-        t.setTypeface(Typeface.create(Typeface.MONOSPACE, Typeface.BOLD));
-        t.setFontFeatureSettings("tnum");
-    }
-
-    private TextView tile(String text, Drawable icon) {
-        TextView t = new TextView(this);
-        t.setText(text);
-        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        t.setTextColor(TEXT);
-        t.setGravity(Gravity.CENTER);
-        t.setSingleLine(true);
-        t.setEllipsize(TextUtils.TruncateAt.END);
-        t.setPadding(dp(4), dp(8), dp(4), dp(8));
-        if (icon != null) {
-            icon.setBounds(0, 0, dp(32), dp(32));
-            t.setCompoundDrawables(null, icon, null, null);
-            t.setCompoundDrawablePadding(dp(8));
-        }
-        t.setBackground(new RippleDrawable(
-                ColorStateList.valueOf(HAIRLINE), panel(SURFACE, HAIRLINE, dp(16)), null));
-        return t;
-    }
-
-    private GradientDrawable panel(int fill, int stroke, int radius) {
-        GradientDrawable d = new GradientDrawable();
-        d.setColor(fill);
-        d.setCornerRadius(radius);
-        d.setStroke(Math.max(1, dp(1)), stroke);
-        return d;
+        return Ui.dp(this, v);
     }
 }
