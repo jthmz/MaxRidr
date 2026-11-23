@@ -137,6 +137,12 @@ public final class RideActivity extends Activity
             handler.post(() -> say("The app closed unexpectedly last time", "DETAILS",
                     this::showLastCrash));
         }
+        // Only on a fresh start: a rebuilt screen should not jump back to
+        // whatever it was first launched into.
+        if (savedInstanceState == null) {
+            Panel wanted = screenNamedBy(getIntent());
+            if (wanted != null) wanted.open();
+        }
 
         gestures = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
             @Override
@@ -186,12 +192,49 @@ public final class RideActivity extends Activity
         return super.dispatchTouchEvent(event);
     }
 
-    /** Home pressed while already home: back to the dashboard. */
+    /**
+     * Home pressed while already home: back to the dashboard. A launch that
+     * names a screen goes to that screen instead.
+     */
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         Sheet.dismissCurrent();
-        for (Panel p : panels) p.close();
+        Panel wanted = screenNamedBy(intent);
+        for (Panel p : panels) if (p != wanted) p.close();
+        if (wanted != null) wanted.open();
+    }
+
+    /**
+     * The screen an intent asks for with the extra "open", or null for the
+     * dashboard. Lets a shortcut, or the on-phone test script, go straight to
+     * a screen:
+     *
+     *   adb shell am start -n com.maxapacity.ride/.RideActivity --es open settings
+     *
+     * It only shows a screen; nothing is changed or sent by opening one.
+     */
+    private Panel screenNamedBy(Intent intent) {
+        String name = intent == null ? null : intent.getStringExtra("open");
+        if (name == null) return null;
+        switch (name) {
+            case "apps":
+                return drawer;
+            case "rides":
+                return rides;
+            case "copilot":
+                return copilot;
+            case "bike":
+                return bike;
+            case "tune":
+                return tune;
+            case "deck":
+                return deck;
+            case "settings":
+                return settings;
+            default:
+                return null;
+        }
     }
 
     @Override

@@ -277,6 +277,68 @@ public class ScreensTest {
     org.junit.Assert.assertEquals(Bike.TUNE_IDLE, Bike.get(c).tuneState());
   }
 
+  /** Which screen, if any, is on top. */
+  String openScreen() throws Exception {
+    String open = null;
+    for (String n : new String[] {"drawer", "rides", "copilot", "bike", "tune", "deck", "settings"}) {
+      if (panel(n).isOpen()) {
+        org.junit.Assert.assertNull("only one screen open at a time", open);
+        open = n;
+      }
+    }
+    return open;
+  }
+
+  @Test public void aLaunchCanNameTheScreenToOpen() throws Exception {
+    start();
+    String[][] names = {{"apps", "drawer"}, {"rides", "rides"}, {"copilot", "copilot"},
+        {"bike", "bike"}, {"tune", "tune"}, {"deck", "deck"}, {"settings", "settings"}};
+    for (String[] n : names) {
+      // The on-phone test script does this once a second or so, over adb.
+      a.onNewIntent(new android.content.Intent(android.content.Intent.ACTION_MAIN).putExtra("open", n[0]));
+      idle(400);
+      org.junit.Assert.assertEquals(n[0], n[1], openScreen());
+    }
+    // Asking for the screen already showing keeps it.
+    a.onNewIntent(new android.content.Intent(android.content.Intent.ACTION_MAIN).putExtra("open", "settings"));
+    idle(400);
+    org.junit.Assert.assertEquals("settings", openScreen());
+    // Anything unknown, and plain Home, mean the dashboard.
+    a.onNewIntent(new android.content.Intent(android.content.Intent.ACTION_MAIN).putExtra("open", "home"));
+    idle(400);
+    org.junit.Assert.assertNull(openScreen());
+    panel("rides").open();
+    idle(400);
+    a.onNewIntent(new android.content.Intent(android.content.Intent.ACTION_MAIN));
+    idle(400);
+    org.junit.Assert.assertNull(openScreen());
+  }
+
+  @Test public void aFreshStartCanNameTheScreenToo() throws Exception {
+    controller = Robolectric.buildActivity(RideActivity.class,
+        new android.content.Intent(android.content.Intent.ACTION_MAIN).putExtra("open", "rides"));
+    a = controller.setup().get();
+    idle(400);
+    org.junit.Assert.assertEquals("rides", openScreen());
+  }
+
+  @Test public void aScreenAskedForAgainWhileClosingComesBack() throws Exception {
+    start();
+    panel("rides").open();
+    idle(400);
+    panel("rides").close();
+    org.junit.Assert.assertFalse("a closing screen no longer counts as open", panel("rides").isOpen());
+    panel("rides").open();              // tapped again before the slide-out finished
+    idle(600);
+    org.junit.Assert.assertTrue(panel("rides").isOpen());
+    org.junit.Assert.assertEquals(View.VISIBLE, panel("rides").getVisibility());
+    // And a second close while one is in flight does not confuse it.
+    panel("rides").close();
+    panel("rides").close();
+    idle(600);
+    org.junit.Assert.assertEquals(View.GONE, panel("rides").getVisibility());
+  }
+
   @Test public void survivesBeingRebuiltWithAScreenAndASheetOpen() throws Exception {
     start();
     panel("settings").open();

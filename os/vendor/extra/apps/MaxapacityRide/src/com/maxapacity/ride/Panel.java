@@ -23,6 +23,7 @@ abstract class Panel extends LinearLayout {
     /** Slot on the right of the header for one screen-level action. */
     protected final FrameLayout headerAction;
     private Runnable onToggle;
+    private boolean closing;
 
     Panel(Context context, String title) {
         super(context);
@@ -75,14 +76,17 @@ abstract class Panel extends LinearLayout {
         onToggle = r;
     }
 
+    /** On screen and staying there: a screen that is sliding away no longer counts. */
     boolean isOpen() {
-        return getVisibility() == VISIBLE;
+        return getVisibility() == VISIBLE && !closing;
     }
 
     void open() {
         if (isOpen()) return;
         onOpen();
+        // Asked for again while still sliding away: stop that and come back.
         animate().cancel();
+        closing = false;
         setVisibility(VISIBLE);
         if (onToggle != null) onToggle.run();
         setAlpha(0f);
@@ -99,10 +103,12 @@ abstract class Panel extends LinearLayout {
                 getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
         if (imm != null) imm.hideSoftInputFromWindow(getWindowToken(), 0);
         animate().cancel();
+        closing = true;
+        if (onToggle != null) onToggle.run();
         animate().alpha(0f).translationY(dp(24)).setDuration(150)
                 .withEndAction(() -> {
+                    closing = false;
                     setVisibility(GONE);
-                    if (onToggle != null) onToggle.run();
                 }).start();
     }
 

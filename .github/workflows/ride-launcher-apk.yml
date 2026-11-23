@@ -143,10 +143,12 @@ jobs:
           # safely up, so a refused upload never leaves nothing to download.
           # No --target: a draft has no tag to pin, and the one upload that
           # was refused (run 11) named a commit the branch had moved past.
-          gh release create "$BUILD_TAG" maxapacity-ride.apk \
+          # ride-test.sh goes up beside the APK: it installs the app on the
+          # phone plugged in and photographs every screen.
+          gh release create "$BUILD_TAG" maxapacity-ride.apk os/tools/ride-test.sh \
             --repo "$GITHUB_REPOSITORY" --draft \
             --title "MAXAPACITY Ride 1.0.${{ github.run_number }} (new app)" \
-            --notes "MAXAPACITY ride launcher 1.0.${{ github.run_number }} from $GITHUB_SHA. First install: adb install maxapacity-ride.apk. After that the app updates itself."
+            --notes "MAXAPACITY ride launcher 1.0.${{ github.run_number }} from $GITHUB_SHA. Download both files, plug the phone in and run: bash ~/Downloads/ride-test.sh. That installs the app and saves a picture of every screen to the Desktop. After the first install the app updates itself."
           ids=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
             --jq ".[] | select(.draft and .tag_name == \"$BUILD_TAG\") | .id" | sort -n)
           newest=$(echo "$ids" | tail -n 1)

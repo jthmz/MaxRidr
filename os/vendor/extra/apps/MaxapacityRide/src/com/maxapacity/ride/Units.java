@@ -51,7 +51,7 @@ final class Units {
     }
 
     static String duration(long ms) {
-        long s = ms / 1000;
+        long s = Math.max(0, ms) / 1000;
         return String.format(Locale.US, "%d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60);
     }
 }

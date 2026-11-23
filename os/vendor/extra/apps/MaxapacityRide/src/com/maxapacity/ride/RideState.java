@@ -117,7 +117,8 @@ final class RideState {
         long now = SystemClock.elapsedRealtime();
         // Time since the previous fix, capped so a GPS dropout is not counted
         // as riding time.
-        long dt = lastFixElapsedMs == 0 ? 0 : Math.min(now - lastFixElapsedMs, 5000);
+        long dt = lastFixElapsedMs == 0 ? 0
+                : Math.max(0, Math.min(now - lastFixElapsedMs, 5000));
         lastFixElapsedMs = now;
         float s = l.hasSpeed() ? l.getSpeed() : 0f;
         speedMps = s < MIN_SPEED_MPS ? 0f : s;
