@@ -59,7 +59,7 @@ import java.util.Locale;
  * assignable ride-app slots, site tools and an app drawer.
  */
 public final class RideActivity extends Activity
-        implements RideState.Listener, LocationListener, AppDrawer.Host, CopilotView.Host {
+        implements RideState.Listener, LocationListener, AppDrawer.Host, CopilotView.Host, DeckView.Host {
 
     // Brand palette: graphite surfaces, grayscale text ramp, one voltage accent,
     // semantic green/red/amber for status only.
@@ -114,6 +114,7 @@ public final class RideActivity extends Activity
     private FxView fx;
     private AppDrawer drawer;
     private CopilotView copilot;
+    private DeckView deck;
     private GestureDetector gestures;
 
     /** Keeps the drawer in step with installs, removals and updates. */
@@ -138,7 +139,7 @@ public final class RideActivity extends Activity
             public boolean onFling(MotionEvent down, MotionEvent up, float vx, float vy) {
                 if (down == null || Math.abs(vy) < Math.abs(vx) * 1.5f) return false;
                 float dy = up.getY() - down.getY();
-                if (copilot.isOpen()) return false;
+                if (copilot.isOpen() || deck.isOpen()) return false;
                 if (!drawer.isOpen() && dy < -dp(72)) {
                     drawer.open();
                     return true;
@@ -183,6 +184,7 @@ public final class RideActivity extends Activity
         super.onNewIntent(intent);
         drawer.close();
         copilot.close();
+        deck.close();
     }
 
     @Override
@@ -196,6 +198,7 @@ public final class RideActivity extends Activity
         if (ChopService.isEnabled(this)) startChopService();
         renderSlots();
         fx.setRunning(prefs.getBoolean("fx", true));
+        deck.resume();
         handler.post(tick);
     }
 
@@ -204,6 +207,7 @@ public final class RideActivity extends Activity
         super.onPause();
         handler.removeCallbacks(tick);
         fx.setRunning(false);
+        deck.pause();
         RideState.get().removeListener(this);
         stopPassiveGps();
     }
@@ -213,6 +217,43 @@ public final class RideActivity extends Activity
     public void onBackPressed() {
         drawer.close();
         copilot.close();
+        deck.close();
+    }
+
+    // ---- DeckView.Host ---------------------------------------------------
+
+    @Override
+    public void connectDeck() {
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(24), dp(8), dp(24), 0);
+        final EditText address = new EditText(this);
+        address.setHint("Mac address, e.g. 192.168.1.20");
+        address.setSingleLine(true);
+        address.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
+        address.setText(prefs.getString("deck_host", ""));
+        form.addView(address, matchWrap());
+        final EditText token = new EditText(this);
+        token.setHint("Phone token (Wi-Fi only)");
+        token.setSingleLine(true);
+        token.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        token.setText(prefs.getString("deck_token", ""));
+        form.addView(token, matchWrap());
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Connect Deck")
+                .setMessage("Over Wi-Fi: the Mac's address and the phoneToken from the Deck's"
+                        + " config.json. Over USB: enter 127.0.0.1, leave the token empty and"
+                        + " run adb reverse tcp:8791 tcp:8791 on the Mac.")
+                .setView(form)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Save", (d, w) -> {
+                    prefs.edit()
+                            .putString("deck_host", address.getText().toString().trim())
+                            .putString("deck_token", token.getText().toString().trim())
+                            .apply();
+                    if (deck.isOpen()) deck.restart();
+                })
+                .show();
     }
 
     // ---- CopilotView.Host ------------------------------------------------
@@ -560,6 +601,8 @@ public final class RideActivity extends Activity
                 "Visual effects: " + (prefs.getBoolean("fx", true) ? "on" : "off"),
                 strava ? "Strava: connected (tap to disconnect)" : "Connect Strava",
                 Gemini.hasKey(this) ? "Copilot: change Gemini key" : "Copilot: add Gemini key",
+                "Deck: " + (prefs.getString("deck_host", "").isEmpty()
+                        ? "connect" : prefs.getString("deck_host", "")),
         };
         new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
                 .setTitle("Settings")
@@ -591,8 +634,11 @@ public final class RideActivity extends Activity
                                 showStravaConnect();
                             }
                             return;
-                        default:
+                        case 6:
                             addGeminiKey();
+                            return;
+                        default:
+                            connectDeck();
                             return;
                     }
                     render();
@@ -655,6 +701,9 @@ public final class RideActivity extends Activity
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         frame.addView(drawer, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        deck = new DeckView(this, this);
+        frame.addView(deck, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         copilot = new CopilotView(this, this);
         frame.addView(copilot, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
@@ -666,6 +715,8 @@ public final class RideActivity extends Activity
             drawer.setPadding(dp(16) + bars.left, dp(16) + bars.top,
                     dp(16) + bars.right, dp(8) + bars.bottom);
             copilot.setPadding(dp(16) + bars.left, dp(8) + bars.top,
+                    dp(16) + bars.right, dp(16) + bars.bottom);
+            deck.setPadding(dp(16) + bars.left, dp(8) + bars.top,
                     dp(16) + bars.right, dp(16) + bars.bottom);
             return insets;
         });
@@ -758,7 +809,8 @@ public final class RideActivity extends Activity
         addBottomTile(bottom, "Apps", v -> drawer.open());
         addBottomTile(bottom, "Rides", v -> showRides());
         addBottomTile(bottom, "Copilot", v -> copilot.open());
-        addBottomTile(bottom, "Settings", v -> showSettings());
+        addBottomTile(bottom, "Deck", v -> deck.open());
+        addBottomTile(bottom, "Setup", v -> showSettings());
         LinearLayout.LayoutParams bottomLp = matchWrap();
         bottomLp.topMargin = dp(16);
         root.addView(bottom, bottomLp);
