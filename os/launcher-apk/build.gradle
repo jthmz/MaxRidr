@@ -1,0 +1,45 @@
+// Builds the ride launcher as a standalone APK from the same sources the ROM
+// build uses (os/vendor/extra/apps/MaxapacityRide), for installing on a stock
+// LineageOS phone with `adb install`.
+plugins {
+    id 'com.android.application' version '8.7.3'
+}
+
+def appDir = file('../vendor/extra/apps/MaxapacityRide')
+
+// The ROM build needs package= in the manifest; the Gradle plugin rejects it
+// in favour of `namespace`, so build from a copy without it.
+def manifestCopy = layout.buildDirectory.file('manifest/AndroidManifest.xml').get().asFile
+manifestCopy.parentFile.mkdirs()
+manifestCopy.text = new File(appDir, 'AndroidManifest.xml').text
+        .replaceFirst(/\s+package="[^"]+"/, '')
+
+android {
+    namespace 'com.maxapacity.ride'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.maxapacity.ride'
+        minSdk 31
+        targetSdk 35
+        versionCode 1
+        versionName '1.0'
+    }
+
+    sourceSets {
+        main {
+            manifest.srcFile manifestCopy
+            java.srcDirs = [new File(appDir, 'src')]
+            res.srcDirs = [new File(appDir, 'res')]
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+    }
+}
