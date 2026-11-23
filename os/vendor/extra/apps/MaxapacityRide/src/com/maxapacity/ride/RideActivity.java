@@ -4,9 +4,11 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
+import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
@@ -26,14 +28,18 @@ import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
 import android.util.TypedValue;
+import android.view.GestureDetector;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowManager;
+import android.speech.RecognizerIntent;
 import android.text.InputType;
 import android.widget.BaseAdapter;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextClock;
@@ -53,7 +59,7 @@ import java.util.Locale;
  * assignable ride-app slots, site tools and an app drawer.
  */
 public final class RideActivity extends Activity
-        implements RideState.Listener, LocationListener {
+        implements RideState.Listener, LocationListener, AppDrawer.Host, CopilotView.Host {
 
     // Brand palette: graphite surfaces, grayscale text ramp, one voltage accent,
     // semantic green/red/amber for status only.
@@ -72,6 +78,7 @@ public final class RideActivity extends Activity
     private static final int SLOT_COUNT = 4;
     private static final int REQ_LOCATION = 1;
     private static final int REQ_NOTIFY = 2;
+    private static final int REQ_SPEECH = 3;
 
     /** Sustained speed that starts a ride on its own (about 11 km/h, 7 mph). */
     private static final float AUTO_START_MPS = 3f;
@@ -104,6 +111,19 @@ public final class RideActivity extends Activity
     private TextView rideButton;
     private LinearLayout slotRow;
     private TextView stopsValue;
+    private FxView fx;
+    private AppDrawer drawer;
+    private CopilotView copilot;
+    private GestureDetector gestures;
+
+    /** Keeps the drawer in step with installs, removals and updates. */
+    private final BroadcastReceiver packageChanges = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            drawer.invalidateApps();
+            renderSlots();
+        }
+    };
     private TextView climbValue;
 
     @Override
@@ -112,6 +132,57 @@ public final class RideActivity extends Activity
         prefs = getSharedPreferences("ride", Context.MODE_PRIVATE);
         locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
         setContentView(buildUi());
+
+        gestures = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
+            @Override
+            public boolean onFling(MotionEvent down, MotionEvent up, float vx, float vy) {
+                if (down == null || Math.abs(vy) < Math.abs(vx) * 1.5f) return false;
+                float dy = up.getY() - down.getY();
+                if (copilot.isOpen()) return false;
+                if (!drawer.isOpen() && dy < -dp(72)) {
+                    drawer.open();
+                    return true;
+                }
+                if (drawer.isOpen() && dy > dp(72) && drawer.atTop()) {
+                    drawer.close();
+                    return true;
+                }
+                return false;
+            }
+        });
+
+        IntentFilter packages = new IntentFilter();
+        packages.addAction(Intent.ACTION_PACKAGE_ADDED);
+        packages.addAction(Intent.ACTION_PACKAGE_REMOVED);
+        packages.addAction(Intent.ACTION_PACKAGE_CHANGED);
+        packages.addDataScheme("package");
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(packageChanges, packages, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(packageChanges, packages);
+        }
+    }
+
+    @Override
+    protected void onDestroy() {
+        unregisterReceiver(packageChanges);
+        copilot.shutdown();
+        super.onDestroy();
+    }
+
+    /** Swipe up anywhere on the dashboard opens the drawer; swipe down closes it. */
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent event) {
+        gestures.onTouchEvent(event);
+        return super.dispatchTouchEvent(event);
+    }
+
+    /** Home pressed while already home: back to the dashboard. */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        drawer.close();
+        copilot.close();
     }
 
     @Override
@@ -124,6 +195,7 @@ public final class RideActivity extends Activity
         // Restart the gesture service if the system stopped it.
         if (ChopService.isEnabled(this)) startChopService();
         renderSlots();
+        fx.setRunning(prefs.getBoolean("fx", true));
         handler.post(tick);
     }
 
@@ -131,13 +203,97 @@ public final class RideActivity extends Activity
     protected void onPause() {
         super.onPause();
         handler.removeCallbacks(tick);
+        fx.setRunning(false);
         RideState.get().removeListener(this);
         stopPassiveGps();
     }
 
-    /** Home screen: Back has nowhere to go. */
+    /** Home screen: Back only closes the drawer. */
     @Override
     public void onBackPressed() {
+        drawer.close();
+        copilot.close();
+    }
+
+    // ---- CopilotView.Host ------------------------------------------------
+
+    @Override
+    public void listen() {
+        try {
+            startActivityForResult(new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                    .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    .putExtra(RecognizerIntent.EXTRA_PROMPT, "Ask Copilot"), REQ_SPEECH);
+        } catch (ActivityNotFoundException e) {
+            toast("Voice input needs the Google app installed");
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_SPEECH || resultCode != RESULT_OK || data == null) return;
+        ArrayList<String> heard = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+        if (heard != null && !heard.isEmpty()) copilot.ask(heard.get(0), true);
+    }
+
+    @Override
+    public void addGeminiKey() {
+        final EditText key = new EditText(this);
+        key.setHint("API key");
+        key.setSingleLine(true);
+        key.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        key.setText(prefs.getString("gemini_key", ""));
+        LinearLayout form = new LinearLayout(this);
+        form.setPadding(dp(24), dp(8), dp(24), 0);
+        form.addView(key, matchWrap());
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Gemini API key")
+                .setMessage("Create a free key at aistudio.google.com/apikey and paste it"
+                        + " here. It is stored only on this phone.")
+                .setView(form)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Save", (d, w) -> {
+                    prefs.edit().putString("gemini_key", key.getText().toString().trim())
+                            .apply();
+                    copilot.refreshEmptyState();
+                    toast(Gemini.hasKey(this) ? "Copilot is ready" : "Copilot key removed");
+                })
+                .show();
+    }
+
+    // ---- AppDrawer.Host --------------------------------------------------
+
+    @Override
+    public void launch(Intent intent) {
+        open(intent);
+    }
+
+    /** Pin from the drawer: first free ride-app slot, or ask which to replace. */
+    @Override
+    public void pin(final ComponentName app) {
+        for (int i = 0; i < SLOT_COUNT; i++) {
+            if (slotIntent(i) == null) {
+                setSlot(i, app);
+                return;
+            }
+        }
+        PackageManager pm = getPackageManager();
+        String[] names = new String[SLOT_COUNT];
+        for (int i = 0; i < SLOT_COUNT; i++) {
+            ResolveInfo info = pm.resolveActivity(slotIntent(i), 0);
+            names[i] = "Replace " + (info == null ? "slot " + (i + 1) : info.loadLabel(pm));
+        }
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+                .setTitle("Ride apps are full")
+                .setItems(names, (d, which) -> setSlot(which, app))
+                .show();
+    }
+
+    private void setSlot(int slot, ComponentName app) {
+        prefs.edit().putString("slot" + slot, app.flattenToString()).apply();
+        renderSlots();
+        toast("Pinned to ride apps");
     }
 
     // ---- GPS -------------------------------------------------------------
@@ -318,6 +474,7 @@ public final class RideActivity extends Activity
             gpsStatus.setTextColor(WARN);
         }
 
+        fx.setSpeed(state.speedMps());
         speedValue.setText(state.hasFix() ? Units.speed(this, state.speedMps()) : "--");
         speedUnit.setText(Units.speedLabel(this));
         tripValue.setText(Units.distance(this, state.distanceM()) + " "
@@ -400,7 +557,9 @@ public final class RideActivity extends Activity
                 "End ride after 10 min stopped: " + (autoEnd ? "on" : "off"),
                 "Chop twice for flashlight: " + (chop ? "on" : "off"),
                 "Units: " + (Units.metric(this) ? "km/h" : "mph"),
+                "Visual effects: " + (prefs.getBoolean("fx", true) ? "on" : "off"),
                 strava ? "Strava: connected (tap to disconnect)" : "Connect Strava",
+                Gemini.hasKey(this) ? "Copilot: change Gemini key" : "Copilot: add Gemini key",
         };
         new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
                 .setTitle("Settings")
@@ -418,13 +577,22 @@ public final class RideActivity extends Activity
                         case 3:
                             prefs.edit().putBoolean("metric", !Units.metric(this)).apply();
                             break;
-                        default:
+                        case 4:
+                            boolean fxOn = !prefs.getBoolean("fx", true);
+                            prefs.edit().putBoolean("fx", fxOn).apply();
+                            fx.setRunning(fxOn);
+                            fx.setVisibility(fxOn ? View.VISIBLE : View.INVISIBLE);
+                            break;
+                        case 5:
                             if (strava) {
                                 Strava.disconnect(this);
                                 toast("Strava disconnected");
                             } else {
                                 showStravaConnect();
                             }
+                            return;
+                        default:
+                            addGeminiKey();
                             return;
                     }
                     render();
@@ -474,11 +642,30 @@ public final class RideActivity extends Activity
     private View buildUi() {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(BG);
-        root.setOnApplyWindowInsetsListener((v, insets) -> {
+
+        // Layers, back to front: animated backdrop, dashboard, app drawer.
+        final FrameLayout frame = new FrameLayout(this);
+        frame.setBackgroundColor(BG);
+        fx = new FxView(this);
+        fx.setVisibility(prefs.getBoolean("fx", true) ? View.VISIBLE : View.INVISIBLE);
+        drawer = new AppDrawer(this, this);
+        frame.addView(fx, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        frame.addView(root, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        frame.addView(drawer, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        copilot = new CopilotView(this, this);
+        frame.addView(copilot, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        frame.setOnApplyWindowInsetsListener((v, insets) -> {
             Insets bars = insets.getInsets(WindowInsets.Type.systemBars()
-                    | WindowInsets.Type.displayCutout());
-            v.setPadding(dp(16) + bars.left, dp(8) + bars.top,
+                    | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
+            root.setPadding(dp(16) + bars.left, dp(8) + bars.top,
+                    dp(16) + bars.right, dp(16) + bars.bottom);
+            drawer.setPadding(dp(16) + bars.left, dp(16) + bars.top,
+                    dp(16) + bars.right, dp(8) + bars.bottom);
+            copilot.setPadding(dp(16) + bars.left, dp(8) + bars.top,
                     dp(16) + bars.right, dp(16) + bars.bottom);
             return insets;
         });
@@ -517,6 +704,9 @@ public final class RideActivity extends Activity
         });
         root.addView(speedo, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        // The backdrop centres its gauge arc, bolt and grid on the speedometer.
+        speedo.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) ->
+                fx.setFocus(l, t, r, b));
 
         // Trip stats: two rows of three inside one panel.
         LinearLayout stats = new LinearLayout(this);
@@ -565,14 +755,15 @@ public final class RideActivity extends Activity
 
         // Bottom row: app drawer, ride history, settings.
         LinearLayout bottom = row();
-        addBottomTile(bottom, "All apps", v -> showAppPicker(-1));
+        addBottomTile(bottom, "Apps", v -> drawer.open());
         addBottomTile(bottom, "Rides", v -> showRides());
+        addBottomTile(bottom, "Copilot", v -> copilot.open());
         addBottomTile(bottom, "Settings", v -> showSettings());
         LinearLayout.LayoutParams bottomLp = matchWrap();
         bottomLp.topMargin = dp(16);
         root.addView(bottom, bottomLp);
 
-        return root;
+        return frame;
     }
 
     private TextView stat(LinearLayout parent, String name) {
