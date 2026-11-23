@@ -49,7 +49,10 @@ concurrency:
 env:
   GH_TOKEN: ${{ github.token }}
   KEY_RELEASE: Ride launcher signing key (do not delete)
-  BUILD_RELEASE: Ride launcher (latest build)
+  # Its own tag and title: an older copy of this workflow on another branch
+  # still writes a draft called "Ride launcher (latest build)", and the two
+  # must not overwrite each other.
+  BUILD_TAG: ride-app-latest
   OTA_TAG: ride-ota
 
 jobs:
@@ -125,16 +128,18 @@ jobs:
 
       # Delivered as a draft release (visible to collaborators only) rather
       # than a workflow artifact, which counts against the Actions storage quota.
+      # The title carries the version, so it is plain which build is on offer.
       - name: Attach APK to draft release
         run: |
+          set -euo pipefail
           gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
-            --jq ".[] | select(.draft and .name == \"$BUILD_RELEASE\") | .id" \
+            --jq ".[] | select(.draft and .tag_name == \"$BUILD_TAG\") | .id" \
             | while read -r id; do
                 gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
               done
-          gh release create ride-launcher-latest maxapacity-ride.apk \
+          gh release create "$BUILD_TAG" maxapacity-ride.apk \
             --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
-            --title "$BUILD_RELEASE" \
+            --title "MAXAPACITY Ride 1.0.${{ github.run_number }} (new app)" \
             --notes "MAXAPACITY ride launcher 1.0.${{ github.run_number }} from $GITHUB_SHA. First install: adb install maxapacity-ride.apk. After that the app updates itself."
 
       # Phones follow whatever this step publishes, so it only runs for main
