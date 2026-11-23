@@ -7,8 +7,9 @@ on:
       - '.github/workflows/ride-launcher-apk.yml'
   workflow_dispatch:
 
+# contents: write is needed to attach the APK to a draft release.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -27,7 +28,19 @@ jobs:
         run: gradle --no-daemon assembleDebug
       - name: Rename APK
         run: cp os/launcher-apk/build/outputs/apk/debug/*.apk maxapacity-ride.apk
-      - uses: actions/upload-artifact@v4
-        with:
-          name: maxapacity-ride
-          path: maxapacity-ride.apk
+      # Delivered as a draft release (visible to collaborators only) rather
+      # than a workflow artifact, which counts against the Actions storage quota.
+      - name: Attach APK to draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: Ride launcher (latest build)
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.draft and .name == \"$TITLE\") | .id" \
+            | while read -r id; do
+                gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+              done
+          gh release create ride-launcher-latest maxapacity-ride.apk \
+            --repo "$GITHUB_REPOSITORY" --draft --target "$GITHUB_SHA" \
+            --title "$TITLE" \
+            --notes "Debug build of the MAXAPACITY ride launcher from $GITHUB_SHA. Install with: adb install -r maxapacity-ride.apk"
