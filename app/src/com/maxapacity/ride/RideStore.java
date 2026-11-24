@@ -66,7 +66,8 @@ final class RideStore {
     }
 
     /**
-     * Ends the current ride, saves it and queues the Strava upload.
+     * Ends the current ride, saves it, queues the Strava upload and hands
+     * it to Health Connect.
      *
      * @return a one-line result to show the rider
      */
@@ -106,6 +107,7 @@ final class RideStore {
             // The GPX is saved; only the history entry is missing.
         }
         if (strava) Strava.uploadPending(c);
+        Health.sync(c);
         Deck.get(c).rideSaved();
 
         return "Ride saved: " + Units.distance(c, state.distanceM()) + " "
@@ -115,6 +117,11 @@ final class RideStore {
 
     static void setStravaStatus(Context c, String file, String status) {
         mark(c, file, "strava", status);
+    }
+
+    /** Health Connect has this ride, or will never take it: it is not offered again. */
+    static void setHealth(Context c, String file, String status) {
+        mark(c, file, "health", status);
     }
 
     /** The Mac has this ride: it is not offered to the Deck again. */

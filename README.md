@@ -3,8 +3,8 @@
 Two halves that find each other:
 
 - **MAXAPACITY Ride** (`app/`): an Android home screen for the bike phone. GPS
-  speedometer, automatic ride recording with history and Strava upload, a
-  Bluetooth link to the bike (ANT BMS battery, Fardriver controller, with
+  speedometer, automatic ride recording with history, Strava upload and
+  Health Connect sharing (both a tap to turn on, see below), a Bluetooth link to the bike (ANT BMS battery, Fardriver controller, with
   tuning), an app drawer, Copilot, and over-the-air updates. Each ride records
   its furthest lean left and right, and an optional crash alert texts your
   location to a contact if a hard hit is followed by the bike not moving. A
@@ -49,6 +49,44 @@ never holds the phone's key.
 The Deck has to allow it: `"remote": true` in its `config.json` to be found on
 the network, and `"uploads": true` to take rides. The contract between the two
 is [deck/APP-LINK.md](deck/APP-LINK.md).
+
+## Strava and Health Connect
+
+Neither asks a rider for a key or an account detail.
+
+**Strava.** Settings, Strava, Connect, then Authorize on Strava's own screen,
+which opens in the Strava app when it is installed. Send to Strava on a ride
+does the same and uploads that ride once connected. Rides saved before
+connecting are offered, not sent unasked; rides after it upload on their own.
+
+Strava only signs riders in through a registered API application, so that
+one tap needs this app's own application in the build. Setting it up is a
+one-time job for whoever publishes builds:
+
+1. At [strava.com/settings/api](https://www.strava.com/settings/api) create
+   an application with Authorization Callback Domain set to `localhost`.
+2. Add its Client ID and Client Secret to this repository as Actions secrets
+   named `STRAVA_CLIENT_ID` and `STRAVA_CLIENT_SECRET`.
+
+The next build carries them, and the build's summary says so. A build made
+without them still works: it asks each rider for an application of their
+own, as every build once did, and a phone connected that way keeps using its
+own.
+
+Two things to know. Strava limits how many riders a new application may sign
+in, starting with only its owner; the limit is raised on the application's
+page. And the secret travels inside the app, which anyone can download: with
+it someone could pose as this app to Strava and use up its allowance, but
+could not reach a rider's account, whose sign-in never leaves their phone.
+If that happens, make a new secret on Strava's page and update the
+repository secret; phones get it with the next update.
+
+**Health Connect** (Android 14 and later). Settings, Health Connect, Turn on,
+then Allow on the phone's own screen. Every saved ride, old and new, is
+written to Health Connect as a cycling workout with its route and distance,
+and apps the rider has let read workouts there pick it up: Oura, Google
+Health, Samsung Health and others. In Oura that is Settings, Data Sharing,
+Health Connect. The app only writes; it reads nothing from Health Connect.
 
 ## Layout
 

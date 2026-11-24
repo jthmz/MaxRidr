@@ -35,6 +35,12 @@
     <uses-feature
         android:name="android.hardware.bluetooth_le"
         android:required="false" />
+    <!-- Health Connect (Android 14 and later): each saved ride is written as
+         a workout with its route and distance, once the rider turns that on.
+         The app asks to write only; it reads nothing from Health Connect. -->
+    <uses-permission android:name="android.permission.health.WRITE_EXERCISE" />
+    <uses-permission android:name="android.permission.health.WRITE_EXERCISE_ROUTE" />
+    <uses-permission android:name="android.permission.health.WRITE_DISTANCE" />
     <!-- Over-the-air updates: the app downloads its own newer build and hands
          it to the system installer. The second permission lets later updates
          install without a prompt once this app is its own installer. -->
@@ -94,6 +100,20 @@
                 <data
                     android:host="localhost"
                     android:scheme="maxapacity" />
+            </intent-filter>
+        </activity>
+
+        <!-- What the app writes to Health Connect, in words. Android shows it
+             from the privacy link on its Health Connect permission screen,
+             and does not offer the permissions to an app without one. -->
+        <activity
+            android:name=".HealthActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
             </intent-filter>
         </activity>
 
