@@ -47,6 +47,7 @@ public class DeckTest {
   @After public void tearDown() {
     if (fake != null) fake.stop();
     Deck.usb = DeckLink.USB;
+    Deck.neighbours = null;
   }
 
   /** Lets the background thread and the main thread's queue both move on. */
@@ -182,9 +183,133 @@ public class DeckTest {
     assertEquals(2, onMac());
 
     // Forgotten on the phone: the Deck is still there, and wants its code again.
+    final String key = d.key();
     d.forget();
     until("the Deck to want its code again", () -> d.state() == Deck.FOUND);
     assertEquals("", d.requestKey());
+    // And taken back while the Deck still knows this phone: linked again, no new code.
+    d.remember(key);
+    until("the forget to be undone", () -> d.state() == Deck.LINKED);
+    assertEquals(fake.key, d.requestKey());
+  }
+
+  @Test public void aDeckTheNetworkHidesIsFoundByAskingTheNetwork() throws Exception {
+    fake = new FakeDeck(true);
+    fake.code = "424242";
+    Deck.usb = "127.0.0.1:1";           // no cable
+    FakeDeck.onWifi(c);
+    final int[] asked = {0};
+    Deck.neighbours = () -> {
+      asked[0]++;
+      return java.util.Arrays.asList("127.0.0.1:2", fake.address(), "127.0.0.1:3");
+    };
+    final Deck d = Deck.start(c);
+    d.refresh();
+    until("the first look to find nothing", () -> d.state() == Deck.NOT_FOUND);
+    assertEquals("the network is not asked until someone wants the Deck", 0, asked[0]);
+
+    d.search(true);
+    assertTrue(d.searching());
+    until("the search to find it", () -> d.state() == Deck.FOUND);
+    assertFalse(d.searching());
+    assertEquals(fake.address(), d.address());
+    assertEquals("Found a Deck at " + fake.address(), d.searchNote());
+    assertEquals(1, asked[0]);
+
+    final Object[] right = {null};
+    d.pair("424242", (ok, message) -> right[0] = ok);
+    until("pairing", () -> right[0] != null && d.state() == Deck.LINKED);
+
+    String report = d.report();
+    assertTrue(report, report.contains("Link: linked at " + fake.address()));
+    assertTrue(report, report.contains("Searching 3 addresses on this network"));
+    assertTrue(report, report.contains("Paired key on this phone: yes"));
+    assertFalse("the key itself is never in the report", report.contains(fake.key));
+  }
+
+  @Test public void aDeckThatMovedIsFoundAgainByItselfButOnlyOncePerNetwork() throws Exception {
+    fake = new FakeDeck(true);
+    fake.code = "424242";
+    Deck.usb = "127.0.0.1:1";
+    FakeDeck.onWifi(c);
+    final Deck d = Deck.start(c);
+    final Object[] looked = {null};
+    d.useAddress(fake.address(), (ok, message) -> looked[0] = ok);
+    until("the Deck to be found", () -> looked[0] != null);
+    final Object[] paired = {null};
+    d.pair("424242", (ok, message) -> paired[0] = ok);
+    until("pairing", () -> paired[0] != null && d.state() == Deck.LINKED);
+    final String key = fake.key;
+
+    // The Mac is handed a new address: the old one goes quiet and the same Deck answers elsewhere.
+    fake.stop();
+    final FakeDeck moved = new FakeDeck(true);
+    moved.key = key;
+    final int[] asked = {0};
+    Deck.neighbours = () -> {
+      asked[0]++;
+      return java.util.Arrays.asList(moved.address());
+    };
+    try {
+      d.attach(null);                   // the app comes to the front
+      until("the Deck to be found where it now is", () -> d.state() == Deck.LINKED && d.address().equals(moved.address()));
+      assertEquals(1, asked[0]);
+      assertEquals(key, d.requestKey());
+
+      // Away from home, the same care must not turn into knocking on a network at every look.
+      moved.stop();
+      d.refresh();
+      until("the Deck to go out of reach", () -> d.state() == Deck.NOT_FOUND);
+      for (int i = 0; i < 5; i++) {
+        d.refresh();
+        ShadowLooper.idleMainLooper(200, TimeUnit.MILLISECONDS);
+        Thread.sleep(30);
+      }
+      until("the looks to settle", () -> d.state() == Deck.NOT_FOUND);
+      assertEquals("asked once per network unasked, not at every look", 1, asked[0]);
+    } finally {
+      moved.stop();
+      d.detach(null);
+    }
+  }
+
+  @Test public void searchingIsSpacedOutUnlessAskedForAndNeverHappensOnMobileData() throws Exception {
+    Deck.usb = "127.0.0.1:1";
+    final int[] asked = {0};
+    Deck.neighbours = () -> {
+      asked[0]++;
+      return java.util.Arrays.asList("127.0.0.1:2");
+    };
+    final Deck d = Deck.start(c);
+    d.search(true);                     // Robolectric's phone starts on mobile data
+    until("the look", () -> d.state() == Deck.NOT_FOUND);
+    assertEquals("mobile data never asks a network", 0, asked[0]);
+    assertFalse(d.onNetwork());
+
+    FakeDeck.onWifi(c);
+    assertTrue(d.onNetwork());
+    d.search(false);
+    until("the first search", () -> !d.searching() && asked[0] == 1);
+    for (int i = 0; i < 4; i++) {
+      d.search(false);
+      until("an unasked search to be let go", () -> !d.searching());
+    }
+    assertEquals("unasked, the network is asked once in a while, not every time", 1, asked[0]);
+    d.search(true);
+    until("the search that was asked for", () -> !d.searching() && asked[0] == 2);
+    assertEquals("Asked 1 address on this network. No Deck answered", d.searchNote());
+    assertEquals(Deck.NOT_FOUND, d.state());
+  }
+
+  @Test public void aLinkCopiedFromTheDeckCarriesItsCode() {
+    assertEquals("123456", Deck.codeIn("http://192.168.1.20:8791/#123456"));
+    assertEquals("123456", Deck.codeIn(" http://192.168.1.20:8791/#123 456 "));
+    assertEquals("", Deck.codeIn("192.168.1.20"));
+    assertEquals("", Deck.codeIn("http://192.168.1.20:8791/#12345"));
+    assertEquals("", Deck.codeIn(null));
+    assertEquals("192.168.1.", Deck.sharedStart("192.168.1.57"));
+    assertEquals("", Deck.sharedStart(""));
+    assertEquals("", Deck.sharedStart(null));
   }
 
   @Test public void ridesWaitWhenUploadIsOffOrHomeIsOutOfReach() throws Exception {

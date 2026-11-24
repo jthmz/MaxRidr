@@ -27,6 +27,7 @@ final class Sheet extends FrameLayout {
     private final LinearLayout panel;
     private final LinearLayout content;
     private final LinearLayout actions;
+    private TextView messageView;
     private Runnable onDismiss;
     private boolean closing;
 
@@ -58,7 +59,8 @@ final class Sheet extends FrameLayout {
         t.setSingleLine(false);
         panel.addView(t, Ui.top(c, Ui.matchWrap(), 20));
         if (message != null) {
-            panel.addView(Ui.body(c, message, Ui.TEXT_2), Ui.top(c, Ui.matchWrap(), 8));
+            messageView = Ui.body(c, message, Ui.TEXT_2);
+            panel.addView(messageView, Ui.top(c, Ui.matchWrap(), 8));
         }
 
         content = Ui.column(c);
@@ -146,6 +148,13 @@ final class Sheet extends FrameLayout {
         actions.addView(b, lp);
         actions.setVisibility(VISIBLE);
         return this;
+    }
+
+    /** Changes the words under the title while the sheet is up, for a state that moves on. */
+    void setMessage(String message) {
+        if (messageView != null && !message.contentEquals(messageView.getText())) {
+            messageView.setText(message);
+        }
     }
 
     Sheet onDismiss(Runnable r) {

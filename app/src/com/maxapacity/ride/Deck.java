@@ -3,6 +3,8 @@ package com.maxapacity.ride;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
+import android.net.LinkAddress;
+import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.nsd.NsdManager;
@@ -23,11 +25,16 @@ import java.io.FileInputStream;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Supplier;
 
 /**
  * The phone's link to the MAXAPACITY Deck on the Mac. It finds the Deck by
@@ -37,8 +44,13 @@ import java.util.concurrent.Executors;
  * Finding it, in the order deck/APP-LINK.md gives: down a USB cable (the Deck
  * keeps that link up from the Mac's side), then by its announcement on the
  * home network, then at the last address that worked, then at one typed by
- * hand for networks that block announcements. Everything but the cable is
- * tried only on Wi-Fi or Ethernet, never on mobile data.
+ * hand. Plenty of home networks never pass the announcement on, so when
+ * nothing answers the phone asks every address on its own network instead
+ * ({@link #search}). Everything but the cable is tried only on Wi-Fi or
+ * Ethernet, never on mobile data.
+ *
+ * What it tried and what answered is kept as a short log ({@link #report}),
+ * so a link that will not come up can be explained without guessing.
  *
  * Main thread only; the talking happens on one background thread.
  */
@@ -71,11 +83,19 @@ final class Deck {
 
     private static final String SERVICE = "_maxdeck._tcp";
     private static final long LISTEN_MS = 6000;
+    /** Unasked, the whole network is searched this often at most, and only a few times. */
+    private static final long SEARCH_GAP_MS = 45000;
+    private static final long NEVER = Long.MIN_VALUE / 2;
+    private static final int UNASKED_SEARCHES = 3;
+    private static final int RESOLVE_TRIES = 3;
+    private static final int MAX_NOTES = 80;
     private static final long SEND_GAP_MS = 20000;
     private static final int MAX_RIDES_A_RUN = 100;
 
     /** Where the Deck answers down a USB cable. Tests point this at a stand-in. */
     static String usb = DeckLink.USB;
+    /** Tests name the addresses a search asks. Otherwise they are the phone's own network. */
+    static Supplier<List<String>> neighbours;
 
     private static Deck instance;
 
@@ -94,6 +114,8 @@ final class Deck {
     private final SharedPreferences prefs;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
+    /** Searching a network takes seconds; it has its own thread so looks are not held up. */
+    private final ExecutorService searchIo = Executors.newSingleThreadExecutor();
     private final List<Listener> listeners = new ArrayList<>();
     private final List<Runnable> afterLook = new ArrayList<>();
     private final List<Done> afterSend = new ArrayList<>();
@@ -115,9 +137,26 @@ final class Deck {
     private NsdManager nsd;
     private NsdManager.DiscoveryListener discovery;
     private boolean resolving;
+    /** Announcements heard and not yet turned into an address. */
+    private final List<NsdServiceInfo> toResolve = new ArrayList<>();
+    private int resolveTries;
     /** Where the Deck's own announcement says it is, while one is being heard. */
     private String found = "";
     private String lastNetwork = "";
+
+    /** Decks a search of this network turned up. */
+    private final List<String> swept = new ArrayList<>();
+    private boolean searching;
+    /** When this network was last searched. Far in the past until it has been. */
+    private long searchedAt = NEVER;
+    private int unaskedSearches;
+    /** A phone that has been let in before looks harder once per network, unasked. */
+    private boolean lookedHarder;
+    private String searchNote = "";
+
+    /** What was tried and what answered, newest last. */
+    private final ArrayDeque<String> notes = new ArrayDeque<>();
+    private String lastNote = "";
 
     private Deck(Context app) {
         this.app = app;
@@ -159,6 +198,38 @@ final class Deck {
         return address.equals(usb) ? "" : prefs.getString(PREF_KEY, "");
     }
 
+    /** True while every address on this network is being asked. */
+    boolean searching() {
+        return searching;
+    }
+
+    /** What the last search of this network came to, ready to show, or empty. */
+    String searchNote() {
+        return searchNote;
+    }
+
+    /** Whether this phone is on Wi-Fi or a cabled network at all. */
+    boolean onNetwork() {
+        return onLan();
+    }
+
+    /** Something answered as a Deck but turned this phone away. */
+    boolean shut() {
+        return shut;
+    }
+
+    /** How many rides are still only on this phone. */
+    int ridesWaiting() {
+        return unsent().size();
+    }
+
+    /** This phone's own address on that network, such as "192.168.1.57", or empty. */
+    String phoneAddress() {
+        String own = ownAddress();
+        int slash = own.indexOf('/');
+        return slash < 0 ? own : own.substring(0, slash);
+    }
+
     void addListener(Listener l) {
         if (!listeners.contains(l)) listeners.add(l);
     }
@@ -192,12 +263,15 @@ final class Deck {
         final String address;
         final boolean uploads;
         final boolean shut;
+        /** Each place asked and what it said, for the log. */
+        final String tried;
 
-        Look(int state, String address, boolean uploads, boolean shut) {
+        Look(int state, String address, boolean uploads, boolean shut, String tried) {
             this.state = state;
             this.address = address;
             this.uploads = uploads;
             this.shut = shut;
+            this.tried = tried;
         }
     }
 
@@ -212,7 +286,11 @@ final class Deck {
         final List<String> places = new ArrayList<>();
         places.add(usb);
         if (onLan()) {
-            String[] known = {found, prefs.getString(PREF_LAST, ""), prefs.getString(PREF_TYPED, "")};
+            List<String> known = new ArrayList<>();
+            known.add(found);
+            known.add(prefs.getString(PREF_LAST, ""));
+            known.addAll(swept);
+            known.add(prefs.getString(PREF_TYPED, ""));
             for (String a : known) {
                 String n = normalise(a);
                 if (!n.isEmpty() && !places.contains(n)) places.add(n);
@@ -231,6 +309,13 @@ final class Deck {
                 List<Runnable> waiting = new ArrayList<>(afterLook);
                 afterLook.clear();
                 for (Runnable r : waiting) r.run();
+                // A phone that has been let in before looks harder, once per network: the
+                // Mac may have been handed a new address, and plenty of networks never pass
+                // its announcement on.
+                if (state == NOT_FOUND && foreground && everLinked() && !lookedHarder && onLan()) {
+                    lookedHarder = true;
+                    search(false);
+                }
                 // In reach with rides still on the phone: send them home.
                 if (state == LINKED && uploads && !sending
                         && SystemClock.elapsedRealtime() - lastSendAt > SEND_GAP_MS
@@ -250,16 +335,24 @@ final class Deck {
     private static Look look(List<String> places, String key) {
         String wantsCode = null;
         boolean shut = false;
+        StringBuilder tried = new StringBuilder();
         for (String a : places) {
             // The cable needs no key, and whatever else might be listening on
             // the phone's own port is not handed one.
             DeckLink.Probe p = DeckLink.probe(a, a.equals(usb) ? "" : key);
-            if (p.result == DeckLink.HOME) return new Look(LINKED, a, p.uploads, false);
+            tried.append(tried.length() == 0 ? "" : "; ").append(a.equals(usb) ? "the cable" : a)
+                    .append(p.result == DeckLink.HOME ? " let this phone in"
+                            : p.result == DeckLink.UNPAIRED ? " is a Deck and wants its code"
+                            : p.result == DeckLink.SHUT ? " turned this phone away"
+                            : " did not answer");
+            if (p.result == DeckLink.HOME) {
+                return new Look(LINKED, a, p.uploads, false, tried.toString());
+            }
             if (p.result == DeckLink.UNPAIRED && wantsCode == null) wantsCode = a;
             if (p.result == DeckLink.SHUT) shut = true;
         }
-        if (wantsCode != null) return new Look(FOUND, wantsCode, false, shut);
-        return new Look(NOT_FOUND, "", false, shut);
+        if (wantsCode != null) return new Look(FOUND, wantsCode, false, shut, tried.toString());
+        return new Look(NOT_FOUND, "", false, shut, tried.toString());
     }
 
     private void apply(Look look) {
@@ -274,6 +367,7 @@ final class Deck {
         }
         if (state == LINKED && !everLinked()) prefs.edit().putBoolean(PREF_LINKED, true).apply();
         if (state != LINKED) problem = "";
+        note("Looked: " + look.tried);
         if (different) changed();
     }
 
@@ -338,8 +432,17 @@ final class Deck {
     private void networkIs(String now) {
         if (now.equals(lastNetwork)) return;
         lastNetwork = now;
-        // What was heard on the last network says nothing about this one.
+        // What was heard and found on the last network says nothing about this one.
         found = "";
+        swept.clear();
+        toResolve.clear();
+        searchedAt = NEVER;
+        unaskedSearches = 0;
+        lookedHarder = false;
+        searchNote = "";
+        String own = ownAddress();
+        note(now.isEmpty() ? "Off the network" : !now.endsWith(" lan") ? "On mobile data"
+                : own.isEmpty() ? "Joined a network" : "Joined a network: this phone is at " + own);
         main.removeCallbacks(settled);
         main.postDelayed(settled, 3000);
     }
@@ -362,10 +465,15 @@ final class Deck {
                 }
 
                 @Override
-                public void onStartDiscoveryFailed(String type, int error) {
+                public void onStartDiscoveryFailed(String type, final int error) {
                     final NsdManager.DiscoveryListener me = this;
                     main.post(() -> {
-                        if (discovery == me) discovery = null;
+                        if (discovery != me) return;
+                        discovery = null;
+                        note("Listening for the Deck's announcement could not start (error "
+                                + error + ")");
+                        // Without an announcement to wait for, ask the network directly.
+                        if (foreground && state == NOT_FOUND) search(false);
                     });
                 }
 
@@ -374,8 +482,12 @@ final class Deck {
                 }
 
                 @Override
-                public void onServiceFound(NsdServiceInfo info) {
-                    main.post(() -> resolve(info));
+                public void onServiceFound(final NsdServiceInfo info) {
+                    main.post(() -> {
+                        note("Heard an announcement: " + info.getServiceName());
+                        toResolve.add(info);
+                        resolveNext();
+                    });
                 }
 
                 @Override
@@ -388,8 +500,10 @@ final class Deck {
             };
             nsd.discoverServices(SERVICE, NsdManager.PROTOCOL_DNS_SD, l);
             discovery = l;
+            note("Listening for the Deck's announcement");
         } catch (RuntimeException e) {
             discovery = null;
+            note("Listening for the Deck's announcement is not possible on this phone");
         }
     }
 
@@ -401,16 +515,36 @@ final class Deck {
             // Already stopped.
         }
         discovery = null;
+        toResolve.clear();
     }
 
-    private void resolve(NsdServiceInfo info) {
-        if (resolving || discovery == null) return;
+    /**
+     * Turns the next announcement heard into an address. One at a time: older
+     * phones refuse a second while the first is under way. An announcement
+     * that cannot be turned into a usable address still says a Deck is on
+     * this network, so the network is asked directly instead.
+     */
+    private void resolveNext() {
+        if (resolving || discovery == null || toResolve.isEmpty()) return;
+        final NsdServiceInfo info = toResolve.remove(0);
         resolving = true;
         try {
             nsd.resolveService(info, new NsdManager.ResolveListener() {
                 @Override
-                public void onResolveFailed(NsdServiceInfo i, int error) {
-                    main.post(() -> resolving = false);
+                public void onResolveFailed(NsdServiceInfo i, final int error) {
+                    main.post(() -> {
+                        resolving = false;
+                        if (discovery == null) return;
+                        if (++resolveTries < RESOLVE_TRIES) {
+                            toResolve.add(info);
+                            main.postDelayed(Deck.this::resolveNext, 700);
+                            return;
+                        }
+                        resolveTries = 0;
+                        note("The announcement gave no address (error " + error + ")");
+                        if (state == NOT_FOUND) search(false);
+                        resolveNext();
+                    });
                 }
 
                 @Override
@@ -418,10 +552,16 @@ final class Deck {
                     final String at = addressOf(i);
                     main.post(() -> {
                         resolving = false;
-                        if (!at.isEmpty() && !at.equals(found)) {
+                        resolveTries = 0;
+                        if (at.isEmpty()) {
+                            note("The announcement gave an address this phone cannot use");
+                            if (state == NOT_FOUND) search(false);
+                        } else if (!at.equals(found)) {
                             found = at;
+                            note("The announcement says the Deck is at " + at);
                             refresh();
                         }
+                        resolveNext();
                     });
                 }
             });
@@ -447,6 +587,133 @@ final class Deck {
         return pick.getHostAddress() + ":" + info.getPort();
     }
 
+    // ---- Asking the whole network ------------------------------------------------
+
+    /**
+     * Looks everywhere, and when nothing answers asks every address on this
+     * phone's own network. That finds a Deck on the many home networks that
+     * never pass its announcement on, and one whose address has changed.
+     *
+     * @param asked true when someone asked for it. Unasked searches are
+     *        spaced out and stop after a few, so a phone left on the Deck
+     *        screen away from home does not keep knocking on a network.
+     */
+    void search(boolean asked) {
+        if (searching) return;
+        if (!onLan()) {
+            refresh();
+            return;
+        }
+        long now = SystemClock.elapsedRealtime();
+        if (!asked && (unaskedSearches >= UNASKED_SEARCHES || now - searchedAt < SEARCH_GAP_MS)) {
+            refresh();
+            return;
+        }
+        final List<String> ask = neighbours != null ? neighbours.get() : neighbourhood();
+        if (ask.isEmpty()) {
+            searchNote = "This network gives the phone no address to search from";
+            note("Search: " + searchNote);
+            refresh();
+            return;
+        }
+        if (!asked) unaskedSearches++;
+        searching = true;
+        searchedAt = now;
+        final String asking = ask.size() == 1 ? "1 address" : ask.size() + " addresses";
+        note("Searching " + asking + " on this network");
+        changed();
+        searchIo.execute(() -> {
+            final List<DeckLink.Hit> hits = DeckLink.sweep(ask, DeckLink.SWEEP_CONNECT_MS);
+            main.post(() -> {
+                searching = false;
+                swept.clear();
+                for (DeckLink.Hit h : hits) swept.add(h.address);
+                searchNote = hits.isEmpty()
+                        ? "Asked " + asking + " on this network. No Deck answered"
+                        : "Found a Deck at " + hits.get(0).address;
+                note("Search: " + searchNote);
+                changed();
+                refresh();
+            });
+        });
+    }
+
+    /** Every other address on this phone's network, or none when it is not a home network. */
+    private List<String> neighbourhood() {
+        String own = ownAddress();
+        int slash = own.indexOf('/');
+        if (slash < 0) return new ArrayList<>();
+        int prefix;
+        try {
+            prefix = Integer.parseInt(own.substring(slash + 1));
+        } catch (NumberFormatException e) {
+            prefix = 24;
+        }
+        return DeckLink.neighbours(own.substring(0, slash), prefix, DeckLink.PORT);
+    }
+
+    /** This phone's IPv4 address and prefix on the network in use, as "192.168.1.57/24", or empty. */
+    private String ownAddress() {
+        try {
+            ConnectivityManager cm = app.getSystemService(ConnectivityManager.class);
+            Network n = cm == null ? null : cm.getActiveNetwork();
+            LinkProperties lp = n == null ? null : cm.getLinkProperties(n);
+            if (lp == null) return "";
+            for (LinkAddress la : lp.getLinkAddresses()) {
+                if (la.getAddress() instanceof Inet4Address) {
+                    return la.getAddress().getHostAddress() + "/" + la.getPrefixLength();
+                }
+            }
+        } catch (RuntimeException e) {
+            // Not told: there is then nothing to search from.
+        }
+        return "";
+    }
+
+    // ---- The log ----------------------------------------------------------------
+
+    /** Keeps one line of what happened. The same thing twice running is kept once. */
+    private void note(String text) {
+        if (text.equals(lastNote)) return;
+        lastNote = text;
+        notes.add(new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date()) + "  " + text);
+        while (notes.size() > MAX_NOTES) notes.removeFirst();
+    }
+
+    /**
+     * Where the link stands and what led there, in plain lines, for showing
+     * and sharing. It names addresses on the home network and the phone's
+     * model. The key this phone was handed is never in it.
+     */
+    String report() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("MAXAPACITY Ride ").append(Updater.versionName(app)).append(" on ")
+                .append(device()).append(", Android ").append(Build.VERSION.RELEASE).append('\n');
+        sb.append("Link: ").append(state == LINKED ? "linked " + (viaUsb() ? "over the cable"
+                : "at " + address) : state == FOUND ? "Deck found at " + address
+                + ", waiting for its code" : state == LOOKING ? "still looking" : "no Deck found")
+                .append('\n');
+        sb.append("Paired key on this phone: ")
+                .append(prefs.getString(PREF_KEY, "").isEmpty() ? "no" : "yes").append('\n');
+        sb.append("Let in before: ").append(everLinked() ? "yes" : "no").append('\n');
+        if (state == LINKED) {
+            sb.append("Ride upload on the Deck: ").append(uploads ? "on" : "off").append('\n');
+        }
+        sb.append("Rides waiting to go home: ").append(ridesWaiting()).append('\n');
+        String own = ownAddress();
+        sb.append("Network: ").append(!onLan() ? "not on Wi-Fi or a cabled network"
+                : own.isEmpty() ? "on Wi-Fi, address not known" : "on Wi-Fi, this phone at " + own)
+                .append('\n');
+        sb.append("Listening for the Deck's announcement: ")
+                .append(discovery != null ? "yes" : "no").append('\n');
+        if (!found.isEmpty()) sb.append("Announced at: ").append(found).append('\n');
+        if (!searchNote.isEmpty()) sb.append("Last search: ").append(searchNote).append('\n');
+        if (!problem.isEmpty()) sb.append("Last trouble sending: ").append(problem).append('\n');
+        sb.append('\n');
+        for (String n : notes) sb.append(n).append('\n');
+        return sb.toString().trim();
+    }
+
     // ---- Pairing ---------------------------------------------------------------
 
     /** Trades the 6-digit code on the Deck's Add a screen for this phone's key. */
@@ -460,6 +727,7 @@ final class Deck {
         io.execute(() -> {
             final DeckLink.Pairing p = DeckLink.pair(to, code, name);
             main.post(() -> {
+                note("Pairing at " + to + ": " + (p.ok ? "paired" : p.why));
                 if (p.ok) {
                     if (p.key != null) prefs.edit().putString(PREF_KEY, p.key).apply();
                     done.done(true, "Paired with your Deck");
@@ -468,7 +736,8 @@ final class Deck {
                 } else if ("wrong".equals(p.why)) {
                     done.done(false, "That is not the code on the Deck");
                 } else if ("closed".equals(p.why)) {
-                    done.done(false, "No code is showing on the Deck. Open Add a screen there first");
+                    done.done(false, "That code is used up or has run out. On the Deck, open Add"
+                            + " a screen again for a new one");
                 } else {
                     done.done(false, "The Deck did not answer. Check it is still in reach");
                 }
@@ -486,8 +755,8 @@ final class Deck {
             } else if (state == FOUND) {
                 done.done(true, null);
             } else if (shut) {
-                done.done(false, "A Deck is there, but it is closed to other screens. Set remote"
-                        + " to true in its config.json");
+                done.done(false, "A Deck answered there but turned this phone away. Use its"
+                        + " address in numbers, the way Add a screen shows it");
             } else {
                 done.done(false, a.isEmpty() ? "No Deck in reach" : "No Deck answered at " + a);
             }
@@ -499,8 +768,37 @@ final class Deck {
      * known, so it shows as found and can be paired again with a new code.
      */
     void forget() {
+        note("This phone forgot the Deck");
         prefs.edit().remove(PREF_KEY).remove(PREF_LINKED).apply();
         refresh();
+    }
+
+    /** The key held now, so a forget can be undone while the Deck still knows this phone. */
+    String key() {
+        return prefs.getString(PREF_KEY, "");
+    }
+
+    /** Takes back a {@link #forget}: the key goes back where it was. */
+    void remember(String key) {
+        if (key == null || key.isEmpty()) return;
+        note("Forget undone");
+        prefs.edit().putString(PREF_KEY, key).apply();
+        refresh();
+    }
+
+    /** The six digits after a '#' in a link copied from the Deck's Add a screen, or empty. */
+    static String codeIn(String typed) {
+        if (typed == null) return "";
+        int hash = typed.indexOf('#');
+        if (hash < 0) return "";
+        String digits = typed.substring(hash + 1).replaceAll("\\D", "");
+        return digits.length() == 6 ? digits : "";
+    }
+
+    /** "192.168.1." for "192.168.1.57": the part of its address a Deck shares with this phone. */
+    static String sharedStart(String own) {
+        int dot = own == null ? -1 : own.lastIndexOf('.');
+        return dot < 0 ? "" : own.substring(0, dot + 1);
     }
 
     // ---- Sending rides home -----------------------------------------------------

@@ -211,8 +211,23 @@ public class ScreensTest {
     a.editDeckConnection();
     idle(400);
     sweep("deck sheet");
-    Sheet.dismissCurrent();
-    idle(400);
+    // Every other way in is one tap from there, and each comes back to it.
+    tap("Type or paste the address");
+    sweep("deck address sheet");
+    tap("Back");
+    org.junit.Assert.assertNotNull("back at the ways in", Sheet.current());
+    tap("Use a USB cable");
+    sweep("deck usb sheet");
+    tap("Back");
+    tap("What to check");
+    sweep("deck checks sheet");
+    tap("Back");
+    tap("Link report");
+    sweep("deck report sheet");
+    tap("Share");
+    String report = handedOver();
+    org.junit.Assert.assertNotNull("the report can be sent to whoever is helping", report);
+    org.junit.Assert.assertTrue(report, report.contains("Link: ") && report.contains("Network: "));
     a.editCrashAlert();
     idle(400);
     sweep("crash alert sheet");
@@ -238,6 +253,10 @@ public class ScreensTest {
     a.editDeckConnection();
     idle(400);
     sweep("deck code sheet");
+    tap("Code not working?");
+    sweep("deck code help sheet");
+    tap("Back");
+    org.junit.Assert.assertNotNull("back at the code", find(Sheet.current(), android.widget.EditText.class, null));
     Sheet.dismissCurrent();
     idle(400);
     panel("deck").open();
@@ -249,7 +268,10 @@ public class ScreensTest {
     panel("settings").close();
     idle(400);
 
-    Deck.get(c).pair("424242", (ok, message) -> { });
+    // Typing the sixth digit is enough: the code pairs by itself.
+    a.editDeckConnection();
+    idle(400);
+    find(Sheet.current(), android.widget.EditText.class, null).setText("424242");
     await("pairing", () -> Deck.get(c).state() == Deck.LINKED);
     await("the rides to go home", () -> fakeDeck.stored.size() == 6);
     for (int i = 0; i < 20; i++) {      // the Deck screen reads the desk off the main thread
@@ -260,6 +282,19 @@ public class ScreensTest {
     a.editDeckConnection();
     idle(400);
     sweep("deck linked sheet");
+    tap("Link report");
+    sweep("deck report sheet, linked");
+    tap("Share");
+    String report = handedOver();
+    org.junit.Assert.assertTrue(report, report.contains("Link: linked at " + fakeDeck.address()));
+    org.junit.Assert.assertFalse("the key never leaves the phone in a report", report.contains(fakeDeck.key));
+    // Forgetting can be taken back while the Deck still knows this phone.
+    a.editDeckConnection();
+    idle(400);
+    tap("Forget this Deck");
+    await("the Deck to want its code again", () -> Deck.get(c).state() == Deck.FOUND);
+    tap("UNDO");
+    await("the forget to be undone", () -> Deck.get(c).state() == Deck.LINKED);
     Sheet.dismissCurrent();
     idle(400);
     panel("deck").close();
