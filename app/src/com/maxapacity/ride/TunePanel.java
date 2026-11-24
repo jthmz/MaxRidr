@@ -361,7 +361,7 @@ final class TunePanel extends Panel {
 
     /** A tune from one of our bikes says which bike it is for before it is loaded. */
     private void confirmOurs(final TunePlan.Tune t) {
-        new Sheet(host.frame(), t.name, t.detail.replace("\n", ", ") + ". " + t.note)
+        new Sheet(host.frame(), t.name, t.detail.replace("\n", ". ") + ". " + t.note)
                 .action("Back", Ui.SECONDARY, true, this::showOurBikes)
                 .action("Load", Ui.PRIMARY, true, () -> load(t))
                 .show();
