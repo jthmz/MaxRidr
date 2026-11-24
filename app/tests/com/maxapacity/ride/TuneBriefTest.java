@@ -148,6 +148,14 @@ public class TuneBriefTest {
     assertTrue(demo.endsWith("I use metric units (km/h, km).\n"));
   }
 
+  @Test public void aBatteryRatingTheRiderGaveIsPassedOnAsALimit() {
+    Fardriver fd = controller(DemoBike.memory());
+    String rated = TuneBrief.build(GOAL, "", false, false, battery(), fd.live(), fd, ceilings(fd), 220);
+    assertTrue(rated, rated.contains("- By my own figure the battery is rated for 220 A continuous."
+        + " Do not suggest a battery current limit above that.\n"));
+    assertFalse("nothing is said of a rating nobody gave", brief(fd, battery()).contains("rated for"));
+  }
+
   @Test public void theSpeedLimiterIsNamedOnlyWhenTheControllerHasOne() {
     int[] ram = DemoBike.memory();
     Fardriver fd = controller(ram);
