@@ -36,15 +36,27 @@ final class TunePlan {
         final String note;
         /** Setting key to raw value. */
         final Map<String, Integer> values;
+        /**
+         * True for a tune that goes above what its controller came with. There
+         * is one: it was proven on one controller, loads on that controller
+         * only, and only whole.
+         */
+        final boolean whole;
 
         Tune(String id, String icon, String name, String detail, String note,
                 Map<String, Integer> values) {
+            this(id, icon, name, detail, note, values, false);
+        }
+
+        Tune(String id, String icon, String name, String detail, String note,
+                Map<String, Integer> values, boolean whole) {
             this.id = id;
             this.icon = icon;
             this.name = name;
             this.detail = detail;
             this.note = note;
             this.values = values;
+            this.whole = whole;
         }
     }
 
@@ -56,6 +68,12 @@ final class TunePlan {
         String refused;
         /** Something to tell the rider alongside, or null. */
         String note;
+        /**
+         * Every value of a tune that goes above what the controller came with,
+         * or null. The bike link takes them only together, see
+         * {@link Bike#allowWhole}.
+         */
+        Map<String, Integer> whole;
     }
 
     // ---- Made to measure ------------------------------------------------------
@@ -154,14 +172,13 @@ final class TunePlan {
                         + " temperatures or how long a hard pull is safe.",
                 "line", 1040, "phase", 2400));
         out.add(build("drax-regen", Icons.REFRESH_CW, "Drax Bee Trail regen",
-                "8 A regen, 12 A at most",
-                drax + " Trail tested there with regen set to come on when the throttle closes."
-                        + " This app sets the two currents only: the release setting (Follow),"
-                        + " FreeThrottle and the RPM regen map from our guide are set in the"
-                        + " Fardriver app. A battery's BMS sets how much charge it will take, so"
-                        + " never set regen above that, and try it at 70 to 80% charge rather"
-                        + " than on a full pack.",
-                "regen", 8, "regen_max", 12));
+                "Regen when you roll off\n8 A, 12 A at most",
+                drax + " Trail tested there. The motor slows the bike whenever the throttle"
+                        + " closes. FreeThrottle and the RPM regen map from our guide are set in"
+                        + " the Fardriver app; this app sets the rest. A battery's BMS sets how"
+                        + " much charge it will take, so never set regen above that, and try it"
+                        + " at 70 to 80% charge rather than on a full pack.",
+                "regen_mode", 3, "regen", 8, "regen_max", 12));
         // Read from the Fardriver app on one of MAXAPACITY's own bikes the day it was
         // delivered, 5 November 2026, before anything was changed. The app gave the
         // controller as BJ72V330AB_27_1KMA88. Mode power is stored in 128ths and the
@@ -180,7 +197,48 @@ final class TunePlan {
                 "low_rpm", 6000, "low_line", 51, "mid_rpm", 7000, "mid_line", 90,
                 "high_rpm", 12500,
                 "regen_mode", 2, "regen", 30, "regen_max", 50));
+        out.add(build("xe-pro-r-regen", Icons.REFRESH_CW, "XE Pro R Off-throttle regen",
+                "Regen when you roll off\n8 A, 12 A at most",
+                "For the Arctic Leopard XE Pro R. Regen moves from the brake lever to the"
+                        + " throttle: the motor slows the bike whenever you roll off. The"
+                        + " currents are the mild ones MAXAPACITY trail tested on its Drax Bee"
+                        + " build, far below the 30 A this bike came with and below what its"
+                        + " own charger gives. It has not been ridden on the XE Pro R yet, so"
+                        + " try it at low speed on open ground first. The bike's FreeThrottle"
+                        + " and RPM regen map stay as they are; those are set in the Fardriver"
+                        + " app.",
+                "regen_mode", 3, "regen", 8, "regen_max", 12));
+        // The only tune here that goes above what a controller came with. From our Apex guide:
+        // an owner's bike, all four currents raised together, ridden daily; 145 A / 400 A
+        // failed on the same controller, and its case says 150 A / 405 A.
+        Map<String, Integer> apex = new LinkedHashMap<>();
+        apex.put("boost_line", 560);
+        apex.put("line", 560);
+        apex.put("boost_phase", 1520);
+        apex.put("phase", 1520);
+        out.add(new Tune("apex-140", Icons.ROCKET, "Apex 140 A",
+                "140 A battery, 380 A motor\nBurst allowances the same",
+                "For the X-PRO DRAX Apex on its own controller, a Fardriver WC72V150 on firmware"
+                        + " HA80, and nothing else. It raises all four currents together, above"
+                        + " the 130 A and 350 A the bike came with. An Apex owner rides it daily"
+                        + " without faults. MAXAPACITY has not tested it, and nobody has"
+                        + " measured how hot it runs. 145 A and 400 A failed on the same"
+                        + " controller with Error 09, so do not go past this. It is the one"
+                        + " step above what a controller came with that this app allows.",
+                apex, true));
         return out;
+    }
+
+    /**
+     * True for the DRAX Apex's own controller, by what it says of itself: the
+     * maker's code WC, produced for 72 V, second limits of 150 A and 405 A as
+     * on its case, firmware HA80. It is the controller the one tune that goes
+     * above stock was proven on.
+     */
+    static boolean apexController(Fardriver memory) {
+        return "WC".equals(memory.customCode()) && memory.productionDecivolts() == 720
+                && memory.secondLineRaw() == 600 && memory.secondPhaseRaw() == 1620
+                && "HA80".equals(memory.firmware());
     }
 
     private static Tune build(String id, String icon, String name, String detail, String note,
@@ -201,6 +259,21 @@ final class TunePlan {
      */
     static Loaded load(Tune t, Fardriver memory, ToIntFunction<Fardriver.Param> ceiling) {
         Loaded out = new Loaded();
+        if (t.whole) {
+            if (!apexController(memory)) {
+                out.refused = t.name + " is only for the DRAX Apex's own controller, a"
+                        + " Fardriver WC72V150 on firmware HA80. This is not that controller,"
+                        + " so the tune is not loaded";
+                return out;
+            }
+            for (Map.Entry<String, Integer> e : t.values.entrySet()) {
+                if (e.getValue() != memory.raw(Fardriver.param(e.getKey()))) {
+                    out.changes.put(e.getKey(), e.getValue());
+                }
+            }
+            out.whole = t.values;
+            return out;
+        }
         for (Map.Entry<String, Integer> e : t.values.entrySet()) {
             Fardriver.Param p = Fardriver.param(e.getKey());
             int want = e.getValue();

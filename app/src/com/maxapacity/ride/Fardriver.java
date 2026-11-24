@@ -127,6 +127,34 @@ final class Fardriver {
         return sb.toString();
     }
 
+    // What the maker built it as. Read only, and only to tell one controller from another.
+
+    /** The two letters the maker gives a customer's model, "WC" on a DRAX Apex; "" until read. */
+    String customCode() {
+        if (legacy || seen[0x20] == 0) return "";
+        char a = (char) (words[0x20] & 0xFF);
+        char b = (char) ((words[0x20] >> 8) & 0xFF);
+        return Character.isLetterOrDigit(a) && Character.isLetterOrDigit(b) ? "" + a + b : "";
+    }
+
+    /** The voltage it was produced for, in tenths of a volt, or 0 until read. */
+    int productionDecivolts() {
+        return legacy || seen[0x67] == 0 ? 0 : words[0x67];
+    }
+
+    /**
+     * Its second battery current limit, in quarter amps, or 0 until read. On
+     * the one controller this was checked against, a DRAX Apex's, this and
+     * {@link #secondPhaseRaw} hold the 150 A and 405 A printed on its case.
+     */
+    int secondLineRaw() {
+        return legacy || seen[0x63] == 0 ? 0 : words[0x63];
+    }
+
+    int secondPhaseRaw() {
+        return legacy || seen[0x64] == 0 ? 0 : words[0x64];
+    }
+
     /** The controller's own flag for "the wheel is rolling", which can be set while rpm reads 0. */
     boolean rolling() {
         return !legacy && (words[0xE2] & 0x20) != 0;
@@ -560,14 +588,14 @@ final class Fardriver {
                     "Motor speed limit in the high mode. Never above the speed this"
                             + " controller came with", 0x15, 300, TOP_RPM, 100, 1f, "rpm", false),
 
-            // Only Off and On brake can be chosen: they are the two a verified
-            // tuner has set on a real bike. Regen on throttle release brakes the
-            // rear wheel whenever the throttle closes, and what Follow does is
-            // not documented anywhere. A bike already set to either still reads.
+            // Off, On brake and On throttle release can be chosen. Regen on throttle
+            // release brakes the rear wheel whenever the throttle closes, so the Tune
+            // screen warns before it is tried. What Follow does is not documented
+            // anywhere: it is never written, though a bike already set to it still reads.
             new Param("regen_mode", G_REGEN, "Regen mode",
-                    "When the motor brakes and feeds energy back to the battery. Off or On"
-                            + " brake can be chosen here", 0x1A, 0, 2,
-                    1, 2, 1, 1f, "",
+                    "When the motor brakes and feeds energy back to the battery: with the"
+                            + " brake lever, or whenever you roll off the throttle", 0x1A, 0, 2,
+                    1, 3, 1, 1f, "",
                     new String[] {"Follow", "Off", "On brake", "On throttle release"}, false),
             word("regen", G_REGEN, "Regen strength",
                     "Braking current in normal use. Never above the max", 0x30, 0, 10, 1, 1f,

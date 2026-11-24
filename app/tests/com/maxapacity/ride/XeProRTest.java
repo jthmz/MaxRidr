@@ -100,7 +100,7 @@ public class XeProRTest {
         "- Motor current limit: 699 A. Range 40 A to 699 A, in steps of 10 A. ",
         "- Low mode top speed: 6000 rpm. Range 300 rpm to 12500 rpm, in steps of 100 rpm. ",
         "- High mode top speed: 12500 rpm. Range 300 rpm to 12500 rpm, in steps of 100 rpm. ",
-        "- Regen mode: On brake. The app can set: Off, On brake. ",
+        "- Regen mode: On brake. The app can set: Off, On brake, On throttle release. ",
         "- Regen strength: 30 A. Range 0 A to 30 A, in steps of 1 A. ",
         "- Max regen strength: 50 A. Range 0 A to 50 A, in steps of 1 A. ",
         "- High mode top speed can come down, but never goes above where this controller stood when"
@@ -169,6 +169,26 @@ public class XeProRTest {
     for (java.util.Map.Entry<String, Integer> e : loaded.changes.entrySet()) {
       Fardriver.Param p = Fardriver.param(e.getKey());
       changed.writeFrame(p, e.getValue(), top.applyAsInt(p));   // throws if the app would refuse it
+    }
+  }
+
+  @Test public void offThrottleRegenLoadsWithTheMildCurrentsAndTheMode() {
+    Fardriver fd = delivered();
+    TunePlan.Tune regen = null;
+    for (TunePlan.Tune t : TunePlan.ourBikes()) if (t.id.equals("xe-pro-r-regen")) regen = t;
+    assertEquals("On throttle release", Fardriver.param("regen_mode").format(regen.values.get("regen_mode")));
+    TunePlan.Loaded loaded = TunePlan.load(regen, fd, TuneBriefTest.ceilings(fd));
+    assertNull(loaded.refused);
+    assertEquals("far below the 30 A and 50 A it came with", "{regen_mode=3, regen=8, regen_max=12}",
+        loaded.changes.toString());
+    assertNull(loaded.whole);
+    assertTrue(regen.note.contains("has not been ridden on the XE Pro R yet"));
+    // The Apex owner tune is for another controller, and says so.
+    for (TunePlan.Tune t : TunePlan.ourBikes()) {
+      if (!t.whole) continue;
+      TunePlan.Loaded apex = TunePlan.load(t, fd, TuneBriefTest.ceilings(fd));
+      assertTrue(apex.refused, apex.refused.contains("only for the DRAX Apex's own controller"));
+      assertTrue(apex.changes.isEmpty());
     }
   }
 

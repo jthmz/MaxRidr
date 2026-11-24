@@ -49,13 +49,16 @@ public class TuneAdviceTest {
 
   @Test public void nothingAboveWhatThisControllerCameWithIsEverLoaded() {
     TuneAdvice.Read r = read("SET Battery current limit = 150 A\nSET Motor current limit = 400 A\nSET Acceleration = 300\n"
-        + "SET Regen mode = On throttle release\nSET Regen strength = 11 A\nSET Deceleration = 64\n");
+        + "SET Regen mode = Follow\nSET Regen strength = 11 A\nSET Deceleration = 64\n");
     assertEquals(6, r.lines);
     assertTrue("nothing out of range gets through: " + r.changes, r.changes.isEmpty());
     assertEquals(5, r.leftOut.size());
     assertEquals("Battery current limit 150 A is outside what this bike allows (20 A to 130 A)", r.leftOut.get(0));
     assertEquals("Motor current limit 400 A is outside what this bike allows (40 A to 350 A)", r.leftOut.get(1));
-    assertEquals("Regen mode On throttle release is outside what this bike allows (Off or On brake)", r.leftOut.get(3));
+    assertEquals("Regen mode Follow is outside what this bike allows (Off or On brake or On throttle release)",
+        r.leftOut.get(3));
+    // Regen on throttle release can be asked for: the Tune screen warns before it is tried.
+    assertEquals("{regen_mode=3}", read("SET Regen mode = On throttle release\n").changes.toString());
   }
 
   @Test public void everythingLoadedIsSomethingTheAppWouldAccept() {
