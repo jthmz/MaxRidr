@@ -72,6 +72,7 @@ final class RideState {
     private Location lastTrackFix;
     private Location lastFix;
     private final Lean lean = new Lean();
+    private final BikeLog bikeLog = new BikeLog();
 
     private RideState() {
     }
@@ -105,6 +106,7 @@ final class RideState {
         topSpeedMps = 0;
         lastTrackFix = null;
         lean.reset();
+        bikeLog.reset();
         track.clear();
         notifyListeners();
     }
@@ -245,6 +247,11 @@ final class RideState {
 
     float maxLeanRightDeg() {
         return lean.maxRightDeg();
+    }
+
+    /** What the linked bike has done this ride. The bike link fills it in as it reads. */
+    BikeLog bikeLog() {
+        return bikeLog;
     }
 
     /** The last trustworthy position, or null before the first fix. */

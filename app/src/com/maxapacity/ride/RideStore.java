@@ -100,6 +100,8 @@ final class RideStore {
                     .put("leanLeft", Math.round(state.maxLeanLeftDeg()))
                     .put("leanRight", Math.round(state.maxLeanRightDeg()))
                     .put("strava", strava ? STRAVA_PENDING : STRAVA_NONE);
+            BikeLog.Summary bike = state.bikeLog().summary();
+            if (bike != null) ride.put(BIKE, bikeJson(bike));
             JSONArray rides = load(c);
             rides.put(ride);
             save(c, rides);
@@ -113,6 +115,73 @@ final class RideStore {
         return "Ride saved: " + Units.distance(c, state.distanceM()) + " "
                 + Units.distanceLabel(c) + " in " + Units.duration(state.movingMs())
                 + (strava ? ". Sending to Strava" : "");
+    }
+
+    // ---- What the bike did ---------------------------------------------------
+
+    /** Where a ride keeps what the linked bike did. Rides with no bike linked have none. */
+    static final String BIKE = "bike";
+
+    private static JSONObject bikeJson(BikeLog.Summary s) throws JSONException {
+        JSONObject o = new JSONObject()
+                .put("peakKw", round(s.peakKw, 100))
+                .put("peakA", round(s.peakAmps, 10))
+                .put("regenA", round(s.regenAmps, 10))
+                .put("lowV", round(s.lowVolts, 10))
+                .put("sagV", round(s.sagVolts, 10))
+                .put("usedWh", round(s.usedWh, 10))
+                .put("regenWh", round(s.regenWh, 10));
+        if (s.motorC != BikeLog.Summary.UNKNOWN) o.put("motorC", s.motorC);
+        if (s.controllerC != BikeLog.Summary.UNKNOWN) o.put("controllerC", s.controllerC);
+        if (s.batteryC != BikeLog.Summary.UNKNOWN) o.put("batteryC", s.batteryC);
+        if (s.socStart >= 0) o.put("socStart", s.socStart).put("socEnd", s.socEnd);
+        if (s.lowCellV > 0) o.put("lowCellV", round(s.lowCellV, 1000));
+        return o;
+    }
+
+    private static double round(float v, int per) {
+        return Math.round(v * per) / (double) per;
+    }
+
+    /** What the bike did on a saved ride, or null if no bike was linked for it. */
+    static BikeLog.Summary bike(JSONObject ride) {
+        JSONObject o = ride.optJSONObject(BIKE);
+        if (o == null) return null;
+        BikeLog.Summary s = new BikeLog.Summary();
+        s.peakKw = (float) o.optDouble("peakKw", 0);
+        s.peakAmps = (float) o.optDouble("peakA", 0);
+        s.regenAmps = (float) o.optDouble("regenA", 0);
+        s.lowVolts = (float) o.optDouble("lowV", 0);
+        s.sagVolts = (float) o.optDouble("sagV", 0);
+        s.usedWh = (float) o.optDouble("usedWh", 0);
+        s.regenWh = (float) o.optDouble("regenWh", 0);
+        s.motorC = o.optInt("motorC", BikeLog.Summary.UNKNOWN);
+        s.controllerC = o.optInt("controllerC", BikeLog.Summary.UNKNOWN);
+        s.batteryC = o.optInt("batteryC", BikeLog.Summary.UNKNOWN);
+        s.socStart = o.optInt("socStart", -1);
+        s.socEnd = o.optInt("socEnd", -1);
+        s.lowCellV = (float) o.optDouble("lowCellV", 0);
+        return s;
+    }
+
+    /**
+     * The newest ride the bike was linked for, written up for a tune brief, or
+     * empty if there is none.
+     *
+     * @param lineLimitAmps the battery current limit the controller is set to now
+     */
+    static String lastBikeRide(Context c, float lineLimitAmps) {
+        JSONArray rides = load(c);
+        for (int i = rides.length() - 1; i >= 0; i--) {
+            JSONObject r = rides.optJSONObject(i);
+            BikeLog.Summary s = r == null ? null : bike(r);
+            if (s == null) continue;
+            double distance = r.optDouble("distanceM", 0);
+            return "- The ride: " + Units.distance(c, distance) + " " + Units.distanceLabel(c)
+                    + " in " + Units.duration(r.optLong("movingMs")) + " of moving.\n"
+                    + s.brief(distance, Units.metric(c), lineLimitAmps);
+        }
+        return "";
     }
 
     static void setStravaStatus(Context c, String file, String status) {
