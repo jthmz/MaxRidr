@@ -403,11 +403,61 @@ final class TunePanel extends Panel {
         }
         sheet.item(Icons.ELLIPSIS, "Something else", "Say it in your own words", false,
                 this::ownWords);
+        sheet.item(Icons.DOWNLOAD, "Paste the answer",
+                "Copy the reply you got, then tap here to load its changes", false,
+                this::pasteAnswer);
         String about = Units.prefs(c).getString(TuneBrief.ABOUT, "");
         sheet.item(Icons.LIST, "About my bike", about.isEmpty()
                 ? "Add your bike, gearing and weight for better answers" : shorten(about),
                 false, this::editAbout);
         sheet.show();
+    }
+
+    /**
+     * Loads the changes out of an answer the rider has copied, to look over.
+     * Each is held to what this bike allows; what is not is left out and said.
+     */
+    private void pasteAnswer() {
+        Context c = getContext();
+        Bike bike = Bike.get(c);
+        CharSequence copied = null;
+        try {
+            android.content.ClipboardManager clipboard =
+                    c.getSystemService(android.content.ClipboardManager.class);
+            android.content.ClipData clip = clipboard == null ? null : clipboard.getPrimaryClip();
+            if (clip != null && clip.getItemCount() > 0) copied = clip.getItemAt(0).coerceToText(c);
+        } catch (RuntimeException e) {
+            // Nothing to read.
+        }
+        load(TuneAdvice.read(copied == null ? null : copied.toString(), bike.controllerMemory(),
+                bike::ceiling));
+    }
+
+    /** What an answer came to: loaded to look over, with anything left out said plainly. */
+    void load(TuneAdvice.Read read) {
+        if (read.lines == 0) {
+            host.say("Nothing to load in what was copied. Copy the whole reply, down to its"
+                    + " SET lines");
+            return;
+        }
+        String leftOut = read.leftOut.isEmpty() ? "" : ". Left out: " + read.leftOut.get(0)
+                + (read.leftOut.size() > 1 ? ", and " + (read.leftOut.size() - 1) + " more" : "");
+        if (read.changes.isEmpty()) {
+            host.say(read.leftOut.isEmpty() ? "This bike is already set the way the answer says"
+                    : "Nothing could be loaded" + leftOut);
+            return;
+        }
+        final Map<String, Integer> was = new LinkedHashMap<>(draft);
+        draft.clear();
+        draft.putAll(read.changes);
+        refresh();
+        int n = read.changes.size();
+        host.say((n == 1 ? "1 change" : n + " changes") + " loaded to look over" + leftOut,
+                "UNDO", () -> {
+                    draft.clear();
+                    draft.putAll(was);
+                    refresh();
+                });
     }
 
     /** Hands the brief to whichever app the rider picks: an AI, a message to a tuner, or Copy. */

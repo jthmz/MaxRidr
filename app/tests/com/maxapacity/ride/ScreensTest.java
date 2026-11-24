@@ -541,6 +541,20 @@ public class ScreensTest {
     org.junit.Assert.assertTrue(brief, brief.contains("WHAT I WANT\nLess wheelspin on wet roots\n"));
     org.junit.Assert.assertTrue(brief, brief.contains("ABOUT MY BIKE AND ME\nDRAX X-Pro 72V, 13/52 gearing, 190 lb rider\n"));
 
+    // The answer comes back by way of the clipboard. Its SET lines load as changes to look over,
+    // and one that asks for more than this controller came with is left out and said.
+    c.getSystemService(android.content.ClipboardManager.class).setPrimaryClip(
+        android.content.ClipData.newPlainText("answer", "Lower these two for more range.\n"
+            + "SET Battery current limit = 100 A\nSET Motor current limit = 500 A\n"));
+    ((TunePanel) panel("tune")).showIdeas();
+    idle(400);
+    tap("Paste the answer");
+    run(400);
+    org.junit.Assert.assertNotNull("what was loaded and what was left out are both said",
+        find(a.getWindow().getDecorView(), android.widget.TextView.class, "1 change loaded to look over. Left out:"
+            + " Motor current limit 500 A is outside what this bike allows (40 A to 350 A)"));
+    sweep("tune, an answer pasted in");
+
     org.junit.Assert.assertEquals("no setting was written", 0, ctl.settingWriteCount);
     org.junit.Assert.assertEquals(Bike.TUNE_IDLE, bike.tuneState());
     org.junit.Assert.assertArrayEquals("and nothing was saved", saved, ctl.flash);

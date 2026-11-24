@@ -112,7 +112,10 @@ final class TuneBrief {
                 + "- If what I want needs something these settings cannot do, such as gearing,"
                 + " tyres or a different battery, say so plainly.\n"
                 + "- If the readings below show a problem to sort out first, start there.\n"
-                + "- Use plain words. I am not an engineer.\n\n");
+                + "- Use plain words. I am not an engineer.\n"
+                + "- Finish with the changes on lines of their own, each written exactly like"
+                + " this, using the setting names below: SET Battery current limit = 100 A."
+                + " The app reads those lines so I do not have to type them in.\n\n");
         sb.append("WHAT THE APP READS FROM THE BIKE\n").append(readings(battery, live, memory));
         if (packAmps > 0) {
             sb.append("- By my own figure the battery is rated for ").append(packAmps)

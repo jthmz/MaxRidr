@@ -15,7 +15,9 @@ Two halves that find each other:
   published for a MAXAPACITY build. A tune loads as changes to look over and
   goes through the same trial as any other change. Tune ideas writes up the
   bike's settings and limits for the rider to send to an AI app or a tuner;
-  it only reads, and nothing leaves the phone until the rider sends it.
+  it only reads, and nothing leaves the phone until the rider sends it. The
+  reply can be copied and pasted back: the app loads the changes it names,
+  each held to what the bike allows, for the rider to look over and try.
 - **MAXAPACITY Deck** (`deck/`): a service on the Mac that drives a desk
   dashboard on a Spotify Car Thing, and takes rides home from the phone. It
   has its own [README](deck/README.md).
