@@ -44,7 +44,8 @@ public class OlderPhoneTest {
     c = RuntimeEnvironment.getApplication();
     Shadows.shadowOf(RuntimeEnvironment.getApplication()).grantPermissions(
         android.Manifest.permission.ACCESS_FINE_LOCATION);
-    Units.prefs(c).edit().clear().putBoolean("auto_update", false).apply();
+    // As a rider who has already answered the welcome, so the home screen starts bare.
+    Units.prefs(c).edit().clear().putBoolean("auto_update", false).putBoolean(Tour.OFFERED, true).apply();
     Strava.setBuiltInApp(null, null);
     File[] rides = RideStore.dir(c).listFiles();
     if (rides != null) for (File f : rides) f.delete();

@@ -1,7 +1,9 @@
 package com.maxapacity.ride;
 
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -12,7 +14,9 @@ import android.widget.TextView;
 
 /**
  * Settings: riding behaviour, phone gestures, connected services and app
- * updates. Switches apply immediately; anything destructive asks first.
+ * updates, then the tour, what updates have brought and the ways to the
+ * MAXAPACITY website and the app's own page on it. Switches apply
+ * immediately; anything destructive asks first.
  */
 final class SettingsPanel extends Panel {
 
@@ -181,6 +185,21 @@ final class SettingsPanel extends Panel {
             LinearLayout row = (LinearLayout) app.getChildAt(2);
             ((TextView) ((LinearLayout) row.getChildAt(1)).getChildAt(1)).setTextColor(Ui.DANGER);
         }
+
+        // Finding your way: round the app, through what changed, and out to
+        // the site. Both site rows open in the phone's browser. Settings
+        // ends with the app's own page there.
+        LinearLayout about = group("ABOUT");
+        link(about, Icons.MAP, "Take the tour", "A minute on where everything is", "Start",
+                false, v -> host.showTour());
+        link(about, Icons.BELL, "What's new", "What recent updates brought", "View", false,
+                v -> host.showWhatsNew());
+        link(about, Icons.EXTERNAL_LINK, "MAXAPACITY website", "maxapacitybikes.com", "Open",
+                false, v -> host.launch(new Intent(Intent.ACTION_VIEW,
+                        Uri.parse(Site.HOME))));
+        link(about, Icons.INFO, "About and help", "What it does, setup and questions",
+                "Open", false,
+                v -> host.launch(new Intent(Intent.ACTION_VIEW, Uri.parse(Site.RIDE))));
 
         TextView foot = Ui.label(c, "MAXAPACITY RIDE  \u00B7  BUILD " + Updater.versionCode(c));
         foot.setGravity(Gravity.CENTER);
