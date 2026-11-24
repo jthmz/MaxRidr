@@ -20,11 +20,12 @@ import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
 import { qr, qrPath } from './qr.mjs';
 import { parseListing, planOffload, signature, targetFor, altName, phoneFolders, shq, sizeText, cleanName } from './offload.mjs';
+import { ANSWERS, askKey, readAnswers, putAnswer, answersDoc, takeoff, isNight, clockText, rideOf, rideText, PLAYERS, playerScript, parsePlayer, playerDo } from './rules.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DATA = path.join(HERE, 'data');
 const home = p => (typeof p === 'string' && p.startsWith('~/') ? path.join(os.homedir(), p.slice(2)) : p);
-const VERSION = '2.2';
+const VERSION = '2.3';
 
 // ---------- config ----------
 const MAXDIR = '~/Library/Mobile Documents/com~apple~CloudDocs/MAXAPACITY';
@@ -61,6 +62,19 @@ const DEFAULTS = {
   // uploads: let a phone app (or a paired screen) send rides and media to this Mac over the network; they land where the USB
   // offload puts them. uploadMaxGB is the largest single file accepted.
   uploads: false, uploadMaxGB: 8,
+  // answers given on the Deck to asks on the board are written to this file ('' means answers.json beside the board file). The
+  // board file itself is never written: it belongs to whoever keeps it.
+  answersFile: '',
+  // lastRide: show the newest ride the Ride app sent home on the standby screen. rideUnits ('mi' or 'km') is for a ride that
+  // does not say which its rider reads.
+  lastRide: true, rideUnits: 'mi',
+  // music: show what Spotify or Music is playing on this Mac, with play / pause and skip on Launch. macOS asks once to allow it.
+  music: true,
+  // alerts: a video gaining views at takeoffTimes its usual hourly rate (and at least takeoffMinPerHour), and a disk that is
+  // diskWarnPct percent full
+  takeoffTimes: 3, takeoffMinPerHour: 30, diskWarnPct: 90,
+  // with Auto on in Settings the screen goes to Night brightness at nightFrom and back to Day at nightTo (24-hour "HH:MM")
+  nightFrom: '22:00', nightTo: '07:00',
   disks: [{ label: 'Mac', path: '/System/Volumes/Data' }, { label: 'OWC 4TB', path: '/Volumes/OWC 4TB' }],
   apps: [
     { key: 'studio', label: 'Studio', sub: 'editor + dash' },
@@ -93,9 +107,13 @@ const ago = t => { const m = (Date.now() - t) / 60000; return m < 1 ? 'now' : m 
 const guard = fn => { let busy = false; return async () => { if (busy) return; busy = true; try { await fn(); } catch (e) { log(fn.name + ':', e.message || e); } busy = false; }; };
 
 // ---------- settings changed from the device ----------
-let settings = { night: false, sound: false };
+let settings = { night: false, sound: false, auto: false };
 try { settings = { ...settings, ...JSON.parse(fs.readFileSync(path.join(DATA, 'settings.json'), 'utf8')) }; } catch (e) { /* first run */ }
 const saveSettings = () => fs.promises.mkdir(DATA, { recursive: true }).then(() => fs.promises.writeFile(path.join(DATA, 'settings.json'), JSON.stringify(settings))).catch(() => {});
+// what has already been said (a video taking off, a disk nearly full, a ride come home), kept across restarts so it is not said twice
+let notes = { takeoff: {}, disk: {}, rideSaid: 0 };
+try { const n = JSON.parse(fs.readFileSync(path.join(DATA, 'notes.json'), 'utf8')); notes = { takeoff: { ...(n.takeoff || {}) }, disk: { ...(n.disk || {}) }, rideSaid: Number(n.rideSaid) || 0 }; } catch (e) { /* first run */ }
+const saveNotes = () => fs.promises.mkdir(DATA, { recursive: true }).then(() => fs.promises.writeFile(path.join(DATA, 'notes.json'), JSON.stringify(notes))).catch(() => {});
 
 // ---------- alerts: things that just happened, shown as a toast on the device ----------
 const alerts = [];
@@ -126,16 +144,21 @@ const refreshBoard = guard(async function board() {
   const arr = k => (Array.isArray(s[k]) ? s[k] : []);
   const paths = arr('inflight').map(i => resolvePath(i.path));
   const there = await Promise.all(paths.map(exists));
+  // every ask that can be answered from the Deck, by a key made from its own words: the blocked_on_joe items and each video's next step
+  const found = new Map();
+  const ask = (about, id, title, text) => { const k = askKey(about, id, text); found.set(k, { about, id, title, text }); return k; };
   const data = {
     updated: s.updated || '', by: s.updated_by || '',
     owed: arr('owed').map(o => ({
       id: String(o.id || ''), title: short(o.title, 90), status: String(o.status || ''),
       pct: Math.max(0, Math.min(100, Number(o.pct) || 0)), owner: short(o.owner, 20),
       due: short(o.due, 160), next: short(o.next, 420), url: ytLink([o.notes, o.due, o.next].join(' ')),
+      nk: typeof o.next === 'string' && o.next.trim() ? ask('next', String(o.id || ''), String(o.title || ''), o.next) : '',
     })),
     inflight: arr('inflight').map((i, n) => ({ title: short(i.title, 90), detail: short(i.detail, 200), exists: there[n],
       pct: typeof i.pct === 'number' ? Math.max(0, Math.min(100, i.pct)) : null })),
     blocked: arr('blocked_on_joe').map(b => short(typeof b === 'string' ? b : JSON.stringify(b), 900)),
+    bk: arr('blocked_on_joe').map(b => ask('blocked_on_joe', '', '', typeof b === 'string' ? b : JSON.stringify(b))),
   };
   // what changed since the last look
   const seen = { inflight: new Set(data.inflight.map(i => i.title)), blocked: new Set(data.blocked.map(b => b.slice(0, 70))), status: new Map(data.owed.map(o => [o.id, o.status])) };
@@ -145,10 +168,45 @@ const refreshBoard = guard(async function board() {
     for (const b of data.blocked) if (!boardSeen.blocked.has(b.slice(0, 70)) && n++ < 4) alert('you', 'Needs you: ' + short(b, 100));
     for (const o of data.owed) { const was = boardSeen.status.get(o.id); if (was && was !== o.status) alert('video', o.title + ': ' + was + ' → ' + o.status); }
   }
-  boardSeen = seen;
+  boardSeen = seen; asks = found;
   boardCache = { mtime: st.mtimeMs, at: Date.now(), paths, data };
 });
 const board = () => boardCache.data || { error: 'The board has not loaded yet.' };
+
+// ---------- answers: what was said on the Deck to an ask on the board ----------
+// The board file belongs to whoever keeps it (Claude), and two writers of one file overwrite each other, so the Deck never
+// writes it. An answer goes into a file of the Deck's own beside the board, for the board's keeper to read. Each answer carries
+// the ask word for word, so it only counts while the board still has that ask.
+const answersPath = () => home(String(CFG.answersFile || '').trim()) || path.join(path.dirname(home(CFG.boardFile)), 'answers.json');
+let asks = new Map(), answers = [], answersM = -1, answerQ = Promise.resolve();
+const refreshAnswers = guard(async function answersRead() {
+  const st = await fs.promises.stat(answersPath()).catch(() => null), m = st ? st.mtimeMs : 0;
+  if (m === answersM) return;
+  let doc = null;
+  if (st) try { doc = await readJSON(answersPath()); } catch (e) { return; }      // half-written or mid-sync: looked at again in a moment
+  answers = readAnswers(doc); answersM = m;
+});
+// what the screen is told: the answer to each ask that is on the board now
+const answerMap = () => { const out = {}; for (const a of answers) if (asks.has(a.key) && !out[a.key]) out[a.key] = { a: a.answer, ago: ago(Date.parse(a.at) || Date.now()) }; return out; };
+function giveAnswer(key, answer) {
+  const ask = asks.get(String(key));
+  if (!ask) return;                                                           // that ask has left the board
+  answers = putAnswer(answers, String(key), ask, answer);                     // shown at once; saved in turn, one write at a time
+  answerQ = answerQ.then(async () => {
+    const f = answersPath(), tmp = f + '.deck-tmp';
+    try {
+      await fs.promises.writeFile(tmp, JSON.stringify(answersDoc(answers), null, 1));
+      await fs.promises.rename(tmp, f);
+      answersM = (await fs.promises.stat(f)).mtimeMs;
+      log(`answers: ${ANSWERS.includes(answer) ? '"' + answer + '"' : 'answer taken back'} for: ${short(ask.text, 80)}`);
+    } catch (e) {
+      fs.promises.unlink(tmp).catch(() => {});
+      answersM = -1; await refreshAnswers();                                  // back to what is really in the file
+      alert('you', 'Your answer could not be saved: ' + short(e.message || e, 90));
+    }
+  });
+  return answerQ;
+}
 
 // ---------- the Studio server (renders + projects), if it is running ----------
 let studio = { up: false, renders: [], projects: [] }, lastProjects = [], renderSeen = new Map();
@@ -359,6 +417,16 @@ const refreshYT = guard(async function youtube() {
     history = history.filter(h => Date.now() - h.t < 8 * 86400000);
     await fs.promises.mkdir(DATA, { recursive: true });
     await fs.promises.writeFile(path.join(DATA, 'history.json'), JSON.stringify(history));
+    // a video gaining views well above its own usual rate: said once a day at most for each video
+    let said = false;
+    for (const v of videos) {
+      const up = takeoff(history, v.id, v.views, Date.now(), { times: CFG.takeoffTimes, minPerHour: CFG.takeoffMinPerHour });
+      if (!up || Date.now() - (notes.takeoff[v.id] || 0) < 86400000) continue;
+      notes.takeoff[v.id] = Date.now(); said = true;
+      alert('video', `Taking off: ${v.title} · +${num(up.perHr)} views an hour` + (up.times ? `, ${up.times} times its usual` : ''), { celebrate: true, big: '+' + num(up.perHr), sm: 'views an hour · ' + short(v.title, 30) });
+    }
+    for (const id of Object.keys(notes.takeoff)) if (Date.now() - notes.takeoff[id] > 8 * 86400000) { delete notes.takeoff[id]; said = true; }
+    if (said) saveNotes();
   } catch (e) { yt = { ...yt, ok: !!yt.videos, error: String(e.message || e) }; throw e; }
 });
 // views gained by a video since the oldest snapshot inside the last `hours` (and how long that span really is)
@@ -605,7 +673,85 @@ const refreshDisks = guard(async function diskScan() {
     out.push(m ? { label: d.label, ok: true, totalGB: Math.round(m[1] / 1048576), freeGB: Math.round(m[3] / 1048576), pct: Math.round(100 * (1 - m[3] / m[1])) } : { label: d.label, ok: false });
   }
   disks = out;
+  // nearly full: said once when a disk crosses the line, and again only after it has dropped back under it
+  const line = Math.max(50, Math.min(99, Number(CFG.diskWarnPct) || 90));
+  for (const d of out) {
+    if (!d.ok) continue;
+    if (d.pct >= line && !notes.disk[d.label]) { notes.disk[d.label] = Date.now(); saveNotes(); alert('disk', `${d.label} is nearly full: ${num(d.freeGB)} GB free (${d.pct}% used)`); }
+    else if (d.pct < line - 3 && notes.disk[d.label]) { delete notes.disk[d.label]; saveNotes(); }
+  }
 });
+
+// ---------- music: what Spotify or Music is playing on this Mac, and play / pause / skip ----------
+// Only a player that is already open is asked (asking one that is not would start it). The first time, macOS asks whether this
+// may control that app; until that is allowed there is simply nothing playing as far as the Deck knows.
+let music = null;
+const musicAnswered = {}, musicRefused = {};                                 // per player: has it ever answered, and when macOS last said no
+const refreshMusic = guard(async function musicRead() {
+  let best = null;
+  for (const app of PLAYERS) {
+    if (Date.now() - (musicRefused[app] || 0) < 600000) continue;            // not allowed: asked again in ten minutes, not every few seconds
+    if (!(await run('pgrep', ['-x', app], 3000)).ok) continue;
+    // until a player has answered once, the question may be sitting behind macOS's "allow this?" prompt: give that two minutes
+    const r = await run('osascript', ['-e', playerScript(app)], musicAnswered[app] ? 5000 : 120000), now = r.ok ? parsePlayer(r.out) : null;
+    if (r.ok) musicAnswered[app] = true;
+    else if (/-1743|not authori[sz]ed/i.test(r.err)) { musicRefused[app] = Date.now(); log(`music: macOS has not allowed this to control ${app} (System Settings, Privacy & Security, Automation)`); }
+    if (now && (!best || (now.playing && !best.playing))) best = { app, ...now, title: short(now.title, 70), artist: short(now.artist, 50) };
+  }
+  music = best;
+});
+async function musicDo(what) {
+  if (!CFG.music || !music) return;
+  const m = music;
+  if (what !== 'next' && what !== 'prev') m.playing = !m.playing;            // shown at once; the next read says what really happened
+  await run('osascript', ['-e', playerDo(m.app, what)], 5000);
+  return refreshMusic();
+}
+
+// ---------- the last ride the Ride app sent home ----------
+// The app sends each ride's numbers as a small JSON file beside its track; they land in <offload folder>/<phone>/Rides. The
+// newest one is remembered in data/ride.json, so it still shows when the drive those files are on is unplugged.
+let ride = null, rideBusy = false;
+try { ride = JSON.parse(fs.readFileSync(path.join(DATA, 'ride.json'), 'utf8')); if (!ride || !(ride.start > 0)) ride = null; } catch (e) { /* none yet */ }
+async function lookForRide() {
+  if (!CFG.lastRide || rideBusy) return;
+  rideBusy = true;
+  try {
+    const dest = offloadDest(), cands = [];
+    for (const dev of await fs.promises.readdir(dest).catch(() => [])) {
+      const dir = path.join(dest, dev, 'Rides');
+      for (const n of await fs.promises.readdir(dir).catch(() => [])) {
+        if (!/\.json$/i.test(n) || n.startsWith('.')) continue;
+        const m = await mtime(path.join(dir, n));
+        if (m) cands.push({ f: path.join(dir, n), m, dev });
+      }
+    }
+    let best = null;
+    for (const c of cands.sort((a, b) => b.m - a.m).slice(0, 8)) {            // a ride's file carries the ride's own date, so the newest few are enough
+      let r = null; try { r = rideOf(await readJSON(c.f), CFG.rideUnits === 'km' ? 'km' : 'mi'); } catch (e) { /* not a ride summary */ }
+      if (r && (!best || r.start > best.start)) best = { ...r, device: short(c.dev, 40), file: path.basename(c.f) };
+    }
+    if (!best || (ride && best.start <= ride.start)) return;
+    ride = best;
+    await fs.promises.mkdir(DATA, { recursive: true });
+    await fs.promises.writeFile(path.join(DATA, 'ride.json'), JSON.stringify(ride));
+  } catch (e) { log('last ride:', e.message || e); } finally { rideBusy = false; }
+}
+
+// ---------- Night brightness by the clock ----------
+// With Auto on (Settings), the screen changes to Night at nightFrom and back to Day at nightTo. It changes only at those two
+// moments, so Day or Night tapped by hand in between holds until the next one.
+const nightHours = () => (isNight(CFG.nightFrom, CFG.nightTo, new Date()) == null ? '' : clockText(CFG.nightFrom) + ' to ' + clockText(CFG.nightTo));
+function nightTick() {
+  const want = settings.auto ? isNight(CFG.nightFrom, CFG.nightTo, new Date()) : null;
+  if (want == null || settings.sched === want) return;
+  settings.sched = want; settings.night = want; saveSettings();
+  log(`screen: ${want ? 'Night' : 'Day'}, by the clock`);
+  if (deviceSerial) setBrightness(deviceSerial);
+}
+// "every screen to standby": one signal that each screen acts on once. It is only on offer for a few seconds, so a screen
+// that was away at the time does not go to standby late.
+let standbyAll = null;
 
 // ---------- actions coming from the device ----------
 const OPENABLE = new Set(['.mp4', '.mov', '.m4v', '.m4a', '.mp3', '.wav', '.png', '.jpg', '.jpeg', '.pdf', '.md', '.txt', '.csv']);
@@ -666,6 +812,10 @@ async function act(a, trusted) {
     return openPath(a.t === 'cut' && c.cut ? path.join(c.dir, c.cut.name) : c.dir);
   }
   if (a.t === 'video') { const v = (yt.videos || []).find(k => k.id === a.id); if (v) return run('open', ['https://www.youtube.com/watch?v=' + v.id]); }
+  if (a.t === 'answer') return giveAnswer(a.k, a.a);
+  if (a.t === 'music') return musicDo(String(a.do || ''));
+  if (a.t === 'standbyAll') { standbyAll = { n: String(a.n || Date.now()).slice(0, 32), at: Date.now() }; return; }
+  if (a.t === 'auto') { settings.auto = !!a.on; delete settings.sched; saveSettings(); return nightTick(); }
   if (a.t === 'night') { settings.night = !!a.on; saveSettings(); if (deviceSerial) setBrightness(deviceSerial); return; }
   if (a.t === 'sound') { settings.sound = !!a.on; saveSettings(); if (settings.sound) run('afplay', [CFG.soundFile]); return; }
   if (a.t === 'reload') { reinject = true; return; }
@@ -866,10 +1016,17 @@ async function uploadCheck(o, who) {                                        // w
   return { ok: true, need, have, refused };
 }
 let upTally = null;                                                         // files that have just arrived, summed up into one alert when the sender goes quiet
-function upDone(device, size) {
-  if (!upTally || upTally.device !== device) upTally = { device, n: 0, bytes: 0, t: null };
+function upDone(device, size, rideFile) {
+  if (!upTally || upTally.device !== device) upTally = { device, n: 0, bytes: 0, t: null, rides: new Set() };
   const t = upTally; t.n++; t.bytes += size; clearTimeout(t.t);
-  t.t = setTimeout(() => { if (upTally === t) upTally = null; alert('offload', device + ': ' + t.n + ' file' + (t.n === 1 ? '' : 's') + ' received over the network (' + sizeText(t.bytes) + ')'); }, 6000);
+  if (rideFile) t.rides.add(rideFile);
+  t.t = setTimeout(async () => {
+    if (upTally === t) upTally = null;
+    if (t.rides.size) { while (rideBusy) await sleep(100); await lookForRide(); }
+    // when the newest ride of all is among what just arrived, the arrival is said as that ride
+    if (ride && t.rides.has(ride.file) && ride.start !== notes.rideSaid) { notes.rideSaid = ride.start; saveNotes(); return alert('ride', 'Ride home: ' + rideText(ride)); }
+    alert('offload', device + ': ' + t.n + ' file' + (t.n === 1 ? '' : 's') + ' received over the network (' + sizeText(t.bytes) + ')');
+  }, 6000);
 }
 async function receiveUpload(req, reply, who) {
   const q = new URL(req.url, 'http://x').searchParams, name = cleanName(q.get('name') || ''), size = Number(req.headers['content-length']);
@@ -906,7 +1063,8 @@ async function receiveUpload(req, reply, who) {
     await fs.promises.rename(tmp, target);
     Object.assign(job, { state: 'done', pct: 100, line: (n ? i + ' of ' + n + ' files · ' : '') + path.basename(target) + ' received' });
     setTimeout(() => { offloads = offloads.filter(j => j !== job); }, 600000);
-    log('upload: ' + device + ' sent ' + path.basename(target) + ' (' + sizeText(size) + ')'); upDone(device, size);
+    log('upload: ' + device + ' sent ' + path.basename(target) + ' (' + sizeText(size) + ')');
+    upDone(device, size, /\.json$/i.test(target) && path.basename(path.dirname(target)) === 'Rides' ? path.basename(target) : null);
     reply(200, { ok: true, saved: true, name: path.basename(target) });
   });
   req.pipe(out);
@@ -934,11 +1092,14 @@ function snapshot(screen) {
     v: VERSION, brand: CFG.brand, ambientAfter: CFG.ambientAfterSec,
     clock: now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }),
     date: now.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' }),
-    board: b.owed ? { ...b, owed } : b,
+    board: b.owed ? { ...b, owed, answers: answerMap() } : b,
     studio: { up: studio.up, renders: studio.renders }, encodes,
     claude: claude.map(s => ({ key: s.key, title: s.title, kind: s.kind, working: s.working, ago: ago(s.last), done: s.done, total: s.total, active: s.active, next: s.next, tasks: s.tasks })),
     yt: channel(),
-    alerts: alerts.slice(0, 12).map(a => ({ id: a.id, kind: a.kind, text: a.text, ago: ago(a.at), celebrate: !!a.celebrate, big: a.big || '' })),
+    alerts: alerts.slice(0, 12).map(a => ({ id: a.id, kind: a.kind, text: a.text, ago: ago(a.at), celebrate: !!a.celebrate, big: a.big || '', sm: a.sm || '' })),
+    ride: CFG.lastRide && ride ? { dist: ride.dist, unit: ride.unit, top: ride.top, speed: ride.speed, left: ride.left, right: ride.right, battery: ride.battery, ago: ago(ride.end || ride.start) } : null,
+    music: CFG.music && music ? { app: music.app, playing: music.playing, title: music.title, artist: music.artist } : null,
+    sched: nightHours(), standby: standbyAll && Date.now() - standbyAll.at < 15000 ? standbyAll.n : '',
     media: { pics: CFG.standbyPictures && mediaOn() ? pics.length : 0, clips: CFG.standbyClips && mediaOn() ? clips.length : 0,
       picSec: Math.max(15, Number(CFG.standbyPictureSec) || 40), clipMin: Math.max(1, Number(CFG.standbyClipEveryMin) || 5) },
     vol, disks, load: Math.min(100, Math.round(20 * os.loadavg()[0] / os.cpus().length) * 5), remote: remoteInfo(screen), drive: driveInfo(), uploads: !!CFG.uploads, offload: offloads.map(j => ({ name: j.name, state: j.state, pct: j.pct, line: j.line })),
@@ -1168,6 +1329,10 @@ if (CFG.remote && !process.env.DECK_PORT) (async () => {
 })();
 if (CFG.usbScreens && !NO_DEVICE) every(refreshUsb, 4000);
 every(refreshBoard, 2000);
+every(refreshAnswers, 3000);
+every(nightTick, 20000);
+if (CFG.music) every(refreshMusic, 4000);
+if (CFG.lastRide) every(lookForRide, 60000);
 every(refreshStudio, 5000);
 every(refreshEncodes, 5000);
 every(refreshClaude, 4000);

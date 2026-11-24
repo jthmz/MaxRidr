@@ -4,6 +4,7 @@
   "subGoal": 25000,
 
   "boardFile": "~/Library/Mobile Documents/com~apple~CloudDocs/MAXAPACITY/Dash/state.json",
+  "answersFile": "",
   "roots": {
     "OWC 4TB": "/Volumes/OWC 4TB",
     "MAXAPACITY": "~/Library/Mobile Documents/com~apple~CloudDocs/MAXAPACITY"
@@ -18,6 +19,8 @@
 
   "fullBrightness": true,
   "nightBrightness": 60,
+  "nightFrom": "22:00",
+  "nightTo": "07:00",
   "ambientAfterSec": 240,
 
   "standbyPictures": true,
@@ -38,6 +41,13 @@
   "offloadSinceDays": 3,
   "uploads": false,
   "uploadMaxGB": 8,
+  "lastRide": true,
+  "rideUnits": "mi",
+
+  "music": true,
+  "takeoffTimes": 3,
+  "takeoffMinPerHour": 30,
+  "diskWarnPct": 90,
 
   "soundFile": "/System/Library/Sounds/Glass.aiff",
 

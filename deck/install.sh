@@ -17,7 +17,7 @@ MAJOR=$("$NODE" -p 'process.versions.node.split(".")[0]')
 [ "$MAJOR" -ge 22 ] || { echo "Node.js $MAJOR is too old; 22 or newer is needed."; exit 1; }
 
 mkdir -p "$DST" "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
-if [ "$SRC" != "$DST" ]; then cp "$SRC/server.mjs" "$SRC/qr.mjs" "$SRC/offload.mjs" "$SRC/ui.html" "$SRC/pair.html" "$SRC"/icon-*.png "$SRC/run.sh" "$SRC/config.example.json" "$SRC/README.md" "$SRC/APP-LINK.md" "$SRC/uninstall.sh" "$DST/"; fi
+if [ "$SRC" != "$DST" ]; then cp "$SRC/server.mjs" "$SRC/qr.mjs" "$SRC/offload.mjs" "$SRC/rules.mjs" "$SRC/ui.html" "$SRC/pair.html" "$SRC"/icon-*.png "$SRC/run.sh" "$SRC/config.example.json" "$SRC/README.md" "$SRC/APP-LINK.md" "$SRC/uninstall.sh" "$DST/"; fi
 [ -f "$DST/config.json" ] || cp "$DST/config.example.json" "$DST/config.json"
 chmod +x "$DST/run.sh" "$DST/uninstall.sh"
 

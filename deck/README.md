@@ -19,24 +19,59 @@ unplugging it and plugging it back in returns it to the stock screen.
 | Screen | What is on it |
 |---|---|
 | **Home** | A ring gauge of subscribers toward the next goal, three counts (editing, ready to post, waiting on you), what Claude is doing now with one cell per task, latest uploads with views per hour |
-| **Videos** | Every video on the board with a percent ring, status, next step and the newest cut file. Tap for details, then Watch cut / Folder / Studio / YouTube |
-| **Claude** | Each recent Claude session with a live task bar, renders and encodes in progress, things that just happened, files ready for you, and what is waiting on you |
-| **Launch** | App tiles with icons, mute, volume |
-| **Settings** (tap the clock, or the fifth button) | Day / Night brightness, Standby, alert sound, ring gauges for disk space and Mac load, Add a screen, Reload |
-| **Standby** | After four idle minutes, or at once from **Standby** in Settings: a large clock, subscribers, pipeline counts, and large rows with a bar for each Claude session, render and encode (the first one also lists its individual steps). Behind it: code rain, pictures from the channel and the website, and now and then a short silent clip from a finished video. Any touch or button wakes it |
+| **Videos** | Every video on the board with a percent ring, status, next step and the newest cut file. Tap for details, then Watch cut / Folder / Studio / YouTube, and OK / Done / Not yet to answer its next step |
+| **Claude** | Each recent Claude session with a live task bar, renders and encodes in progress, things that just happened, files ready for you, and what is waiting on you. Tap one of those to answer it: OK / Done / Not yet |
+| **Launch** | App tiles with icons, mute, what Spotify or Music is playing with previous / play or pause / next, volume |
+| **Settings** (tap the clock, or the fifth button) | Day / Night brightness and Auto (Night by the clock), Standby, Standby all, alert sound, ring gauges for disk space and Mac load, Add a screen, Reload |
+| **Standby** | After four idle minutes, or at once from **Standby** in Settings: a large clock, subscribers, pipeline counts, a line for the last ride and for what is playing, and large rows with a bar for each Claude session, render and encode (the first one also lists its individual steps). Behind it: code rain, pictures from the channel and the website, and now and then a short silent clip from a finished video. Any touch or button wakes it |
 
 Alerts pop up on the device when Claude finishes a task, a file becomes ready for you, a video
-changes status, a render or long encode ends, or the subscriber count moves.
+changes status, a render or long encode ends, the subscriber count moves, a ride comes home from
+the Ride app, or a disk is nearly full. A video that starts gaining views well above its own usual
+rate gets the full-screen celebration.
 
 ## Controls
 
 - **Knob**: Mac volume. **Knob press**: mute.
 - **Top buttons 1 to 4**: Home, Videos, Claude, Launch. **Fifth button**: Settings.
-- **Back button**: close the open sheet, or go Home.
-- **Standby whenever you like**: tap the clock (or press the fifth button), then **Standby**. It
-  works the same on the Car Thing, the preview on the Mac, a paired screen and the Ride app's Full
-  Deck, and sends that one screen to standby. A window on the Mac that is controlling the other
-  screens takes them with it.
+- **Back button**: close the open sheet, or go Home. Pressed when already on Home: standby.
+- **Standby whenever you like**: press Back on Home, or tap the clock (or press the fifth button),
+  then **Standby**. It works the same on the Car Thing, the preview on the Mac, a paired screen and
+  the Ride app's Full Deck, and sends that one screen to standby. **Standby all**, next to it,
+  sends every screen showing the Deck to standby, from whichever screen it is tapped on. A window
+  on the Mac that is controlling the other screens takes them with it too.
+- **Night by the clock**: in Settings, **Auto** switches the screen to Night brightness at
+  `nightFrom` and back to Day at `nightTo` (10 PM and 7 AM unless `config.json` says otherwise).
+  It changes only at those two moments, so Day or Night tapped by hand holds until the next one.
+
+## Answering Claude from the Deck
+
+Anything waiting on you can be answered where it is shown: an item under **Waiting on you** on
+the Claude tab, or a video's next step on the Videos tab. Tap it, then **OK**, **Done** or
+**Not yet**. The answer given is lit; tapping it again takes it back. An item answered OK or Done
+stops counting as waiting on you; Not yet still does.
+
+The Deck never writes the board file. The board belongs to whoever keeps it, and two writers of
+one file overwrite each other. Answers go into a file of the Deck's own, `answers.json` beside
+the board file (or wherever `answersFile` says):
+
+```json
+{ "about": "...what this file is...",
+  "updated": "2026-11-24T07:11:44.681Z",
+  "answers": [
+    { "at": "2026-11-24T07:11:44.680Z", "answer": "done", "about": "next", "id": "hype",
+      "video": "Arctic Leopard XE Pro R ×3 – hype reel", "ask": "Joe: post the hype reel (v13)" },
+    { "at": "2026-11-24T07:11:40.965Z", "answer": "not yet", "about": "blocked_on_joe",
+      "ask": "Lynx review: which thumbnail, A or B?" } ] }
+```
+
+Each answer carries the ask word for word, so it applies only while the board still has that ask:
+when Claude rewrites or removes the ask, the answer stops showing by itself. Claude acts on an
+answer only once it reads this file, so tell whichever session keeps the board, once:
+
+> Before asking me anything, and whenever you update the board, read `answers.json` next to
+> `state.json`. It holds my answers from the Deck (ok, done, not yet) to items in
+> `blocked_on_joe` and to videos' `next` steps. Act on them, then take the ask off the board.
 
 ## Other screens: a phone, a tablet, another computer
 
@@ -122,6 +157,12 @@ Tested on 23 Nov 2026 with plain requests from this Mac and over its network add
 file and a 3 MB clip arrived byte for byte, a repeat was skipped, a script file and a request
 with no key were refused. No app has used any of it yet.
 
+- **The last ride:** beside each ride's track the app sends a small file of its numbers. The
+  Deck shows the newest one on the standby screen (distance, top speed, furthest lean left and
+  right, battery level as the ride ended, how long ago), in the units the rider reads on the
+  phone, and an alert says "Ride home" when one arrives. The battery level comes with rides
+  recorded by app builds after 24 Nov 2026, and only when the bike was linked as the ride ended.
+
 The older sign-in still works:
 
 The Ride app's Deck mode reads the same `/api/state` and `/api/action` as a browser screen. Over
@@ -142,12 +183,15 @@ they show the same tab, the same open sheet, the same scroll position and go to 
 - A controlled screen stays awake while the controlling window is awake, and goes back to
   running itself a minute after that window is closed. Touching it still works; the next thing
   done on the Mac puts it back in step. The same goes for the Car Thing's knob, buttons and touch.
-- Only this Mac (or a phone on USB) can control; a screen paired over the network cannot.
+- Only this Mac (or a phone on USB) can control; a screen paired over the network cannot. The one
+  thing any screen can do to the others is send them all to standby (**Standby all** in Settings).
 
 What to know before turning it on:
 
 - A paired screen can do what the Car Thing can: see the board, the Claude task names and the
-  channel figures, change the Mac's volume, and open the apps, folders and files the Deck lists.
+  channel figures, change the Mac's volume, play, pause and skip its music, answer what is
+  waiting on you, send every screen to standby, and open the apps, folders and files the Deck
+  lists.
 - Only the Deck itself (the Car Thing and this Mac) can show a code or forget a screen. Five wrong
   codes withdraw the code. Up to eight screens stay paired.
 - Only private network addresses are answered (home and office ranges), and the Mac has to be
@@ -168,6 +212,18 @@ What to know before turning it on:
 - macOS's firewall has to allow incoming connections to `node`. The official Node.js build (from
   nodejs.org or nvm) is signed, and the firewall's default settings allow signed software without
   asking. With another build, macOS may ask once.
+
+## What was checked, and what was not
+
+Version 2.3 (answers, the last ride, music, the taking-off and disk alerts, Back to standby,
+Standby all, Night by the clock) was checked on 24 Nov 2026 on a Linux machine: the Deck ran
+against a made-up board and ride, with stand-ins for the Mac's music, volume and disk commands,
+and a headless browser worked every control at the Car Thing's size and as a paired phone.
+`rules.test.mjs` covers the decisions behind them.
+
+None of it has run on a Mac, a Car Thing or a real phone yet. In particular the commands sent
+to Spotify and Music have never been run against the real apps, and the Night schedule has not
+been watched changing a Car Thing's backlight.
 
 ## Requirements
 
@@ -194,6 +250,8 @@ Everything personal is in `config.json` (created from `config.example.json`):
 
 - `channel`, `subGoal`: the YouTube channel and the subscriber goal for the Home gauge.
 - `boardFile`: a JSON file with `owed`, `inflight` and `blocked_on_joe` lists (the Dash board).
+  `answersFile`: where answers given on the Deck are written; empty means `answers.json` beside
+  the board file.
 - `roots`, `footage`: how paths on the board map to this Mac, and where each video's `EDIT` folder lives.
 - `claudeTitleFilter`: only show Claude sessions whose title matches this pattern.
 - `apps`: the Launch tiles. Each has a `url`, an `app` name, or a `path`, and may name an `icon`:
@@ -203,10 +261,17 @@ Everything personal is in `config.json` (created from `config.example.json`):
   site's own only), `pictureFolders` and `clipFolders` (extra folders of your own).
 - Offload: `usbOffload`, `offloadTo`, `offloadFolders`, `offloadSinceDays`. Uploads from an app:
   `uploads`, `uploadMaxGB`. Ride app's older sign-in: `phoneToken`.
+- The last ride: `lastRide` (on or off) and `rideUnits` (`mi` or `km`, for a ride that does not
+  say which its rider reads).
+- Music: `music` (on or off).
+- Alerts: `takeoffTimes` (how many times its usual views an hour a video has to reach, default 3),
+  `takeoffMinPerHour` (and at least this many views an hour, default 30), `diskWarnPct` (how full
+  a disk is when it is called nearly full, default 90).
 - Other screens: `remote` (true lets paired screens on this network show the Deck) and `remoteName`
   (an address to show instead of the Mac's IP address, such as `my-mac.local`). `usbScreens`
   (true keeps a link open to Android phones on USB, so they can open `http://localhost:8791`).
-- `fullBrightness`, `nightBrightness`, `ambientAfterSec`, `disks`, `soundFile`.
+- `fullBrightness`, `nightBrightness`, `nightFrom` and `nightTo` (the hours Auto keeps Night
+  brightness, 24-hour `"HH:MM"`), `ambientAfterSec`, `disks`, `soundFile`.
 
 After editing, restart:
 
@@ -223,8 +288,11 @@ launchctl kickstart -k gui/$(id -u)/com.maxapacity.deck
   HTTP it is the same page with a phone-friendly head put in by the server; it then scales itself
   to the window and polls the Mac for state instead of being pushed it.
 - `offload.mjs`: choosing which phone files are new and where they go. `pair.html`: what an unpaired screen gets. `qr.mjs`: the QR code maker (no dependencies).
+- `rules.mjs`: the small decisions that need no Mac to check: which ask an answer belongs to, whether a video is taking off, whether it is night by the clock, how a ride reads, what a music player said. `node --test deck/rules.test.mjs` checks them.
   `icon-*.png`: the home-screen icon.
-- `data/`: view history (for views per hour), the settings chosen on the device, `screens.json`
+- `data/`: view history (for views per hour), the settings chosen on the device, `notes.json`
+  (what has already been said, so a disk warning or a video taking off is not said twice),
+  `ride.json` (the last ride, so it still shows when the drive rides land on is unplugged), `screens.json`
   (paired screens: a name and a hash of each screen's key, never the key), and `data/media/` with
   the standby pictures (800x480 JPEGs) and clips (folders of 640x384 JPEG frames).
 - Who the server answers: this Mac (the preview) always; with `remote` on, a paired screen on a
@@ -253,6 +321,12 @@ launchctl kickstart -k gui/$(id -u)/com.maxapacity.deck
   file, so that file is scanned for the plan entries; nothing else in it is kept, shown or sent
   anywhere.
 - The board file, the Studio server's render list, running `ffmpeg` processes, and disk space.
+- Music: Spotify and Music, each only while it is already open, are asked what is playing every
+  few seconds, and told to play, pause or skip when you tap. The first time, macOS asks whether
+  this may control that app. Until it is allowed, the Deck shows no music.
+- Rides: the small file of numbers the Ride app sends beside each ride's track (`<offload
+  folder>/<phone>/Rides/*.json`): distance, top speed, furthest lean each way and, from app
+  builds after 24 Nov 2026, the battery level as the ride ended.
 
 ## Rules learned the hard way
 

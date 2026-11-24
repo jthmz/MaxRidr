@@ -56,6 +56,14 @@ same header.
   while the Deck view is on screen, not in the background.
 - `POST /api/action` with a JSON body: `{"t":"app","key":"studio"}` opens a Launch tile,
   `{"t":"vol","d":4}` changes volume, `{"t":"mute"}`. Unknown actions are ignored.
+- Music: `state.music` is `null`, or `{"app","playing","title","artist"}` for what Spotify or
+  Music is playing on the Mac. `{"t":"music","do":"playpause"}` (or `"next"`, `"prev"`).
+- Answers: each item of `state.board.blocked` has a key at the same place in `state.board.bk`,
+  and each video in `state.board.owed` with a next step has one in `nk`. `state.board.answers`
+  maps a key to `{"a": "ok" | "done" | "not yet", "ago"}` once answered.
+  `{"t":"answer","k":"<key>","a":"ok"}` answers an ask; any other `a` takes the answer back. A
+  key that is not on the board now is ignored.
+- `{"t":"standbyAll","n":"<anything unique>"}` sends every screen showing the Deck to standby.
 
 Do not send an `Origin` header that differs from the address being called; the Deck refuses those.
 
@@ -88,6 +96,20 @@ Content-Length: <exact size>
 - `{"ok": false, "why": "..."}` with `403` uploads off, `411` no length, `413` too big (default
   8 GB), `415` type not accepted, `507` drive missing or full, `400` arrived incomplete. Show
   `why` to the rider; retry later for `400` and `507`.
+
+**Beside each ride's track, send its numbers** as `<same name>.json`, also `kind=ride`. The Deck
+shows the newest ride from these (it does not read the track), and says "Ride home" when one
+arrives:
+
+```json
+{"app": "MAXAPACITY Ride", "units": "mi", "file": "ride_2026-11-23_1712.gpx",
+ "start": 1795478000000, "distanceM": 19955, "movingMs": 1490000, "elapsedMs": 1620000,
+ "topMps": 18.33, "climbM": 96, "stops": 2, "leanLeft": 38, "leanRight": 41, "battery": 64}
+```
+
+`start` (milliseconds) and `distanceM` are needed; the rest is shown when present. `units` is
+`mi` or `km`, whichever the rider reads. `battery` is the percent left as the ride ended; leave
+it out when it was not read.
 
 Rules the Deck applies:
 

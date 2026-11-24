@@ -55,6 +55,9 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
 .btn.xs{min-width:112px;height:52px;line-height:50px;margin-right:10px}
 .btn.on{background:var(--g);border-color:var(--g);color:#02060a}
 .pm{width:64px;min-width:64px;padding:0;margin:0;font-size:34px}
+.pm svg{width:30px;height:30px;margin-top:-5px;vertical-align:middle;fill:none;stroke:currentColor;stroke-width:3.6;stroke-linecap:round;stroke-linejoin:round}
+.btn.t3{min-width:96px;padding:0 8px}
+.btn.wd{display:block;min-width:0;padding:0 4px;margin:0}
 /* ring gauge: a track, an arc for the value, the number in the middle */
 .rg{position:relative}
 .rg svg{position:absolute;left:0;top:0;width:100%;height:100%}
@@ -139,12 +142,23 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
 .tile.muted .ic svg{filter:none}
 #volrow{margin-top:10px;height:88px;padding:0 14px;display:grid;grid-template-columns:auto 1fr auto;grid-gap:18px;align-items:center}
 #volrow .bar{height:18px}
+/* what is playing on the Mac: previous, play or pause, next, then the track */
+#musrow{margin-top:10px;height:88px;padding:0 14px;display:grid;grid-template-columns:auto 1fr;grid-gap:8px;align-items:center}
+#musrow>div{min-width:0}
+#musrow .pm{margin-right:10px}
+#musrow .t{font-size:24px;line-height:30px;font-weight:700}
+#musrow .s{font-size:20px;line-height:26px}
 /* ---------- sheets ---------- */
 #sheet{position:absolute;left:0;top:0;width:800px;height:480px;background:#02060a radial-gradient(rgba(34,211,245,.1) 1px,rgba(2,6,10,0) 1.5px);background-size:22px 22px;padding:14px 26px;display:none;z-index:5}
 #sheet h2{font-size:28px;line-height:36px;font-weight:var(--w9);color:var(--y);text-shadow:0 0 14px rgba(255,232,26,.45);padding-bottom:8px;border-bottom:1px solid var(--edge)}
 #sheet .body{height:328px;overflow-y:auto;font-size:23px;line-height:32px;padding-top:10px}
 #sheet .foot{position:absolute;left:26px;bottom:14px;white-space:nowrap}
-.set{display:grid;grid-template-columns:210px 1fr;grid-gap:14px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line)}
+.set{display:grid;grid-template-columns:210px 1fr 190px;grid-gap:14px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line)}
+.set>div{min-width:0}
+.set .cap{font-size:17px;line-height:20px;color:var(--dim)}
+/* answering an ask from the board: three answers, the one given is lit */
+.ans{margin-top:10px}
+.ans .dim{font-size:20px}
 .gs{display:grid;grid-gap:10px;padding-top:12px;text-align:center}
 .gs .rg{margin:0 auto 6px}
 .gs .gl{font-size:20px;line-height:24px}
@@ -192,6 +206,8 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
 #amb .ck{position:absolute;left:34px;top:8px;font-size:116px;line-height:116px;font-weight:var(--w9);letter-spacing:-4px;text-shadow:0 0 26px rgba(34,211,245,.55),0 2px 10px #000}
 #amb .dt{position:absolute;left:38px;top:126px;font-size:23px;line-height:28px;opacity:.85;text-shadow:0 1px 6px #000}
 #amb .md{position:absolute;left:38px;top:160px;font-size:23px;line-height:28px;text-shadow:0 1px 6px #000;white-space:nowrap} #amb .md b{font-size:27px;font-weight:var(--w9)}
+#amb .rd{position:absolute;left:38px;right:34px;top:192px;font-size:22px;line-height:28px;text-shadow:0 1px 6px #000} #amb .rd b{font-weight:var(--w9)}
+#amb .rd .lab{margin-right:12px;text-shadow:0 1px 6px #000}
 #amb .rt{position:absolute;right:34px;top:22px;text-align:right}
 #amb .rt .lab{text-shadow:0 1px 6px #000}
 #amb .sb{font-size:70px;line-height:74px;font-weight:var(--w9);color:var(--y);letter-spacing:-2px;text-shadow:0 0 22px rgba(255,232,26,.55),0 2px 10px #000}
@@ -252,7 +268,7 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
 <script>
 (function () {
   var S = null, cur = 0, lastPush = 0, volAt = 0, cache = {}, pillT = null, toastT = null, zapT = null, partyT = null, scanT = null;
-  var sheetFn = null, ambOn = false, lastInput = Date.now(), lastAlert = null;
+  var sheetFn = null, ambOn = false, lastInput = Date.now(), lastAlert = null, standbySeen = '';
   var INJ = !/^https?:$/.test(location.protocol);           // written into the Car Thing's browser by the Mac, or opened as a normal page
   if (!INJ) document.body.className = 'pv';                  // a normal browser has no Circular Black: its bold stands in
   var UI = '';                                               // over HTTP the Mac fills this in with the build of this page, and the page reports it when it asks for state
@@ -307,7 +323,8 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
   var VIEWS = ['home', 'videos', 'claude', 'launch'];
   var ORDER = { ready: 0, editing: 1, built: 2, 'sneak peek done': 2, blocked: 3, 'not started': 4, later: 5, posted: 6 };
   var CHIP = { ready: 'g', editing: 'y', blocked: 'r', built: 'c', 'sneak peek done': 'c' };
-  var KIND = { claude: 'c', render: 'c', ready: 'g', you: 'r', video: 'y', subs: 'y', screen: 'c', offload: 'g' };
+  var KIND = { claude: 'c', render: 'c', ready: 'g', you: 'r', video: 'y', subs: 'y', screen: 'c', offload: 'g', ride: 'g', disk: 'r' };
+  var ANS = [['ok', 'OK'], ['done', 'Done'], ['not yet', 'Not yet']];   // the answers that can be given to an ask on the board
   var ARC = 2 * Math.PI * 106;                               // length of the home gauge's arc
   // launch icons: 48x48, drawn with one stroke weight
   var IC = {
@@ -323,7 +340,9 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
     spark: '<path d="M24 6v36M6 24h36M11.3 11.3l25.4 25.4M36.7 11.3L11.3 36.7"/>',
     app: '<rect x="7" y="10" width="34" height="28" rx="3"/><path d="M7 18h34"/><circle cx="12" cy="14" r=".9"/><circle cx="16.5" cy="14" r=".9"/>',
     speaker: '<path d="M8 19h7l9-7v24l-9-7H8z"/><path d="M30 18c3 3.5 3 8.5 0 12M35 13c6 6.5 6 15.5 0 22"/>',
-    mute: '<path d="M8 19h7l9-7v24l-9-7H8z"/><path d="M31 19l10 10M41 19L31 29"/>'
+    mute: '<path d="M8 19h7l9-7v24l-9-7H8z"/><path d="M31 19l10 10M41 19L31 29"/>',
+    prev: '<path d="M12 10v28M40 10L20 24l20 14z"/>', next: '<path d="M36 10v28M8 10l20 14L8 38z"/>',
+    playit: '<path d="M14 8v32l26-16z"/>', pause: '<path d="M16 10v28M32 10v28"/>'
   };
   function $(id) { return document.getElementById(id); }
   function bolt(size) {
@@ -407,7 +426,13 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
     }
     if (location.hash === '#drive' && !driving) { driving = true; lastView = ''; tellView(true); toast('This window now controls your other screens', 3000); }
   }
-  function blockedSheet(i) { return function () { return { title: 'Waiting on you', body: esc(((S.board && S.board.blocked) || [])[i] || '') }; }; }
+  function blockedSheet(i) {                 // one ask, with the answers that can be given to it
+    return function () {
+      var b = S.board || {}, text = (b.blocked || [])[i], k = (b.bk || [])[i], a = ansOf(k);
+      if (text == null) return null;
+      return { title: 'Waiting on you', body: '<p style="margin-bottom:10px">' + (a ? '<span class="chip ' + (a.a === 'not yet' ? 'y' : 'g') + '">' + esc(ansSaid(a)) + '</span> <span class="dim">' + esc(ansWhen(a)) + ' · saved for Claude</span>' : '<span class="dim">Your answer is saved for Claude.</span>') + '</p>' + esc(text), buttons: ansBtns(k, 'sm') };
+    };
+  }
   function showSheet(kind, arg) {           // the sheets that can be named, so another screen can be told to open the same one
     var fn = kind === 'settings' ? settingsSheet : kind === 'channel' ? channelSheet : kind === 'session' ? sessionSheet(arg) : kind === 'owed' ? owedSheet(arg) : kind === 'blocked' ? blockedSheet(+arg) : null;
     if (!fn) return;
@@ -466,6 +491,22 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
     return c.total ? bar(sessPct(c), c.working ? 'g' : 'c') : c.working ? '<div class="bar ind"><i class="g"></i></div>' : '';
   }
 
+  // Answers to asks on the board. An ask has a key (made by the Mac from its own words); S.board.answers holds what was said.
+  function ansOf(k) { var m = S.board && S.board.answers; return k && m && m[k] ? m[k] : null; }
+  function ansSaid(a) { return 'You: ' + a.a; }
+  function ansWhen(a) { return a.ago === 'now' ? 'just now' : a.ago + ' ago'; }
+  function ansBtns(k, cls) {                    // the lit one is the answer given; tapping it again takes it back
+    var a = ansOf(k), h = '', i;
+    if (!k) return '';
+    for (i = 0; i < ANS.length; i++) h += '<span class="btn ' + cls + ' tap' + (a && a.a === ANS[i][0] ? ' on' : '') + '" data-answer="' + ANS[i][0] + '" data-ask="' + esc(k) + '">' + ANS[i][1] + '</span>';
+    return h;
+  }
+  function needYou() {                          // asks still waiting on you: not answered, or answered "not yet"
+    var b = S.board || {}, bl = b.blocked || [], bk = b.bk || [], n = 0, i, a;
+    for (i = 0; i < bl.length; i++) { a = ansOf(bk[i]); if (!a || a.a === 'not yet') n++; }
+    return n;
+  }
+
   function drawHome() {
     var y = S.yt || {}, b = S.board || {}, v = y.videos || [], c = sess(), e = S.encodes || [], h, i, m, da;
     put('subs', esc(y.subs || '–'));
@@ -474,7 +515,7 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
     if (cache.hArc !== da) { cache.hArc = da; $('hArc').setAttribute('stroke-dasharray', da); }
     put('hStats', '<div class="card stat tap" data-tab="1"><div class="n" style="color:var(--y)">' + count('editing') + '</div><div class="l">Editing</div></div>' +
       '<div class="card stat tap" data-tab="1"><div class="n" style="color:var(--g)">' + count('ready') + '</div><div class="l">Ready to post</div></div>' +
-      '<div class="card stat tap" data-tab="2"><div class="n" style="color:var(--r)">' + ((b.blocked || []).length) + '</div><div class="l">Waiting on you</div></div>');
+      '<div class="card stat tap" data-tab="2"><div class="n" style="color:var(--r)">' + needYou() + '</div><div class="l">Waiting on you</div></div>');
     if (c) {
       m = c.total ? c.done + ' of ' + c.total + ' tasks · ' + esc(c.title) : (c.working ? 'Working now' : 'Last active ' + esc(c.ago) + ' ago') + ' · no task list';
       if (e.length) m += ' · encoding ' + esc(e[0].name);
@@ -488,11 +529,12 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
     put('hUps', h);
   }
   function drawVideos() {
-    var o = sorted(), h = '', i, x, open = 0;
+    var o = sorted(), h = '', i, x, a, open = 0;
     for (i = 0; i < o.length; i++) {
       x = o[i]; if (x.status !== 'posted') open++;
+      a = x.next ? ansOf(x.nk) : null;
       h += '<div class="card vrow tap" data-owed="' + esc(x.id) + '">' + ring(x.pct, 72, 7, x.status === 'blocked' ? 'r' : x.pct >= 100 ? 'g' : '', x.pct, 23) +
-        '<div><div class="t one">' + esc(x.title) + '</div><div class="s dim one">' + esc(x.next || x.due) + (x.cut ? ' · <span style="color:var(--c)">' + esc(x.cut.name) + ' · ' + esc(x.cut.age) + '</span>' : '') + '</div></div>' +
+        '<div><div class="t one">' + esc(x.title) + '</div><div class="s dim one">' + (a ? '<span style="color:var(--' + (a.a === 'not yet' ? 'y' : 'g') + ')">' + esc(ansSaid(a)) + '</span> · ' : '') + esc(x.next || x.due) + (x.cut ? ' · <span style="color:var(--c)">' + esc(x.cut.name) + ' · ' + esc(x.cut.age) + '</span>' : '') + '</div></div>' +
         '<div><span class="chip ' + (CHIP[x.status] || '') + '">' + esc(x.status) + '</span></div></div>';
     }
     if (!o.length) h = '<div class="dim">' + esc((S.board && S.board.error) || 'No videos on the board.') + '</div>';
@@ -500,7 +542,7 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
     put('videos', h);
   }
   function drawClaude() {
-    var st = S.studio || {}, r = st.renders || [], e = S.encodes || [], b = S.board || {}, inf = b.inflight || [], bl = b.blocked || [], cl = S.claude || [], al = S.alerts || [], of = S.offload || [], h, i, x, live = 0;
+    var st = S.studio || {}, r = st.renders || [], e = S.encodes || [], b = S.board || {}, inf = b.inflight || [], bl = b.blocked || [], bk = b.bk || [], cl = S.claude || [], al = S.alerts || [], of = S.offload || [], h, i, x, live = 0, need = needYou();
     h = '<div class="lab sec">Claude sessions</div>';
     if (!cl.length) h += '<div class="card row dim">No Claude sessions in the last few days.</div>';
     for (i = 0; i < cl.length; i++) {
@@ -531,17 +573,22 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
       x = inf[i];
       h += '<div class="card row tap" data-inflight="' + i + '" data-ok="' + (x.exists ? 1 : 0) + '"><div class="t one">' + esc(x.title) + '</div>' + (x.pct != null ? bar(x.pct, x.pct >= 100 ? 'g' : 'c') : '') + '<div class="s dim one">' + esc(x.detail) + '</div></div>';
     }
-    h += '<div class="lab sec2">Waiting on you · ' + bl.length + '</div>';
-    for (i = 0; i < bl.length; i++) h += '<div class="card row tap" data-blocked="' + i + '"><div class="s two" style="margin:0;font-size:22px;line-height:29px">' + esc(bl[i]) + '</div></div>';
+    h += '<div class="lab sec2">Waiting on you · ' + need + (bl.length > need ? ' · ' + (bl.length - need) + ' answered' : '') + '</div>';
+    for (i = 0; i < bl.length; i++) {
+      x = ansOf(bk[i]);
+      h += '<div class="card row tap" data-blocked="' + i + '"><div class="s two" style="margin:0;font-size:22px;line-height:29px">' + (x ? '<span class="chip ' + (x.a === 'not yet' ? 'y' : 'g') + '">' + esc(ansSaid(x)) + '</span> ' : '') + esc(bl[i]) + '</div></div>';
+    }
     h += '<div class="dim" style="font-size:17px;margin-top:6px">Board updated ' + esc(b.updated || '?') + (b.by ? ' by ' + esc(b.by) : '') + '</div>';
-    $('nc').textContent = live ? 'live' : (bl.length || ''); $('nc').className = live ? 'live' : '';
+    $('nc').textContent = live ? 'live' : (need || ''); $('nc').className = live ? 'live' : '';
     put('claude', h);
   }
   function drawLaunch() {
-    var a = S.apps || [], v = S.vol || {}, h = '<div class="tiles">', i;
+    var a = S.apps || [], v = S.vol || {}, m = S.music, h = '<div class="tiles">', i;
     for (i = 0; i < a.length; i++) h += '<div class="card tile tap" data-app="' + esc(a[i].key) + '"><div class="ic">' + icon(a[i].icon) + '</div><div class="n one">' + esc(a[i].label) + '</div></div>';
-    h += '<div class="card tile tap' + (v.muted ? ' muted' : '') + '" data-mute="1"><div class="ic">' + icon(v.muted ? 'mute' : 'speaker') + '</div><div class="n">' + (v.muted ? 'Unmute' : 'Mute') + '</div></div></div>' +
-      '<div class="card" id="volrow"><span class="btn pm tap" data-vol="-1">−</span><div><div class="h"><div class="lab">' + (v.v == null ? 'This sound output has no volume control' : v.muted ? 'Muted' : 'Mac volume') + '</div><div class="n2">' + (v.v == null ? '' : v.v) + '</div></div>' +
+    h += '<div class="card tile tap' + (v.muted ? ' muted' : '') + '" data-mute="1"><div class="ic">' + icon(v.muted ? 'mute' : 'speaker') + '</div><div class="n">' + (v.muted ? 'Unmute' : 'Mute') + '</div></div></div>';
+    if (m) h += '<div class="card" id="musrow"><div><span class="btn pm tap" data-music="prev">' + icon('prev') + '</span><span class="btn pm tap" data-music="playpause">' + icon(m.playing ? 'pause' : 'playit') + '</span><span class="btn pm tap" data-music="next">' + icon('next') + '</span></div>' +
+      '<div><div class="t one">' + esc(m.title || m.app) + '</div><div class="s dim one">' + esc((m.artist ? m.artist + ' · ' : '') + m.app + (m.playing ? '' : ' · paused')) + '</div></div></div>';
+    h += '<div class="card" id="volrow"><span class="btn pm tap" data-vol="-1">−</span><div><div class="h"><div class="lab">' + (v.v == null ? 'This sound output has no volume control' : v.muted ? 'Muted' : 'Mac volume') + '</div><div class="n2">' + (v.v == null ? '' : v.v) + '</div></div>' +
       '<div class="bar"><i class="' + (v.muted ? 'r' : '') + '" style="width:' + (v.v == null ? 0 : v.v) + '%"></i></div></div><span class="btn pm tap" data-vol="1">+</span></div>';
     put('launch', h);
   }
@@ -569,10 +616,20 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
       x.total > 1 && x.total <= 24 ? cells(x.total, function (i) { return i < x.done; }, function (i) { return !stalled && i === x.done; }, false) : bar(x.pct, stalled ? 'r' : 'c'),
       line ? '<div class="mt' + (stalled ? '' : ' go') + '"><div class="one">Part ' + Math.min(x.total, x.done + 1) + ' of ' + x.total + (x.current ? ' · ' + esc(x.current) : '') + (x.eta != null ? ' · about ' + x.eta + ' min left' : '') + '</div></div>' : '');
   }
+  // one line under the counts for what is playing on the Mac and for the last ride; with both, they take turns
+  function infoLine() {
+    var m = S.music, r = S.ride, out = [];
+    if (m && m.playing && m.title) out.push('<span class="lab">Playing</span><b>' + esc(m.title) + '</b>' + (m.artist ? ' · ' + esc(m.artist) : ''));
+    if (r) out.push('<span class="lab">Last ride</span><b>' + esc(r.dist) + '</b> ' + esc(r.unit) + ' · top <b>' + esc(r.top) + '</b> ' + esc(r.speed) + (r.left || r.right ? ' · lean <b>' + esc(r.left) + '°</b> / <b>' + esc(r.right) + '°</b>' : '') +
+      (r.battery == null ? '' : ' · battery <b>' + esc(r.battery) + '%</b>') + ' · ' + (r.ago === 'now' ? 'just now' : esc(r.ago) + ' ago'));
+    return out.length ? out[Math.floor(Date.now() / 9000) % out.length] : '';
+  }
   function drawAmb() {
     var y = S.yt || {}, cl = S.claude || [], r = (S.studio && S.studio.renders) || [], e = S.encodes || [], o = sorted(), of = S.offload || [], it = [], live = 0, i, h, n, x, lines, rows, first;
+    var info = infoLine(), room = info ? 198 : 228;      // the rows at the bottom give the info line its 30px
     put('aTop', '<div class="ck">' + esc(String(S.clock || '').replace(/\s*[AP]M$/, '')) + '</div><div class="dt">' + esc(S.date) + '</div>' +
-      '<div class="md"><b style="color:var(--y)">' + count('editing') + '</b> editing &nbsp;·&nbsp; <b style="color:var(--g)">' + count('ready') + '</b> ready &nbsp;·&nbsp; <b style="color:var(--r)">' + ((S.board && S.board.blocked) || []).length + '</b> need you</div>' +
+      '<div class="md"><b style="color:var(--y)">' + count('editing') + '</b> editing &nbsp;·&nbsp; <b style="color:var(--g)">' + count('ready') + '</b> ready &nbsp;·&nbsp; <b style="color:var(--r)">' + needYou() + '</b> need you</div>' +
+      (info ? '<div class="rd one">' + info + '</div>' : '') +
       '<div class="rt"><div class="lab">Subscribers</div><div class="sb">' + esc(y.subs || '–') + '</div><div class="dt">' + (y.daySpan >= 0.3 ? '+' + kfmt(y.day) + ' views' : '') + '</div></div>');
     for (i = 0; i < cl.length; i++) if (cl[i].working) { live++; it.push({ s: cl[i] }); }
     for (i = 0; i < of.length; i++) if (of[i].state === 'copying') it.push({ f: of[i] });
@@ -583,11 +640,11 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
     n = it.length;                                 // what is in progress; the videos being edited fill any room left
     for (i = 0; i < o.length; i++) if (o[i].status === 'editing') it.push({ v: o[i] });
     for (i = 0; i < o.length; i++) if (o[i].status === 'ready') it.push({ v: o[i] });
-    // room for 228px: a row is 54, a small line 29. The first row gets at least two small lines when it has steps to show.
+    // room for 228px (198 under an info line): a row is 54, a small line 29. The first row gets at least two small lines when it has steps to show.
     first = it[0] || {};
     lines = first.s ? (first.s.tasks || []).length : first.r ? 1 : 0;
-    lines = Math.min(lines, Math.max(2, Math.floor((228 - 54 * Math.min(it.length, 3)) / 29)));
-    rows = Math.min(it.length, lines ? 1 + Math.floor((228 - 58 - 29 * lines) / 54) : 4);
+    lines = Math.min(lines, Math.max(2, Math.floor((room - 54 * Math.min(it.length, 3)) / 29)));
+    rows = Math.min(it.length, lines ? 1 + Math.floor((room - 58 - 29 * lines) / 54) : Math.floor(room / 54));
     h = '<div class="h"><div class="lab">' + (n ? 'In progress' : 'Videos in the works') + '</div><div class="lab">' + (live ? live + ' working now' : '') + (n > rows ? (live ? ' · ' : '') + '+' + (n - rows) + ' more' : '') + '</div></div>';
     for (i = 0; i < rows; i++) {
       x = it[i];
@@ -749,7 +806,7 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
     lastAlert = Math.max(lastAlert, top);
     if (!fresh.length) return;
     var a = fresh[fresh.length - 1];
-    if (a.celebrate) party(a.big, 'subscribers'); else { toast(a.text, 5000); zap(); }
+    if (a.celebrate) party(a.big, a.sm || 'subscribers'); else { toast(a.text, 5000); zap(); }
   }
   function draw() {
     drawHome(); drawVideos(); drawClaude(); drawLaunch(); drawSheet(); if (ambOn) drawAmb();
@@ -759,10 +816,14 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
   // sheets
   function settingsSheet() {
     var d = S.disks || [], st = S.settings || {}, h, g = '', i, ld = S.load || 0;
-    // Standby sits at the end of the Screen row: it puts this screen on the standby screen now, without waiting out the idle time
-    h = '<div class="set" style="grid-template-columns:210px 1fr auto"><div class="lab">Screen</div><div><span class="btn xs tap' + (st.night ? '' : ' on') + '" data-night="0">Day</span><span class="btn xs tap' + (st.night ? ' on' : '') + '" data-night="1">Night</span></div>' +
-      '<div><span class="btn xs tap" data-standby="1" style="margin-right:0">Standby</span></div></div>' +
-      '<div class="set"><div class="lab">Alert sound</div><div><span class="btn xs tap' + (st.sound ? ' on' : '') + '" data-sound="1">On</span><span class="btn xs tap' + (st.sound ? '' : ' on') + '" data-sound="0">Off</span></div></div>';
+    // Auto follows the clock: Night at one time, Day at another (S.sched says when). On the right, Standby puts this screen on the
+    // standby screen now, without waiting out the idle time, and Standby all does the same to every screen showing the Deck.
+    h = '<div class="set"><div><div class="lab">Screen</div>' + (st.auto && S.sched ? '<div class="cap one">Night ' + esc(S.sched) + '</div>' : '') + '</div>' +
+      '<div><span class="btn xs t3 tap' + (st.night ? '' : ' on') + '" data-night="0">Day</span><span class="btn xs t3 tap' + (st.night ? ' on' : '') + '" data-night="1">Night</span>' +
+      (S.sched ? '<span class="btn xs t3 tap' + (st.auto ? ' on' : '') + '" data-auto="' + (st.auto ? 0 : 1) + '">Auto</span>' : '') + '</div>' +
+      '<div><span class="btn xs wd tap" data-standby="1">Standby</span></div></div>' +
+      '<div class="set"><div class="lab">Alert sound</div><div><span class="btn xs t3 tap' + (st.sound ? ' on' : '') + '" data-sound="1">On</span><span class="btn xs t3 tap' + (st.sound ? '' : ' on') + '" data-sound="0">Off</span></div>' +
+      '<div><span class="btn xs wd tap" data-standbyall="1">Standby all</span></div></div>';
     for (i = 0; i < d.length; i++)
       g += '<div>' + ring(d[i].ok ? d[i].pct : 0, 96, 9, d[i].pct >= 92 ? 'r' : d[i].pct >= 80 ? '' : 'g', d[i].ok ? d[i].pct + '<small>%</small>' : '–', 28) + '<div class="lab">' + esc(d[i].label) + '</div><div class="gl dim">' + (d[i].ok ? num(d[i].freeGB) + ' GB free' : 'not connected') + '</div></div>';
     g += '<div>' + ring(ld, 96, 9, ld >= 80 ? 'r' : 'c', ld + '<small>%</small>', 28) + '<div class="lab">Mac load</div><div class="gl dim">right now</div></div>';
@@ -825,7 +886,9 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
       return { title: o.title,
         body: '<div class="od">' + ring(o.pct, 104, 10, o.status === 'blocked' ? 'r' : o.pct >= 100 ? 'g' : '', o.pct + '<small>%</small>', 30) + '<div><span class="chip ' + (CHIP[o.status] || '') + '">' + esc(o.status) + '</span> <span class="dim">· ' + esc(o.owner) + '</span>' +
           (o.cut ? '<p><span class="lab">Latest cut</span><br><span style="color:var(--c)">' + esc(o.cut.name) + '</span> <span class="dim">· ' + esc(o.cut.age) + ' ago</span></p>' : '') + '</div></div>' +
-          '<p style="margin-top:12px"><span class="lab">Next</span><br>' + esc(o.next || '–') + '</p><p style="margin-top:12px"><span class="lab">Due</span><br>' + esc(o.due || '–') + '</p>',
+          '<p style="margin-top:12px"><span class="lab">Next</span><br>' + esc(o.next || '–') + '</p>' +
+          (o.next && o.nk ? '<div class="ans">' + ansBtns(o.nk, 'xs') + '<span class="dim">' + (ansOf(o.nk) ? 'said ' + esc(ansWhen(ansOf(o.nk))) + ' · saved for Claude' : 'your answer, for Claude') + '</span></div>' : '') +
+          '<p style="margin-top:12px"><span class="lab">Due</span><br>' + esc(o.due || '–') + '</p>',
         buttons: (o.cut ? '<span class="btn sm y tap" data-cut="' + esc(o.id) + '">Watch cut</span>' : '') + (o.folder ? '<span class="btn sm tap" data-folder="' + esc(o.id) + '">Folder</span>' : '') +
           '<span class="btn sm tap" data-app="studio">Studio</span>' + (o.url ? '<span class="btn sm tap" data-openowed="' + esc(o.id) + '">YouTube</span>' : '') };
     };
@@ -840,6 +903,7 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
     if (first) { $('wait').style.display = 'none'; zap(); hello(); }
     if (first) hashDo();
     $('dot').className = ''; draw(); alertsIn(); follow();
+    if (s.standby && s.standby !== standbySeen) { standbySeen = s.standby; if (!first) amb(true); }   // one already on offer when this page loads is not for it
     if (first) tellView(true);
   }, pic: onPic, clip: onClip, frames: onFrames, clipEnd: onClipEnd, nomedia: noMedia,
     test: { amb: function () { amb(true); }, wake: function () { amb(false); }, tab: tab, party: function () { party('24K', 'subscribers'); }, toast: function (t) { toast(t || 'Claude finished: Check it on the device', 5000); },
@@ -894,6 +958,20 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
     if (d.mute) { send({ t: 'mute' }); S.vol.muted = !S.vol.muted; return drawLaunch(); }
     if (d.vol) return knob(+d.vol);
     if (d.standby) return amb(true);
+    if (d.standbyall) { standbySeen = CID + Date.now().toString(36); send({ t: 'standbyAll', n: standbySeen }); return amb(true); }
+    if (d.auto != null) { S.settings.auto = d.auto === '1'; send({ t: 'auto', on: S.settings.auto }); return drawSheet(); }
+    if (d.answer != null && d.ask) {
+      i = ansOf(d.ask); i = i && i.a === d.answer ? '' : d.answer;           // tapping the answer already given takes it back
+      send({ t: 'answer', k: d.ask, a: i });
+      if (!S.board.answers) S.board.answers = {};
+      if (i) S.board.answers[d.ask] = { a: i, ago: 'now' }; else delete S.board.answers[d.ask];
+      return draw();                                                         // the lit answer is the acknowledgement: a toast would cover the buttons
+    }
+    if (d.music) {
+      send({ t: 'music', do: d.music });
+      if (d.music === 'playpause' && S.music) { S.music.playing = !S.music.playing; drawLaunch(); }
+      return;
+    }
     if (d.night != null) { S.settings.night = d.night === '1'; send({ t: 'night', on: S.settings.night }); return drawSheet(); }
     if (d.sound != null) { S.settings.sound = d.sound === '1'; send({ t: 'sound', on: S.settings.sound }); return drawSheet(); }
     if (d.reload) { send({ t: 'reload' }); return toast('Reloading'); }
@@ -903,10 +981,11 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
     }
   }, true);
   document.addEventListener('keydown', function (e) {
-    var k = e.key;
+    var k = e.key, back = k === 'Escape' || k === 'Backspace';
+    if (back && e.repeat) return;                             // a held Back button does its job once
     if (woke()) return;
     if (k >= '1' && k <= '4') tab(+k - 1);
-    else if (k === 'Escape' || k === 'Backspace') { if (sheetFn) closeSheet(); else tab(0); }
+    else if (back) { if (sheetFn) closeSheet(); else if (cur) tab(0); else amb(true); }   // Back closes a sheet, then goes Home, then (already Home) to standby
     else if (k === 'Enter') { if (S) { send({ t: 'mute' }); S.vol.muted = !S.vol.muted; showVol(); drawLaunch(); } }
     else if (k === 'm' || k === 'M') { if (S) { if (sheetFn === settingsSheet) closeSheet(); else showSheet('settings'); } }
     else if (INJ || !S) return;                               // the rest are for a real keyboard
