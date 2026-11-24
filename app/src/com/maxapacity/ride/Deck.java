@@ -824,19 +824,24 @@ final class Deck {
             if (w.file.isEmpty() || !w.gpx.isFile() || w.gpx.length() == 0) continue;
             w.mtimeSec = w.gpx.lastModified() / 1000;
             w.summaryName = w.file.replaceAll("\\.[A-Za-z0-9]+$", "") + ".json";
-            w.summary = summary(r);
+            w.summary = summary(r, Units.metric(app));
             out.add(w);
         }
         return out;
     }
 
-    /** The ride's numbers, sent beside its track so the Mac need not work them out again. */
-    static byte[] summary(JSONObject ride) {
+    /**
+     * The ride's numbers, sent beside its track so the Mac need not work them
+     * out again. The Deck shows the last ride from these, in the units the
+     * rider reads on this phone.
+     */
+    static byte[] summary(JSONObject ride, boolean metric) {
         JSONObject s = new JSONObject();
         try {
             s.put("app", "MAXAPACITY Ride");
+            s.put("units", metric ? "km" : "mi");
             String[] keep = {"file", "start", "distanceM", "movingMs", "elapsedMs", "topMps",
-                    "climbM", "stops", "leanLeft", "leanRight"};
+                    "climbM", "stops", "leanLeft", "leanRight", "battery"};
             for (String k : keep) {
                 if (ride.has(k)) s.put(k, ride.get(k));
             }

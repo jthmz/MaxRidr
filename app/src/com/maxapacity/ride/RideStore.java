@@ -100,6 +100,11 @@ final class RideStore {
                     .put("leanLeft", Math.round(state.maxLeanLeftDeg()))
                     .put("leanRight", Math.round(state.maxLeanRightDeg()))
                     .put("strava", strava ? STRAVA_PENDING : STRAVA_NONE);
+            // How full the battery was as the ride ended, when a real bike was
+            // linked and still answering. Left out otherwise, never guessed.
+            Bike bike = Bike.get(c);
+            AntBms.Data battery = bike.demo() ? null : bike.battery();
+            if (battery != null) ride.put("battery", battery.soc);
             JSONArray rides = load(c);
             rides.put(ride);
             save(c, rides);

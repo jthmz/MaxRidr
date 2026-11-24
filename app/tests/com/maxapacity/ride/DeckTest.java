@@ -88,7 +88,7 @@ public class DeckTest {
       rides.put(new JSONObject().put("start", start).put("file", gpx.getName())
           .put("distanceM", 9650.0 + 4100 * r).put("movingMs", 1490000L).put("elapsedMs", 1620000L)
           .put("topMps", 15.1).put("climbM", 96.0).put("stops", 2).put("leanLeft", 31).put("leanRight", 27)
-          .put("strava", "uploaded"));
+          .put("battery", 64).put("strava", "uploaded"));
     }
     try (FileOutputStream out = new FileOutputStream(new File(dir, "index.json"))) {
       out.write(rides.toString().getBytes(StandardCharsets.UTF_8));
@@ -136,6 +136,8 @@ public class DeckTest {
           fake.stored.get(name.replace(".gpx", ".json")), StandardCharsets.UTF_8));
       assertEquals(name, numbers.getString("file"));
       assertEquals(31, numbers.getInt("leanLeft"));
+      assertEquals("the battery as the ride ended", 64, numbers.getInt("battery"));
+      assertEquals("the units the rider reads", Units.metric(c) ? "km" : "mi", numbers.getString("units"));
       assertFalse("how it fared on Strava is the phone's business", numbers.has("strava"));
     }
     for (String arrival : fake.arrivals) assertTrue(arrival, arrival.startsWith("ride from "));
