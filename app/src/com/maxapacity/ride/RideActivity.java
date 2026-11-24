@@ -113,6 +113,7 @@ public final class RideActivity extends Activity
     private BikePanel bike;
     private TunePanel tune;
     private DeckView deck;
+    private FullDeck fullDeck;
     /** The "looking for your Deck" sheet while it is open, so finding the Deck can move it on. */
     private Sheet deckLooking;
     private final Deck.Listener deckChanged = this::onDeckChanged;
@@ -249,6 +250,8 @@ public final class RideActivity extends Activity
                 return tune;
             case "deck":
                 return deck;
+            case "fulldeck":
+                return fullDeck;
             case "settings":
                 return settings;
             default:
@@ -370,6 +373,11 @@ public final class RideActivity extends Activity
     }
 
     @Override
+    public void showFullDeck() {
+        fullDeck.open();
+    }
+
+    @Override
     public void listen() {
         try {
             startActivityForResult(new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
@@ -474,6 +482,9 @@ public final class RideActivity extends Activity
                         if (!ok && message == null) say("The Deck went out of reach");
                     }));
         }
+        sheet.item(Icons.MONITOR, "Open the full Deck",
+                "Everything the Car Thing shows, with all its controls", false,
+                this::showFullDeck);
         sheet.item(Icons.INFO, "Link report", "What this phone sees, to share if you need help",
                 false, this::deckReportSheet);
         // The cable needs no pairing, so there is nothing to forget.
@@ -687,6 +698,7 @@ public final class RideActivity extends Activity
     private void onDeckChanged() {
         settings.refresh();
         deck.linkChanged();
+        fullDeck.linkChanged();
         Deck found = Deck.get(this);
         // The first time a Deck turns up, say so: nobody should have to go looking for it.
         if (found.state() == Deck.FOUND
@@ -1166,6 +1178,7 @@ public final class RideActivity extends Activity
         bike = new BikePanel(this, this);
         tune = new TunePanel(this, this);
         deck = new DeckView(this, this);
+        fullDeck = new FullDeck(this, this);
         settings = new SettingsPanel(this, this);
         panels.add(drawer);
         panels.add(rides);
@@ -1174,6 +1187,7 @@ public final class RideActivity extends Activity
         panels.add(bike);
         panels.add(tune);
         panels.add(deck);
+        panels.add(fullDeck);
         panels.add(settings);
         for (Panel p : panels) {
             frame.addView(p, new FrameLayout.LayoutParams(

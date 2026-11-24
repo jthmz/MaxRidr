@@ -166,7 +166,7 @@ public class ScreensTest {
   }
 
   void everyPanel(String state) throws Exception {
-    for (String n : new String[] {"drawer", "rides", "copilot", "bike", "tune", "deck", "settings"}) {
+    for (String n : new String[] {"drawer", "rides", "copilot", "bike", "tune", "deck", "fullDeck", "settings"}) {
       panel(n).open();
       run(400);
       sweep(n + " (" + state + ")");
@@ -308,6 +308,17 @@ public class ScreensTest {
       idle(200);
     }
     sweep("deck linked, showing the desk");
+    // The whole Deck is one tap from the glance, let in with the key this phone already holds.
+    tap("Full Deck");
+    org.junit.Assert.assertTrue(panel("fullDeck").isOpen());
+    android.webkit.WebView page = find(panel("fullDeck"), android.webkit.WebView.class, null);
+    org.junit.Assert.assertNotNull("the Deck's own page is on screen", page);
+    org.junit.Assert.assertEquals("http://" + fakeDeck.address() + "/", Shadows.shadowOf(page).getLastLoadedUrl());
+    org.junit.Assert.assertEquals(fakeDeck.key, Shadows.shadowOf(page).getLastAdditionalHttpHeaders().get("x-deck-token"));
+    sweep("full deck, linked");
+    panel("fullDeck").close();
+    idle(400);
+    org.junit.Assert.assertNull("the page is let go when the screen closes", find(panel("fullDeck"), android.webkit.WebView.class, null));
     a.editDeckConnection();
     idle(400);
     sweep("deck linked sheet");
@@ -553,7 +564,7 @@ public class ScreensTest {
   /** Which screen, if any, is on top. */
   String openScreen() throws Exception {
     String open = null;
-    for (String n : new String[] {"drawer", "rides", "copilot", "bike", "tune", "deck", "settings"}) {
+    for (String n : new String[] {"drawer", "rides", "copilot", "bike", "tune", "deck", "fullDeck", "settings"}) {
       if (panel(n).isOpen()) {
         org.junit.Assert.assertNull("only one screen open at a time", open);
         open = n;
@@ -565,7 +576,7 @@ public class ScreensTest {
   @Test public void aLaunchCanNameTheScreenToOpen() throws Exception {
     start();
     String[][] names = {{"apps", "drawer"}, {"rides", "rides"}, {"copilot", "copilot"},
-        {"bike", "bike"}, {"tune", "tune"}, {"deck", "deck"}, {"settings", "settings"}};
+        {"bike", "bike"}, {"tune", "tune"}, {"deck", "deck"}, {"fulldeck", "fullDeck"}, {"settings", "settings"}};
     for (String[] n : names) {
       // The on-phone test script does this once a second or so, over adb.
       a.onNewIntent(new android.content.Intent(android.content.Intent.ACTION_MAIN).putExtra("open", n[0]));
