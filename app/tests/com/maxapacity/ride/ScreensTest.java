@@ -38,6 +38,9 @@ import java.util.concurrent.TimeUnit;
  * screen whenever the keyboard opened: squeezed to a few pixels, it tried to
  * build a glow with no radius. That is exactly the kind of fault a phone
  * finds in seconds and a compile never does.
+ *
+ * Each screen is also kept as a picture at full phone size, under
+ * build/screens/, so the design can be looked over without a phone in hand.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 35, qualifiers = "w393dp-h851dp-440dpi")
@@ -46,6 +49,12 @@ public class ScreensTest {
 
   static final int[] HEIGHTS = {851, 700, 560, 520, 500, 480, 440, 400, 360, 300, 220, 120, 40};
   static final int[] WIDTHS = {393, 320, 280, 600};
+
+  /** Where a picture of each screen is kept. */
+  static final File PICTURES = new File(System.getProperty("ride.screens", "build/screens"));
+
+  @org.junit.Rule public org.junit.rules.TestName test = new org.junit.rules.TestName();
+  int pictures;
 
   Context c;
   ActivityController<RideActivity> controller;
@@ -108,6 +117,10 @@ public class ScreensTest {
   }
 
   void drawAt(int wDp, int hDp, String what) {
+    drawAt(wDp, hDp, what, false);
+  }
+
+  void drawAt(int wDp, int hDp, String what, boolean keep) {
     float d = a.getResources().getDisplayMetrics().density;
     int w = Math.round(wDp * d);
     int h = Math.round(hDp * d);
@@ -119,6 +132,7 @@ public class ScreensTest {
       run(200);                         // the bike keeps talking while the screen changes
       Bitmap b = Bitmap.createBitmap(w, Math.max(1, h), Bitmap.Config.ARGB_8888);
       v.draw(new Canvas(b));
+      if (keep) keep(b, what);
       b.recycle();
     } catch (RuntimeException e) {
       throw new AssertionError(what + " at " + wDp + "x" + hDp + "dp: " + e, e);
@@ -127,7 +141,22 @@ public class ScreensTest {
 
   void sweep(String what) {
     for (int w : WIDTHS) for (int h : HEIGHTS) drawAt(w, h, what);
-    drawAt(393, 851, what);
+    drawAt(393, 851, what, true);
+  }
+
+  /** build/screens/<test>/<nn>-<what>.png. A convenience: failing to write one fails nothing. */
+  void keep(Bitmap b, String what) {
+    try {
+      File dir = new File(PICTURES, test.getMethodName());
+      dir.mkdirs();
+      String name = String.format(java.util.Locale.US, "%02d-%s.png", ++pictures,
+          what.replaceAll("[^A-Za-z0-9]+", "-").replaceAll("^-|-$", ""));
+      try (FileOutputStream out = new FileOutputStream(new File(dir, name))) {
+        b.compress(Bitmap.CompressFormat.PNG, 100, out);
+      }
+    } catch (Exception e) {
+      // The drawing is the test; the picture is for people.
+    }
   }
 
   Panel panel(String name) throws Exception {
