@@ -952,6 +952,22 @@ public class ScreensTest {
     org.junit.Assert.assertNull(openScreen());
   }
 
+  /** Settings ends with the way to the app's own page on the site, opened in the phone's browser. */
+  @Test public void settingsOpensTheAppsPageOnTheSite() throws Exception {
+    start();
+    a.onNewIntent(new android.content.Intent(android.content.Intent.ACTION_MAIN).putExtra("open", "settings"));
+    idle(400);
+    org.junit.Assert.assertEquals("settings", openScreen());
+    // Anything started on the way here is not what this tap started.
+    while (Shadows.shadowOf(a).getNextStartedActivity() != null) { }
+    tap("About and help");
+    android.content.Intent started = Shadows.shadowOf(a).getNextStartedActivity();
+    org.junit.Assert.assertNotNull("a page was opened", started);
+    org.junit.Assert.assertEquals(android.content.Intent.ACTION_VIEW, started.getAction());
+    org.junit.Assert.assertEquals("https://maxapacitybikes.com/apps/ride", started.getDataString());
+    org.junit.Assert.assertEquals("the screen stays where it was", "settings", openScreen());
+  }
+
   @Test public void aFreshStartCanNameTheScreenToo() throws Exception {
     controller = Robolectric.buildActivity(RideActivity.class,
         new android.content.Intent(android.content.Intent.ACTION_MAIN).putExtra("open", "rides"));

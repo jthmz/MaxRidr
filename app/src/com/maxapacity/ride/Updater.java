@@ -41,7 +41,10 @@ import java.util.concurrent.Executors;
  * downloads a newer APK, checks its SHA-256 against the manifest and hands it
  * to the system installer.
  *
- * The repository is public, so the phone needs nothing to read it.
+ * The repository is public, so the phone needs nothing to read it. The app's
+ * page on the website reads the same release to show the current version
+ * beside the download, so the manifest's shape is shared with it (see "On
+ * the website" in the README).
  *
  * The first update on a phone needs one tap on the system's install prompt.
  * After that this app is its own "installer of record", which lets Android

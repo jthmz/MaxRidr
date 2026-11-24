@@ -30,6 +30,34 @@ Two halves that find each other:
 
 The app is plain Android SDK, Java, no libraries. Android 12 or newer.
 
+## On the website
+
+Both halves have a page on [maxapacitybikes.com/apps](https://maxapacitybikes.com/apps):
+what each does, how to set it up, and how they reach each other and the
+Studio (the tool the channel's videos are cut with, kept in a private
+repository).
+
+- [MAXAPACITY Ride](https://maxapacitybikes.com/apps/ride) shows the current
+  version, its size and its checksum, and offers the download. It reads them
+  in the visitor's browser from the `ride-ota` release, the same listing an
+  installed phone updates from. **That listing now has two readers.** A change
+  to its shape (the manifest's fields, the file's name, the tag) has to be
+  made in three places together: `Updater.java` here, and `src/lib/ride-release.ts`
+  and its test fixture in the website's repository.
+- [MAXAPACITY Deck](https://maxapacitybikes.com/apps/deck) offers this
+  repository as a ZIP and gives the setup steps from `deck/README.md`.
+- In the app, Settings ends with "About and help", which opens the app's page.
+  The row above it, "MAXAPACITY website", opens the site's home page.
+- [maxapacitybikes.com/apps.json](https://maxapacitybikes.com/apps.json) is the
+  same directory for a program: where each app lives, how to get it, how to
+  reach it (the Deck's port, its Bonjour name, its key header) and every link
+  between the apps. It is schema 1 and never drops a field.
+
+The words on those pages live in the website's repository (`src/data/apps.ts`
+and `src/data/apps-directory.json` in `jthmz/maxapacity`). They were written
+from this README and `deck/README.md`, so when a change here alters what a
+rider or a Deck owner sees, change the page with it.
+
 ## How the phone and the Deck link
 
 Nobody types an address. The app looks for the Deck by itself: down a USB
@@ -148,7 +176,8 @@ Phones update quietly, so the app tells the rider what an update brought: a
 written by hand, at the top of `NOTES` in
 [WhatsNew.java](app/src/com/maxapacity/ride/WhatsNew.java); the comment there
 says how. A build with no new note says nothing, and Settings keeps the
-earlier notes. The same Settings group has the tour and the website button.
+earlier notes. The same Settings group has the tour and the two ways to the
+website.
 
 Builds are signed with a key the workflow creates on its first run and keeps
 on a draft release. Android only installs an update signed with the same key

@@ -73,8 +73,9 @@ final class WhatsNew {
                 new Item(Icons.BELL, "What's new",
                         "After an update that brings something new, a note like this one says"
                                 + " what. Settings keeps the earlier ones."),
-                new Item(Icons.EXTERNAL_LINK, "MAXAPACITY website",
-                        "One tap away, at the bottom of Settings.")),
+                new Item(Icons.EXTERNAL_LINK, "Help and the MAXAPACITY website",
+                        "Settings ends with a button to the website and About and help, the"
+                                + " app's own page of setup and answers.")),
         new Note(2, "November 2026",
                 new Item(Icons.SLIDERS_HORIZONTAL, "Whole tunes in one tap",
                         "On the Tune screen, Tunes loads Calm, Balanced or Aggressive, made to"

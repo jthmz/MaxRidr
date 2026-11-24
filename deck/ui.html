@@ -759,7 +759,9 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
   // sheets
   function settingsSheet() {
     var d = S.disks || [], st = S.settings || {}, h, g = '', i, ld = S.load || 0;
-    h = '<div class="set"><div class="lab">Screen</div><div><span class="btn xs tap' + (st.night ? '' : ' on') + '" data-night="0">Day</span><span class="btn xs tap' + (st.night ? ' on' : '') + '" data-night="1">Night</span></div></div>' +
+    // Standby sits at the end of the Screen row: it puts this screen on the standby screen now, without waiting out the idle time
+    h = '<div class="set" style="grid-template-columns:210px 1fr auto"><div class="lab">Screen</div><div><span class="btn xs tap' + (st.night ? '' : ' on') + '" data-night="0">Day</span><span class="btn xs tap' + (st.night ? ' on' : '') + '" data-night="1">Night</span></div>' +
+      '<div><span class="btn xs tap" data-standby="1" style="margin-right:0">Standby</span></div></div>' +
       '<div class="set"><div class="lab">Alert sound</div><div><span class="btn xs tap' + (st.sound ? ' on' : '') + '" data-sound="1">On</span><span class="btn xs tap' + (st.sound ? '' : ' on') + '" data-sound="0">Off</span></div></div>';
     for (i = 0; i < d.length; i++)
       g += '<div>' + ring(d[i].ok ? d[i].pct : 0, 96, 9, d[i].pct >= 92 ? 'r' : d[i].pct >= 80 ? '' : 'g', d[i].ok ? d[i].pct + '<small>%</small>' : '–', 28) + '<div class="lab">' + esc(d[i].label) + '</div><div class="gl dim">' + (d[i].ok ? num(d[i].freeGB) + ' GB free' : 'not connected') + '</div></div>';
@@ -891,6 +893,7 @@ body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-
     if (d.openowed) { send({ t: 'owed', id: d.openowed }); return toast('Opening on YouTube'); }
     if (d.mute) { send({ t: 'mute' }); S.vol.muted = !S.vol.muted; return drawLaunch(); }
     if (d.vol) return knob(+d.vol);
+    if (d.standby) return amb(true);
     if (d.night != null) { S.settings.night = d.night === '1'; send({ t: 'night', on: S.settings.night }); return drawSheet(); }
     if (d.sound != null) { S.settings.sound = d.sound === '1'; send({ t: 'sound', on: S.settings.sound }); return drawSheet(); }
     if (d.reload) { send({ t: 'reload' }); return toast('Reloading'); }
