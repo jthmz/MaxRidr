@@ -66,6 +66,19 @@ final class WhatsNew {
 
     /** Newest first. */
     static final Note[] NOTES = {
+        new Note(4, "November 2026",
+                new Item(Icons.ROTATE_CCW, "Arctic Leopard XE Pro R",
+                        "The app can now tune a stock XE Pro R. On the Tune screen, Tunes, then"
+                                + " MAXAPACITY bikes has its settings as delivered, to put a"
+                                + " changed bike back."),
+                new Item(Icons.GAUGE, "Top speed keeps to what the bike came with",
+                        "A speed mode can be lowered and brought back up, but never set faster"
+                                + " than the controller was when the app first met it."),
+                new Item(Icons.CIRCLE_STOP, "Gentler regen",
+                        "Tune ideas has a new wish, for a brake that grabs less."),
+                new Item(Icons.SLIDERS_HORIZONTAL, "A tidier Tune screen",
+                        "The arrows line up, units read at a glance, and the fields you type"
+                                + " in are full size again.")),
         new Note(3, "November 2026",
                 new Item(Icons.MAP, "A tour of the home screen",
                         "A minute on where everything is, for a new rider or a refresher."
@@ -169,7 +182,7 @@ final class WhatsNew {
                 "This phone has version " + Updater.versionName(c) + ". The newest changes are"
                         + " first.")
                 .view(list(c, all, true))
-                .action("Done", Ui.PRIMARY, true, null);
+                .action("Done", Ui.SECONDARY, true, null);
     }
 
     private static LinearLayout list(Context c, List<Note> notes, boolean dated) {
