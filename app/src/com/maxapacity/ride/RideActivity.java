@@ -59,6 +59,7 @@ public final class RideActivity extends Activity
     private static final int REQ_NOTIFY = 2;
     private static final int REQ_SPEECH = 3;
     private static final int REQ_BLUETOOTH = 4;
+    private static final int REQ_SMS = 5;
 
     /** Sustained speed that starts a ride on its own (about 11 km/h, 7 mph). */
     private static final float AUTO_START_MPS = 3f;
@@ -464,6 +465,40 @@ public final class RideActivity extends Activity
     }
 
     @Override
+    public void editCrashAlert() {
+        final EditText number = Ui.input(this, "Phone number", false);
+        number.setInputType(InputType.TYPE_CLASS_PHONE);
+        number.setText(prefs.getString(RideService.CRASH_CONTACT, ""));
+        new Sheet(frame, "Crash alert",
+                "If a hard hit during a ride is followed by the bike not moving, the phone"
+                        + " sounds an alarm for 30 seconds. Tap I'm OK to cancel. Otherwise it"
+                        + " texts your location to this number. It needs a SIM that can send"
+                        + " texts, and it can miss a crash or raise a false alarm. Leave the"
+                        + " number empty to turn it off.")
+                .view(number)
+                .action("Cancel", Ui.SECONDARY, true, null)
+                .action("Save", Ui.PRIMARY, true, () -> {
+                    String n = number.getText().toString().trim();
+                    prefs.edit().putString(RideService.CRASH_CONTACT, n).apply();
+                    settings.refresh();
+                    if (n.isEmpty()) return;
+                    List<String> wanted = new ArrayList<>();
+                    if (checkSelfPermission(Manifest.permission.SEND_SMS)
+                            != PackageManager.PERMISSION_GRANTED) {
+                        wanted.add(Manifest.permission.SEND_SMS);
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                            && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                            != PackageManager.PERMISSION_GRANTED) {
+                        wanted.add(Manifest.permission.POST_NOTIFICATIONS);
+                    }
+                    if (wanted.isEmpty()) say("Crash alert is on from your next ride");
+                    else requestPermissions(wanted.toArray(new String[0]), REQ_SMS);
+                })
+                .show();
+    }
+
+    @Override
     public void connectStrava() {
         final EditText id = Ui.input(this, "Client ID", false);
         id.setInputType(InputType.TYPE_CLASS_NUMBER);
@@ -571,6 +606,18 @@ public final class RideActivity extends Activity
             for (int r : grantResults) granted &= r == PackageManager.PERMISSION_GRANTED;
             if (granted && then != null) then.run();
             else if (!granted) say("Allow Nearby devices to link the battery and controller");
+            return;
+        }
+        if (requestCode == REQ_SMS) {
+            if (checkSelfPermission(Manifest.permission.SEND_SMS)
+                    == PackageManager.PERMISSION_GRANTED) {
+                say("Crash alert is on from your next ride");
+            } else {
+                // Without it nothing could be sent, so do not leave it looking on.
+                prefs.edit().remove(RideService.CRASH_CONTACT).apply();
+                settings.refresh();
+                say("Crash alert is off: allow SMS so it can text your contact");
+            }
             return;
         }
         if (requestCode != REQ_LOCATION) return;

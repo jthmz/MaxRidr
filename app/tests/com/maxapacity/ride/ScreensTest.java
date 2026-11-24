@@ -162,7 +162,7 @@ public class ScreensTest {
       rides.put(new JSONObject().put("start", start).put("file", gpx.getName())
           .put("distanceM", 9650.0 + 4100 * r).put("movingMs", 1490000L + 600000L * r)
           .put("elapsedMs", 1620000L + 700000L * r).put("topMps", 15.1 + r)
-          .put("climbM", 96.0 + 40 * r).put("stops", 2 + r).put("strava", strava[r]));
+          .put("climbM", 96.0 + 40 * r).put("stops", 2 + r).put("leanLeft", 31 - r).put("leanRight", 27 + r).put("strava", strava[r]));
     }
     try (FileOutputStream out = new FileOutputStream(new File(dir, "index.json"))) {
       out.write(rides.toString().getBytes(StandardCharsets.UTF_8));
@@ -204,6 +204,11 @@ public class ScreensTest {
     a.editUpdateToken();
     idle(400);
     sweep("update token sheet");
+    Sheet.dismissCurrent();
+    idle(400);
+    a.editCrashAlert();
+    idle(400);
+    sweep("crash alert sheet");
     Sheet.dismissCurrent();
     idle(400);
     a.say("A message long enough to wrap onto a second line on a small phone", "UNDO", () -> { });

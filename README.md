@@ -3,7 +3,9 @@
 MAXAPACITY Ride: an Android home screen for the bike phone. GPS speedometer,
 automatic ride recording with history and Strava upload, a Bluetooth link to
 the bike (ANT BMS battery, Fardriver controller, with tuning), an app drawer,
-Copilot, a Deck mode, and over-the-air updates.
+Copilot, a Deck mode, and over-the-air updates. Each ride records its furthest
+lean left and right, and an optional crash alert texts your location to a
+contact if a hard hit is followed by the bike not moving.
 
 Plain Android SDK, Java, no libraries. Android 12 or newer.
 

@@ -94,6 +94,8 @@ final class RideStore {
                     .put("topMps", state.topSpeedMps())
                     .put("climbM", state.climbM())
                     .put("stops", state.stops())
+                    .put("leanLeft", Math.round(state.maxLeanLeftDeg()))
+                    .put("leanRight", Math.round(state.maxLeanRightDeg()))
                     .put("strava", strava ? STRAVA_PENDING : STRAVA_NONE);
             JSONArray rides = load(c);
             rides.put(ride);
