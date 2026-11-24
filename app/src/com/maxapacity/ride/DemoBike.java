@@ -223,7 +223,8 @@ final class DemoBike {
      * settings around them are left as they are.
      */
     static void applyLive(int[] ram, Moment m) {
-        ram[0xE2] = (ram[0xE2] & ~3) | (m.rpm > 0 ? 1 : 0);
+        // Forward, and the controller's own "wheel is rolling" flag, while it moves.
+        ram[0xE2] = (ram[0xE2] & ~0x23) | (m.rpm > 0 ? 0x21 : 0);
         ram[0xE3] = m.braking ? 0x8000 : 0;
         int poles = ram[0x14] & 0xFF;
         ram[0xE5] = (poles >= 16 ? m.rpm * poles / 4 : m.rpm) & 0xFFFF;

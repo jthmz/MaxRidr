@@ -11,6 +11,7 @@ import android.bluetooth.BluetoothManager;
 import android.bluetooth.BluetoothProfile;
 import android.bluetooth.le.BluetoothLeScanner;
 import android.bluetooth.le.ScanCallback;
+import android.bluetooth.le.ScanFilter;
 import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
 import android.content.Context;
@@ -19,6 +20,8 @@ import android.os.Handler;
 import android.os.Looper;
 
 import java.util.ArrayDeque;
+import java.util.Collections;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -116,6 +119,17 @@ class BleLink {
      * @return the handle to stop with, or null if scanning could not start
      */
     static ScanCallback scan(Context c, final Finder finder) {
+        return scan(c, null, finder);
+    }
+
+    /**
+     * @param onlyName when not null, only a device advertising exactly this
+     *        name is reported. Android silences a scan that asks for
+     *        everything once the screen is off, but lets one that names what
+     *        it wants carry on, which is what finding a linked bike again
+     *        with the phone in a pocket needs.
+     */
+    static ScanCallback scan(Context c, String onlyName, final Finder finder) {
         BluetoothAdapter a = adapter(c);
         if (a == null) return null;
         final Handler main = new Handler(Looper.getMainLooper());
@@ -132,7 +146,9 @@ class BleLink {
         try {
             BluetoothLeScanner scanner = a.getBluetoothLeScanner();
             if (scanner == null) return null;
-            scanner.startScan(null, new ScanSettings.Builder()
+            List<ScanFilter> only = onlyName == null ? null : Collections.singletonList(
+                    new ScanFilter.Builder().setDeviceName(onlyName).build());
+            scanner.startScan(only, new ScanSettings.Builder()
                     .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(), cb);
             return cb;
         } catch (SecurityException | IllegalStateException e) {
@@ -164,7 +180,7 @@ class BleLink {
             fail(mine, why);
             return;
         }
-        scan = scan(context, (found, address) -> {
+        scan = scan(context, name, (found, address) -> {
             if (mine != session || scan == null || !found.equals(name)) return;
             stopScan(context, scan);
             scan = null;

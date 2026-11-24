@@ -323,6 +323,273 @@ public class BikeSimTest {
     assertEquals("bits belonging to other settings untouched", word & others, now & others);
   }
 
+
+  // ---- Controller: the rules a change has to pass ----------------------------
+
+  int raw(String key) {
+    Fardriver.Param p = Fardriver.param(key);
+    return p.extract(ctl.ram[p.addr]);
+  }
+
+  @Test public void aStalledStreamBlocksAChangeEvenIfTheLastReadingSaidStopped() {
+    linkController();
+    // Notifications stop; meanwhile the wheel starts turning, unseen.
+    ShadowLooper.idleMainLooper(4000, TimeUnit.MILLISECONDS);
+    ctl.ram[0xE5] = 480;
+    assertNotNull("the last reading is still on show", bike.controller());
+    Result r = new Result();
+    bike.tryValues(change("accel", 72), r);
+    assertEquals(Boolean.FALSE, r.ok);
+    assertTrue(r.message, r.message.contains("fresh reading"));
+    assertTrue(ctl.settingWrites().isEmpty());
+  }
+
+  @Test public void theControllersOwnRollingFlagAndAnOpenThrottleBlockAChange() {
+    linkController();
+    ctl.ram[0xE2] |= 0x20;            // rolling, though rpm still reads 0
+    run(600);
+    assertTrue(bike.writeBlocker(), bike.writeBlocker().contains("standstill"));
+    ctl.ram[0xE2] &= ~0x20;
+    ctl.ram[0x82] = 380;              // 3.8 V of throttle, held against the brake
+    ctl.ram[0xE3] = 0x8000;
+    run(600);
+    assertEquals("Close the throttle first", bike.writeBlocker());
+    Result r = new Result();
+    bike.tryValues(change("accel", 72), r);
+    assertEquals(Boolean.FALSE, r.ok);
+    assertTrue(ctl.settingWrites().isEmpty());
+  }
+
+  @Test public void aFaultThatFlickersDuringTheWatchStillUndoesTheChange() {
+    linkController();
+    Result r = new Result();
+    bike.tryValues(change("accel", 72), r);
+    run(2000);
+    assertEquals(r.calls.toString(), Boolean.TRUE, r.ok);
+    ctl.ram[0xE3] = 0x0100;           // one pass of the stream with a fault, then gone
+    ctl.streamCycle();
+    ctl.ram[0xE3] = 0;
+    run(10000);
+    assertEquals(r.calls.toString(), 2, r.calls.size());
+    assertTrue(r.message, r.message.contains("so it was undone"));
+    assertEquals(64, raw("accel"));
+    assertEquals(Bike.TUNE_IDLE, bike.tuneState());
+  }
+
+  @Test public void aFaultPartWayThroughSeveralChangesPutsThemAllBack() {
+    linkController();
+    Result r = new Result();
+    bike.tryValues(change("accel", 72, "decel", 80, "release", 8), r);
+    run(1000);
+    assertEquals(Bike.APPLYING, bike.tuneState());
+    ctl.ram[0xE3] = 0x0100;
+    run(400);
+    ctl.ram[0xE3] = 0;
+    run(30000);
+    assertEquals(r.calls.toString(), Boolean.FALSE, r.ok);
+    assertTrue(r.message, r.message.contains("raised a fault during the change"));
+    assertTrue(r.message, r.message.contains("Nothing was changed"));
+    assertEquals(Bike.TUNE_IDLE, bike.tuneState());
+    assertArrayEquals("every setting is as it was", ctl.flash, withoutLive(ctl.ram));
+  }
+
+  /** The controller's memory with its live words set to what the saved copy holds, to compare settings. */
+  int[] withoutLive(int[] ram) {
+    int[] copy = ram.clone();
+    for (int a = 0xE2; a <= 0xF9; a++) copy[a] = ctl.flash[a];
+    copy[0x82] = ctl.flash[0x82];
+    return copy;
+  }
+
+  @Test public void aFaultWithTheWheelTurningIsUndoneAtOnce() {
+    linkController();
+    Result r = new Result();
+    bike.tryValues(change("phase", 1200), r);
+    run(2000);
+    assertEquals(r.calls.toString(), Boolean.TRUE, r.ok);
+    ctl.ram[0xE5] = 900;              // riding off, and then a fault
+    ctl.ram[0xE3] = 0x0100;
+    run(8000);
+    assertTrue(r.message, r.message.contains("so it was undone"));
+    assertEquals(1400, raw("phase"));
+    assertEquals(Bike.TUNE_IDLE, bike.tuneState());
+  }
+
+  @Test public void aWriteThatLandsWithoutBeingReadBackIsStillPutBack() {
+    linkController();
+    Result r = new Result();
+    bike.tryValues(change("line", 440), r);
+    assertEquals("the write landed", 440, ctl.ram[0x19]);
+    // ...but notifications stop before it can be read back.
+    ShadowLooper.idleMainLooper(7000, TimeUnit.MILLISECONDS);
+    run(8000);
+    assertEquals(r.calls.toString(), Boolean.FALSE, r.ok);
+    assertTrue(r.message, r.message.contains("Nothing was changed"));
+    assertEquals("and this time that is true", 520, ctl.ram[0x19]);
+    assertEquals(Bike.TUNE_IDLE, bike.tuneState());
+  }
+
+  @Test public void saveOnlyKeepsWhatIsKnownToBeOnTrial() {
+    linkController();
+    Result r = new Result();
+    bike.tryValues(change("line", 440), r);
+    run(9000);
+    assertEquals(r.calls.toString(), Boolean.TRUE, r.ok);
+    int saves = ctl.ram[0x05];
+    // The bike is switched off and on behind the app's back: the trial is gone.
+    ctl.powerCycle();
+    run(1000);
+    Result s = new Result();
+    bike.save(s);
+    run(6000);
+    assertEquals(Boolean.FALSE, s.ok);
+    assertTrue(s.message, s.message.contains("no longer holds the values on trial"));
+    assertEquals("nothing was saved", saves, ctl.ram[0x05]);
+  }
+
+  @Test public void saveIsRefusedWhileARideIsRecording() {
+    linkController();
+    Result r = new Result();
+    bike.tryValues(change("accel", 72), r);
+    run(9000);
+    assertEquals(r.calls.toString(), Boolean.TRUE, r.ok);
+    int saves = ctl.ram[0x05];
+    RideState.get().start();
+    try {
+      Result s = new Result();
+      bike.save(s);
+      run(3000);
+      assertEquals(Boolean.FALSE, s.ok);
+      assertTrue(s.message, s.message.contains("End the ride"));
+      assertEquals(saves, ctl.ram[0x05]);
+    } finally {
+      RideState.get().stop();
+    }
+  }
+
+  @Test public void whatAVerifiedTunerRefusesIsRefusedHere() {
+    linkController();
+    Object[][] refused = {
+        {"faster than the controller's own speed limiter", change("high_rpm", 12000)},
+        {"low gear above mid", change("low_rpm", 5000)},
+        {"mid gear above high", change("mid_rpm", 4300)},
+        {"regen above its own maximum", change("regen", 10)},
+        {"regen on throttle release", change("regen_mode", 3)},
+        {"the undocumented regen mode", change("regen_mode", 0)},
+        {"acceleration below the official app's floor", change("accel", 0)},
+        {"deceleration below the official app's floor", change("decel", 2)},
+        {"no battery current at all", change("line", 0)},
+    };
+    for (Object[] c : refused) {
+      Result r = new Result();
+      @SuppressWarnings("unchecked") Map<String, Integer> change = (Map<String, Integer>) c[1];
+      bike.tryValues(change, r);
+      run(1000);
+      assertEquals((String) c[0], Boolean.FALSE, r.ok);
+      assertTrue((String) c[0] + ": " + r.message, r.message.contains("Nothing was changed"));
+      assertTrue((String) c[0], ctl.settingWrites().isEmpty());
+      assertEquals(Bike.TUNE_IDLE, bike.tuneState());
+    }
+    assertEquals("the limiter is the ceiling for every gear", 6000, bike.ceiling(Fardriver.param("high_rpm")));
+  }
+
+  @Test public void gearSpeedsNeverPassThroughAForbiddenOrderOnTheWay() {
+    linkController();
+    // All three go up past where the next one stood: top first, or low would overtake mid.
+    Result up = new Result();
+    bike.tryValues(change("low_rpm", 3000, "mid_rpm", 4400, "high_rpm", 5000), up);
+    run(12000);
+    assertEquals(up.calls.toString(), Boolean.TRUE, up.ok);
+    assertEquals(Arrays.asList("15=5000", "2A=4400", "28=3000"), ctl.settingWrites());
+    ctl.written.clear();
+    // And back down: bottom first.
+    Result down = new Result();
+    bike.tryValues(change("high_rpm", 4200, "mid_rpm", 2800, "low_rpm", 1800), down);
+    run(12000);
+    assertEquals(down.calls.toString(), Boolean.TRUE, down.ok);
+    assertEquals(Arrays.asList("28=1800", "2A=2800", "15=4200"), ctl.settingWrites());
+  }
+
+  @Test public void ceilingsBelongToTheControllerNotToItsBluetoothName() {
+    // A big controller first: 300 A from the battery.
+    ctl.ram[0x19] = 1200;
+    ctl.flash[0x19] = 1200;
+    linkController();
+    Fardriver.Param line = Fardriver.param("line");
+    assertEquals(1200, bike.ceiling(line));
+    // The same Bluetooth module on a smaller controller: its own serial, its own 130 A.
+    ctl.drop();
+    ctl.ram[0x19] = 520;
+    ctl.flash[0x19] = 520;
+    ctl.ram[0xA9] = 0x3939;
+    ctl.flash[0xA9] = 0x3939;
+    run(20000);
+    assertNotNull("linked again", bike.controller());
+    assertNull(bike.writeBlocker(), bike.writeBlocker());
+    assertEquals("the small one keeps its own ceiling", 520, bike.ceiling(line));
+    Result r = new Result();
+    bike.tryValues(change("line", 1200), r);
+    run(2000);
+    assertEquals(Boolean.FALSE, r.ok);
+    assertTrue(ctl.settingWrites().isEmpty());
+  }
+
+  @Test public void aControllerShippedWithMoreRegenThanTheAppOffersStillTunes() {
+    ctl.ram[0x30] = 25;               // seen on a stock BJ72V250
+    ctl.flash[0x30] = 25;
+    ctl.ram[0x31] = 30;
+    ctl.flash[0x31] = 30;
+    linkController();                 // which asserts tuning is not locked
+    assertEquals("it may keep what it came with", 25, bike.ceiling(Fardriver.param("regen")));
+    assertEquals(30, bike.ceiling(Fardriver.param("regen_max")));
+    Result r = new Result();
+    bike.tryValues(change("regen", 26), r);
+    run(1000);
+    assertEquals("but not be raised past it", Boolean.FALSE, r.ok);
+    Result lower = new Result();
+    bike.tryValues(change("regen", 12), lower);
+    run(9000);
+    assertEquals(lower.calls.toString(), Boolean.TRUE, lower.ok);
+    assertEquals(12, ctl.ram[0x30]);
+  }
+
+  @Test public void endingTheDemoPartWayThroughAChangeSendsNothingToARealController() {
+    linkController();
+    assertTrue(bike.setDemo(true));
+    // Wait for the pretend bike to be read in and to come to a standstill in its loop.
+    for (int i = 0; i < 300 && bike.writeBlocker() != null; i++) {
+      ShadowLooper.idleMainLooper(200, TimeUnit.MILLISECONDS);
+    }
+    assertNull("the pretend bike is live and at a standstill", bike.writeBlocker());
+    Result r = new Result();
+    bike.tryValues(change("accel", 72), r);
+    ShadowLooper.idleMainLooper(400, TimeUnit.MILLISECONDS);
+    assertEquals(Bike.APPLYING, bike.tuneState());
+    assertTrue(bike.setDemo(false));
+    run(20000);
+    assertFalse(bike.demo());
+    assertNotNull("the real controller is back", bike.controller());
+    assertEquals("nothing is left on trial", Bike.TUNE_IDLE, bike.tuneState());
+    Result s = new Result();
+    bike.save(s);
+    run(3000);
+    assertEquals(Boolean.FALSE, s.ok);
+    assertTrue("only the keep-alive reached the real controller: " + ctl.settingWrites(),
+        ctl.settingWrites().isEmpty());
+    assertArrayEquals(ctl.flash, withoutLive(ctl.ram));
+  }
+
+  @Test public void theDemoIsRefusedWhileARealChangeIsOnTrial() {
+    linkController();
+    Result r = new Result();
+    bike.tryValues(change("accel", 72), r);
+    run(9000);
+    assertEquals(r.calls.toString(), Boolean.TRUE, r.ok);
+    assertFalse("the real controller's trial has to be settled first", bike.setDemo(true));
+    assertFalse(bike.demo());
+    assertEquals(Bike.TRYING, bike.tuneState());
+  }
+
   // ---- Controller: things going wrong ----------------------------------------
 
   @Test public void aLostWriteIsNoticedAndNothingIsLeftChanged() {
@@ -344,8 +611,9 @@ public class BikeSimTest {
     Result r = new Result();
     bike.tryValues(change("accel", 72, "line", 440), r);
     run(16000);
-    assertEquals("the first one was written, then put back",
-        Arrays.asList("2F=72", "19=440", "2F=64"), ctl.settingWrites());
+    // Both are written back, last first: the second may have landed without being read back.
+    assertEquals("the first one was written, then both were put back",
+        Arrays.asList("2F=72", "19=440", "19=520", "2F=64"), ctl.settingWrites());
     assertEquals(Boolean.FALSE, r.ok);
     assertTrue(r.message, r.message.contains("Nothing was changed"));
     assertEquals(Bike.TUNE_IDLE, bike.tuneState());

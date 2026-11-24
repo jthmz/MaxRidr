@@ -55,14 +55,25 @@ final class Fardriver {
     private final byte[] pending = new byte[256];
     private int pendingLength;
     private boolean legacy;
+    private int legacyRun;
+    private int currentRun;
     private long goodFrames;
     private final Live legacyLive = new Live();
+    private int legacyRawRpm;
+    private int legacyPoles;
+    /** Every fault bit seen in any frame since it was last cleared. */
+    private int faultLatch;
 
     void reset() {
         java.util.Arrays.fill(words, 0);
         java.util.Arrays.fill(seen, 0);
         pendingLength = 0;
         legacy = false;
+        legacyRun = 0;
+        currentRun = 0;
+        legacyRawRpm = 0;
+        legacyPoles = 0;
+        faultLatch = 0;
         goodFrames = 0;
     }
 
@@ -84,11 +95,62 @@ final class Fardriver {
         return seen[addr & 0xFF];
     }
 
-    /** True once every setting in {@link #PARAMS} has been read at least twice. */
+    /**
+     * True once every setting in {@link #PARAMS} has been read at least twice,
+     * along with the words tuning leans on: the firmware tag, the controller's
+     * serial, its speed limiter and its throttle thresholds.
+     */
     boolean settingsLoaded() {
         if (legacy) return false;
         for (Param p : PARAMS) if (seen[p.addr] < 2) return false;
-        return seen[0x86] >= 1;
+        return seen[0x86] >= 1 && seen[0xA1] >= 1 && seen[0xAA] >= 1 && seen[LIMITER] >= 1
+                && seen[THROTTLE_RANGE] >= 1;
+    }
+
+    // ---- What the controller says about itself ----------------------------
+
+    /** The speed limiter target, in rpm: no gear speed may be set above it. */
+    private static final int LIMITER = 0x6C;
+    /** Low byte: throttle-closed voltage in 1/20 V. High byte: full-throttle voltage. */
+    private static final int THROTTLE_RANGE = 0x08;
+
+    /** The controller's serial number, or "" until it has been read. It names this one unit. */
+    String serial() {
+        if (legacy || seen[0xA1] == 0 || seen[0xAA] == 0) return "";
+        StringBuilder sb = new StringBuilder();
+        for (int a = 0xA1; a <= 0xAA; a++) {
+            for (int b : new int[] {words[a] & 0xFF, (words[a] >> 8) & 0xFF}) {
+                if (b == 0) return sb.toString();
+                // Kept to plain characters: it is used as part of a settings key.
+                sb.append(b >= 0x21 && b < 0x7F ? (char) b : '_');
+            }
+        }
+        return sb.toString();
+    }
+
+    /** The controller's speed limiter in rpm, or 0 if it has none set or it is not read yet. */
+    int limiterRpm() {
+        return legacy || seen[LIMITER] == 0 ? 0 : words[LIMITER];
+    }
+
+    /** The controller's own flag for "the wheel is rolling", which can be set while rpm reads 0. */
+    boolean rolling() {
+        return !legacy && (words[0xE2] & 0x20) != 0;
+    }
+
+    /** True when the throttle reads above the voltage the controller itself treats as closed. */
+    boolean throttleOpen() {
+        if (legacy || seen[THROTTLE_RANGE] == 0 || seen[0x82] == 0) return false;
+        return words[0x82] * 0.01f > (words[THROTTLE_RANGE] & 0xFF) / 20f;
+    }
+
+    /** Every fault bit that has shown in any frame since {@link #clearFaultLatch}. */
+    int faultLatch() {
+        return faultLatch;
+    }
+
+    void clearFaultLatch() {
+        faultLatch = 0;
     }
 
     // ---- Receiving ---------------------------------------------------------
@@ -102,25 +164,30 @@ final class Fardriver {
     boolean feed(byte[] chunk) {
         if (chunk == null) return false;
         boolean any = false;
-        for (byte b : chunk) {
-            if (pendingLength == pending.length) pendingLength = 0;
-            pending[pendingLength++] = b;
-        }
-        int at = 0;
-        while (pendingLength - at >= FRAME) {
-            if ((pending[at] & 0xFF) != 0xAA) {
-                at++;
-                continue;
+        int from = 0;
+        // Taken in as much at a time as there is room for, so a notification
+        // of any length is read whole. Less than one frame is ever left over.
+        while (from < chunk.length) {
+            int take = Math.min(chunk.length - from, pending.length - pendingLength);
+            System.arraycopy(chunk, from, pending, pendingLength, take);
+            pendingLength += take;
+            from += take;
+            int at = 0;
+            while (pendingLength - at >= FRAME) {
+                if ((pending[at] & 0xFF) != 0xAA) {
+                    at++;
+                    continue;
+                }
+                if (accept(pending, at)) {
+                    any = true;
+                    at += FRAME;
+                } else {
+                    at++; // not a frame after all: resync on the next 0xAA
+                }
             }
-            if (accept(pending, at)) {
-                any = true;
-                at += FRAME;
-            } else {
-                at++; // not a frame after all: resync on the next 0xAA
-            }
+            System.arraycopy(pending, at, pending, 0, pendingLength - at);
+            pendingLength -= at;
         }
-        System.arraycopy(pending, at, pending, 0, pendingLength - at);
-        pendingLength -= at;
         return any;
     }
 
@@ -133,6 +200,8 @@ final class Fardriver {
             }
             id &= 0x7F;
             goodFrames++;
+            legacyRun = 0;
+            if (++currentRun >= GENERATION_RUN) legacy = false;
             if (id >= BLOCK.length) return true; // extra blocks: valid, not used
             int addr = BLOCK[id];
             for (int k = 0; k < 6; k++) {
@@ -140,17 +209,28 @@ final class Fardriver {
                 words[a] = (f[o + 2 + 2 * k] & 0xFF) | ((f[o + 3 + 2 * k] & 0xFF) << 8);
                 seen[a]++;
             }
+            // A fault can come and go between two looks at the latest word,
+            // so every frame's fault bits are kept until someone clears them.
+            if (addr == 0xE2) faultLatch |= words[0xE3] & 0x7FFF;
             return true;
         }
         // Legacy generation: plain 16-bit sum, big-endian fields.
         int sum = 0;
         for (int i = 0; i < 14; i++) sum += f[o + i] & 0xFF;
         if ((sum & 0xFFFF) != (((f[o + 14] & 0xFF) << 8) | (f[o + 15] & 0xFF))) return false;
-        legacy = true;
         goodFrames++;
+        // Firmware-download and VCU frames pass the same sum check; the
+        // official app does not take either as a sign of an older controller.
+        if ((id == 0x1F && f[o + 2] == f[o + 3]) || (id & 0xFC) == 0x7C) return true;
+        currentRun = 0;
+        // One such frame in a current-format stream is noise, not a different controller.
+        if (++legacyRun >= GENERATION_RUN) legacy = true;
         decodeLegacy(f, o, id);
         return true;
     }
+
+    /** This many frames of one generation in a row settle which generation the controller is. */
+    private static final int GENERATION_RUN = 3;
 
     /** CRC-16, reflected 0xA001, initial value 0x7F3C; low byte goes first on the wire. */
     static int crc16(byte[] data, int from, int length) {
@@ -259,7 +339,8 @@ final class Fardriver {
             case 0:
                 l.direction = f[o + 4] & 3;
                 l.speedMode = (((f[o + 4] & 0xFF) >> 2) ^ 2) & 3;
-                l.rpm = (short) (((f[o + 6] & 0xFF) << 8) | (f[o + 7] & 0xFF));
+                legacyRawRpm = (short) (((f[o + 6] & 0xFF) << 8) | (f[o + 7] & 0xFF));
+                l.rpm = legacyRpm();
                 l.faults = (f[o + 8] & 0xFF) | ((f[o + 9] & 0x7F) << 8);
                 l.brake = (f[o + 9] & 0x80) != 0;
                 break;
@@ -272,17 +353,35 @@ final class Fardriver {
                         | ((f[o + 3] & 0xFF) << 8) | (f[o + 4] & 0xFF)));
                 break;
             case 4:
-                l.mosfetTempC = f[o + 4];
+                l.mosfetTempC = legacyTemp(f[o + 4]);
+                break;
+            case 8:
+                legacyPoles = f[o + 10] & 0xFF;
+                l.rpm = legacyRpm();
                 break;
             case 10:
                 l.soc = f[o + 10] & 0xFF;
                 break;
             case 13:
-                l.motorTempC = f[o + 2];
+                l.motorTempC = legacyTemp(f[o + 2]);
                 break;
             default:
                 break;
         }
+    }
+
+    /**
+     * One unsigned byte of temperature. A hot motor reads 130, not -126; only
+     * values above 200, which no part survives, are below zero.
+     */
+    private static int legacyTemp(byte b) {
+        int t = b & 0xFF;
+        return t > 200 ? t - 256 : t;
+    }
+
+    /** The official app scales high pole-count (hub) motors this way. */
+    private int legacyRpm() {
+        return legacyPoles >= 16 ? legacyRawRpm * 4 / legacyPoles : legacyRawRpm;
     }
 
     // ---- Settings ----------------------------------------------------------
@@ -296,7 +395,7 @@ final class Fardriver {
         final int addr;
         final int shift;
         final int bits;
-        /** Raw limits, inclusive. */
+        /** The raw range this app will write, inclusive. */
         final int min;
         final int max;
         final int step;
@@ -328,29 +427,19 @@ final class Fardriver {
         }
 
         /**
-         * The lowest value the screen offers. The validity range starts at
-         * zero so an unusual existing value can always be written back, but a
-         * rider is not offered values that would leave the bike unrideable.
+         * The highest raw value a healthy controller may report. Wider than
+         * what this app will write where real controllers ship with more:
+         * such a unit must still be read, and what it holds may be put back.
          */
-        int floor() {
+        int readMax() {
             switch (key) {
-                case "accel":
-                    return 2;
-                case "decel":
-                    return 4;
-                case "line":
-                    return 80;
-                case "phase":
-                    return 160;
-                case "low_rpm":
-                case "mid_rpm":
-                case "high_rpm":
-                    return 300;
-                case "low_line":
-                case "mid_line":
-                    return 13;
+                case "regen_mode":
+                    return 3;
+                case "regen":
+                case "regen_max":
+                    return 100;
                 default:
-                    return min;
+                    return max;
             }
         }
 
@@ -395,8 +484,12 @@ final class Fardriver {
     /**
      * Every setting this app will write. Each address and scale is agreed by
      * at least two independent readings of the official app, and ranges are
-     * the official app's own limits where it has them. Calibration, identity,
-     * motor-matching and system-command words are deliberately absent.
+     * the official app's own limits where it has them. Three further limits
+     * depend on the controller in hand and are applied by {@link Bike}: currents
+     * never above what this unit was first seen with, gear speeds in order
+     * and never above its speed limiter, and regen never above its max.
+     * Calibration, identity, motor-matching and system-command words are
+     * deliberately absent.
      */
     static final Param[] PARAMS = {
             new Param("response", G_THROTTLE, "Throttle response",
@@ -404,40 +497,49 @@ final class Fardriver {
                     new String[] {"Linear", "Sport", "Eco"}, false),
             word("accel", G_THROTTLE, "Acceleration",
                     "How quickly power builds when you open the throttle. Higher is snappier",
-                    0x2F, 0, 224, 2, 1f, "", false),
+                    0x2F, 2, 224, 2, 1f, "", false),
             word("decel", G_THROTTLE, "Deceleration",
                     "How quickly power falls when you roll off. Higher is more abrupt",
-                    0x2B, 0, 224, 2, 1f, "", false),
+                    0x2B, 4, 224, 2, 1f, "", false),
             new Param("release", G_THROTTLE, "Throttle release",
                     "How fast drive cuts when the throttle closes", 0x2C, 0, 8, 0, 192, 4, 1f,
                     "", null, false),
 
             word("line", G_POWER, "Battery current limit",
                     "Peak current drawn from the battery. Lower runs cooler and saves range",
-                    0x19, 0, 4000, 20, 0.25f, "A", true),
+                    0x19, 80, 4000, 20, 0.25f, "A", true),
             word("phase", G_POWER, "Motor current limit",
                     "Peak current sent to the motor, which sets low-speed torque",
-                    0x2D, 0, 8000, 40, 0.25f, "A", true),
+                    0x2D, 160, 8000, 40, 0.25f, "A", true),
 
             word("low_rpm", G_MODES, "Low mode top speed",
-                    "Motor speed limit in the low mode", 0x28, 0, 12000, 100, 1f, "rpm", false),
+                    "Motor speed limit in the low mode. Never above mid", 0x28, 300, 12000, 100,
+                    1f, "rpm", false),
             new Param("low_line", G_MODES, "Low mode power",
-                    "Share of the battery current limit in the low mode", 0x32, 0, 8, 0, 128,
+                    "Share of the battery current limit in the low mode", 0x32, 0, 8, 13, 128,
                     6, 100f / 128f, "%", null, false),
             word("mid_rpm", G_MODES, "Mid mode top speed",
-                    "Motor speed limit in the mid mode", 0x2A, 0, 12000, 100, 1f, "rpm", false),
+                    "Motor speed limit in the mid mode. Between low and high", 0x2A, 300, 12000,
+                    100, 1f, "rpm", false),
             new Param("mid_line", G_MODES, "Mid mode power",
-                    "Share of the battery current limit in the mid mode", 0x32, 8, 8, 0, 128,
+                    "Share of the battery current limit in the mid mode", 0x32, 8, 8, 13, 128,
                     6, 100f / 128f, "%", null, false),
             word("high_rpm", G_MODES, "High mode top speed",
-                    "Motor speed limit in the high mode", 0x15, 0, 12000, 100, 1f, "rpm", false),
+                    "Motor speed limit in the high mode. Never above the controller's own"
+                            + " speed limiter", 0x15, 300, 12000, 100, 1f, "rpm", false),
 
+            // Only Off and On brake can be chosen: they are the two a verified
+            // tuner has set on a real bike. Regen on throttle release brakes the
+            // rear wheel whenever the throttle closes, and what Follow does is
+            // not documented anywhere. A bike already set to either still reads.
             new Param("regen_mode", G_REGEN, "Regen mode",
-                    "When the motor brakes and feeds energy back to the battery", 0x1A, 0, 2,
-                    0, 3, 1, 1f, "",
-                    new String[] {"Coast", "Off", "On brake", "On throttle release"}, false),
+                    "When the motor brakes and feeds energy back to the battery. Off or On"
+                            + " brake can be chosen here", 0x1A, 0, 2,
+                    1, 2, 1, 1f, "",
+                    new String[] {"Follow", "Off", "On brake", "On throttle release"}, false),
             word("regen", G_REGEN, "Regen strength",
-                    "Braking current in normal use", 0x30, 0, 10, 1, 1f, "A", false),
+                    "Braking current in normal use. Never above the max", 0x30, 0, 10, 1, 1f,
+                    "A", false),
             word("regen_max", G_REGEN, "Max regen strength",
                     "Upper limit for braking current", 0x31, 0, 20, 1, 1f, "A", false),
     };
@@ -467,7 +569,7 @@ final class Fardriver {
         if (!settingsLoaded()) return "Reading settings from the controller";
         for (Param p : PARAMS) {
             int v = raw(p);
-            if (v < p.min || v > p.max) {
+            if (v > p.readMax()) {
                 return "This controller reports \"" + p.name + "\" as " + v + ", outside"
                         + " anything this app understands. Its firmware (" + firmware()
                         + ") stores settings differently, so tuning is locked to keep it safe.";
@@ -491,10 +593,26 @@ final class Fardriver {
      *         controller is one this class will not write to
      */
     byte[] writeFrame(Param p, int raw, int ceiling) {
+        return writeFrame(p, raw, ceiling, false);
+    }
+
+    /**
+     * @param ceiling the highest value this controller may be set to, as
+     *        {@link Bike#ceiling} works it out
+     * @param restoring true when putting back a value the controller itself
+     *        held: that is allowed even where it lies outside what this app
+     *        would choose, so an unusual bike can always be returned to how
+     *        it was
+     */
+    byte[] writeFrame(Param p, int raw, int ceiling, boolean restoring) {
         if (legacy) throw new IllegalArgumentException("legacy controller");
         if (seen[p.addr] == 0) throw new IllegalArgumentException("setting not read yet");
-        int max = p.cappedAtFactory ? Math.min(p.max, ceiling) : p.max;
-        if (raw < p.min || raw > max) throw new IllegalArgumentException("out of range");
+        if (raw < 0 || raw > p.readMax() || raw >= (1 << p.bits)) {
+            throw new IllegalArgumentException("out of range");
+        }
+        if (!restoring && (raw < p.min || raw > ceiling)) {
+            throw new IllegalArgumentException("out of range");
+        }
         return wordFrame(p.addr, p.insert(words[p.addr], raw));
     }
 

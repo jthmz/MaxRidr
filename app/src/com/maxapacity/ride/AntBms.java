@@ -57,6 +57,8 @@ final class AntBms {
         boolean chargeOn;
         boolean dischargeOn;
         boolean balancing;
+        /** Charging has stopped because the pack is full: how every charge ends, not a fault. */
+        boolean full;
         /** Active protections, in plain words. Empty when the pack is healthy. */
         List<String> problems = new ArrayList<>();
 
@@ -78,56 +80,73 @@ final class AntBms {
     // ---- Reassembly --------------------------------------------------------
 
     /**
-     * Collects notification chunks into whole frames. A frame is split across
-     * several notifications whatever the MTU, so nothing is assumed about
-     * chunk size.
+     * Collects notification bytes into whole frames. The bytes are a stream:
+     * a frame is split across several notifications whatever the MTU, the
+     * tail of one frame and the head of the next can share a notification,
+     * and some firmware keeps sending frames after a single request. So
+     * nothing is assumed about where a frame starts or ends.
      */
     static final class Assembler {
-        private final ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        private final byte[] buf = new byte[1024];
+        private int length;
 
         void reset() {
-            buf.reset();
+            length = 0;
         }
 
-        /** @return a decoded status when this chunk completed a valid frame, else null */
+        /** @return the newest status decoded from the frames this chunk completed, else null */
         Data feed(byte[] chunk) {
             if (chunk == null || chunk.length == 0) return null;
-            byte[] have = buf.toByteArray();
-            boolean startsNew = chunk.length >= 2
-                    && (chunk[0] & 0xFF) == 0x7E && (chunk[1] & 0xFF) == 0xA1;
-            boolean startsLegacy = chunk.length >= 4
-                    && (chunk[0] & 0xFF) == 0xAA && (chunk[1] & 0xFF) == 0x55
-                    && (chunk[2] & 0xFF) == 0xAA && (chunk[3] & 0xFF) == 0xFF;
-            // A start marker begins a new frame unless a new-protocol frame is
-            // still mid-payload (payload bytes may themselves look like a marker).
-            if ((startsNew || startsLegacy) && !midNewFrame(have)) buf.reset();
-            if (buf.size() + chunk.length > 512) {
-                buf.reset();
-                return null;
+            if (chunk.length > buf.length - length) {
+                // Far more than any frame without one turning up: start over
+                // with as much of the newest bytes as fits.
+                length = 0;
             }
-            buf.write(chunk, 0, chunk.length);
-            byte[] f = buf.toByteArray();
+            int take = Math.min(chunk.length, buf.length);
+            System.arraycopy(chunk, chunk.length - take, buf, length, take);
+            length += take;
 
-            if (f.length >= 4 && (f[0] & 0xFF) == 0xAA && (f[1] & 0xFF) == 0x55
-                    && (f[2] & 0xFF) == 0xAA && (f[3] & 0xFF) == 0xFF) {
-                if (f.length < LEGACY_LENGTH) return null;
-                buf.reset();
-                return f.length == LEGACY_LENGTH ? decodeLegacy(f) : null;
+            Data newest = null;
+            int at = 0;
+            while (true) {
+                at = nextHeader(at);
+                if (at < 0) {
+                    // Nothing that starts a frame: keep only what could be the
+                    // first bytes of a header split across two notifications.
+                    at = Math.max(0, length - 3);
+                    break;
+                }
+                boolean old = (buf[at] & 0xFF) == 0xAA;
+                if (!old && length - at < 6) break;
+                int need = old ? LEGACY_LENGTH : 10 + (buf[at + 5] & 0xFF);
+                if (length - at < need) break;
+                byte[] f = java.util.Arrays.copyOfRange(buf, at, at + need);
+                Data d = old ? decodeLegacy(f) : (f[2] & 0xFF) == 0x11 ? decodeNew(f) : null;
+                if (d != null) {
+                    newest = d;
+                    at += need;
+                } else if (!old && soundNew(f)) {
+                    at += need; // a whole frame of some other kind: step over it
+                } else {
+                    at++;       // not a frame after all: look for the next start
+                }
             }
-            if (f.length >= 6 && (f[0] & 0xFF) == 0x7E && (f[1] & 0xFF) == 0xA1) {
-                int need = 10 + (f[5] & 0xFF);
-                if (f.length < need) return null;
-                buf.reset();
-                // Only the status reply is decoded; anything else is dropped.
-                return (f[2] & 0xFF) == 0x11 && f.length == need ? decodeNew(f) : null;
-            }
-            if (f.length >= 6) buf.reset(); // not a frame we know: start over
-            return null;
+            System.arraycopy(buf, at, buf, 0, length - at);
+            length -= at;
+            return newest;
         }
 
-        private static boolean midNewFrame(byte[] have) {
-            return have.length >= 6 && (have[0] & 0xFF) == 0x7E && (have[1] & 0xFF) == 0xA1
-                    && have.length < 10 + (have[5] & 0xFF);
+        /** Where the next frame of either generation starts at or after {@code from}, or -1. */
+        private int nextHeader(int from) {
+            for (int i = from; i + 1 < length; i++) {
+                int b = buf[i] & 0xFF;
+                if (b == 0x7E && (buf[i + 1] & 0xFF) == 0xA1) return i;
+                if (b == 0xAA && i + 3 < length && (buf[i + 1] & 0xFF) == 0x55
+                        && (buf[i + 2] & 0xFF) == 0xAA && (buf[i + 3] & 0xFF) == 0xFF) {
+                    return i;
+                }
+            }
+            return -1;
         }
     }
 
@@ -163,13 +182,19 @@ final class AntBms {
 
     // ---- Current protocol --------------------------------------------------
 
+    /** True for a whole current-protocol frame of any kind: length, tail and CRC all agree. */
+    static boolean soundNew(byte[] f) {
+        if (f.length < 10) return false;
+        int len = f[5] & 0xFF;
+        if (f.length != 10 + len) return false;
+        if ((f[f.length - 2] & 0xFF) != 0xAA || (f[f.length - 1] & 0xFF) != 0x55) return false;
+        return crc16(f, 1, 5 + len) == u16le(f, 6 + len);
+    }
+
     /** @return the decoded status, or null if the frame fails its checks */
     static Data decodeNew(byte[] f) {
-        if (f.length < 10) return null;
+        if (!soundNew(f)) return null;
         int len = f[5] & 0xFF;
-        if (f.length != 10 + len) return null;
-        if ((f[f.length - 2] & 0xFF) != 0xAA || (f[f.length - 1] & 0xFF) != 0x55) return null;
-        if (crc16(f, 1, 5 + len) != u16le(f, 6 + len)) return null;
 
         int temps = f[8] & 0xFF;
         int cells = f[9] & 0xFF;
@@ -208,7 +233,7 @@ final class AntBms {
         d.powerW = (int) u32le(f, base + 28);
         d.dischargeOn = dischargeCode == 1;
         d.chargeOn = chargeCode == 1;
-        d.balancing = (balanceCode & 0x04) != 0;
+        d.balancing = balancing(balanceCode);
 
         if (6 + len >= base + 52) {
             d.maxCellV = u16le(f, base + 40) / 1000f;
@@ -222,6 +247,11 @@ final class AntBms {
 
         // Bits 17-24 only say a switch is being held off on purpose.
         long faults = protect & ~(0xFFL << 17);
+        // Over-voltage with the pack full and the output still on is the end
+        // of a charge. Every charge ends that way, so it is not raised as a fault.
+        d.full = endOfCharge(d, chargeCode) || (d.dischargeOn && d.soc >= 95
+                && (faults & 0b1110L) != 0 && (faults & ~0b1110L) == 0);
+        if (d.full) faults &= ~0b1110L;
         for (int bit = 0; bit < PROTECTION.length; bit++) {
             if ((faults & (1L << bit)) != 0 && PROTECTION[bit] != null) {
                 d.problems.add(PROTECTION[bit]);
@@ -232,11 +262,22 @@ final class AntBms {
                 d.problems.add("Output off: " + DISCHARGE[dischargeCode]);
             }
             // Charge codes above 0x0A differ between firmware families.
-            if (chargeCode > 1 && chargeCode <= 0x0A && chargeCode != 4) {
+            if (chargeCode > 1 && chargeCode <= 0x0A && chargeCode != 4 && !d.full) {
                 d.problems.add("Charging off: " + CHARGE[chargeCode]);
             }
         }
         return d;
+    }
+
+    /** The balancer is working in states 1 and 2 (triggered by a limit) as well as 4 (automatic). */
+    private static boolean balancing(int code) {
+        return code == 1 || code == 2 || code == 4;
+    }
+
+    /** Charging switched off for over-voltage or "battery full", near full, with the output on. */
+    private static boolean endOfCharge(Data d, int chargeCode) {
+        return d.dischargeOn && d.soc >= 95
+                && (chargeCode == 2 || chargeCode == 4 || chargeCode == 5);
     }
 
     private static final String[] PROTECTION = {
@@ -248,6 +289,10 @@ final class AntBms {
             "Short circuit", null, null, null, null, null, null, null, null,
             "Balance wire open", "Current sensor error", "Discharge MOSFET error",
             "Charge MOSFET error", "Internal communication error", "Precharge failed",
+            // 31-39 are states (starting up, self-tests, update wanted), not faults.
+            null, null, null, null, null, null, null, null, null,
+            "Relay welded", "Discharge fuse fault", "Charge fuse fault", "Module lost",
+            "Usage period expired", "Pre-discharge MOSFET fault", "Precharge MOSFET fault",
     };
 
     private static final String[] DISCHARGE = {
@@ -285,29 +330,43 @@ final class AntBms {
         d.soc = clampPct(f[74] & 0xFF);
         d.capacityAh = u32be(f, 75) / 1e6f;
         d.remainingAh = u32be(f, 79) / 1e6f;
+        // Six temperatures: the MOSFET, the balancer, then up to four on the
+        // cells. A slot with no sensor reads -40, or 0 on boards from 2020,
+        // which pad the unused slots at the end with zeros.
+        int mosfet = (short) u16be(f, 91);
+        if (mosfet != -40) d.mosfetTempC = mosfet;
         List<Integer> t = new ArrayList<>();
-        for (int i = 0; i < 6; i++) {
-            int v = (short) u16be(f, 91 + 2 * i);
+        for (int i = 0; i < 4; i++) {
+            int v = (short) u16be(f, 95 + 2 * i);
             if (v != -40) t.add(v);
         }
+        while (!t.isEmpty() && t.get(t.size() - 1) == 0) t.remove(t.size() - 1);
         d.temps = new int[t.size()];
         for (int i = 0; i < d.temps.length; i++) d.temps[i] = t.get(i);
         int chargeCode = f[103] & 0xFF;
         int dischargeCode = f[104] & 0xFF;
         d.chargeOn = chargeCode == 1;
         d.dischargeOn = dischargeCode == 1;
-        d.balancing = (f[105] & 0x04) != 0;
-        d.powerW = (int) u32be(f, 111);
+        d.balancing = balancing(f[105] & 0xFF);
+        int power = (int) u32be(f, 111);
+        // Boards from 2021 that still answer this request put 9999 here.
+        d.powerW = power == 9999 ? d.volts * d.amps : power;
         d.maxCell = f[115] & 0xFF;
         d.maxCellV = u16be(f, 116) / 1000f;
         d.minCell = f[118] & 0xFF;
         d.minCellV = u16be(f, 119) / 1000f;
         d.avgCellV = u16be(f, 121) / 1000f;
+        // The same boards report cell numbers that are not cells (16 on an
+        // 8-cell pack): then the cells themselves say which is lowest and highest.
+        if (d.minCell < 1 || d.minCell > cells || d.maxCell < 1 || d.maxCell > cells) {
+            fillCellStats(d);
+        }
+        d.full = endOfCharge(d, chargeCode);
         if (dischargeCode > 1 && dischargeCode < LEGACY_DISCHARGE.length
                 && LEGACY_DISCHARGE[dischargeCode] != null) {
             d.problems.add("Output off: " + LEGACY_DISCHARGE[dischargeCode]);
         }
-        if (chargeCode > 1 && chargeCode <= 0x0A && chargeCode != 4) {
+        if (chargeCode > 1 && chargeCode <= 0x0A && chargeCode != 4 && !d.full) {
             d.problems.add("Charging off: " + CHARGE[chargeCode]);
         }
         return d;

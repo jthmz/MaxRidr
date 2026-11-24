@@ -89,9 +89,9 @@ final class BikePanel extends Panel {
             content.addView(ctl, lp);
             // No bike to hand: see what the screens look like with one.
             LinearLayout demo = Ui.button(c, "TRY A DEMO BIKE", null, Ui.QUIET);
-            demo.setOnClickListener(v -> {
-                if (bike.setDemo(true)) host.say("Demo bike on. The numbers are made up");
-            });
+            demo.setOnClickListener(v -> host.say(bike.setDemo(true)
+                    ? "Demo bike on. The numbers are made up"
+                    : "Save or undo the change on your controller first"));
             LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
             dlp.setMargins(dp(24), dp(8), dp(24), 0);
@@ -141,7 +141,8 @@ final class BikePanel extends Panel {
         TextView soc = Ui.value(c, "", 40);
         soc.setText(Ui.withUnit(String.valueOf(b.soc), "%"));
         top.addView(soc, Ui.weighted());
-        String flow = b.amps < -0.2f ? "Charging" : b.amps > 0.2f ? "Discharging" : "Resting";
+        String flow = b.amps < -0.2f ? "Charging" : b.amps > 0.2f ? "Discharging"
+                : b.full ? "Full" : "Resting";
         top.addView(Ui.small(c, flow, b.amps < -0.2f ? Ui.OK : Ui.TEXT_2));
         card.addView(top, Ui.matchWrap());
         card.addView(Ui.bar(c, b.soc, socColor), Ui.top(c, new LinearLayout.LayoutParams(
@@ -256,7 +257,8 @@ final class BikePanel extends Panel {
                 "Switch the bike on and stay within a few metres. " + what + " show up here by"
                         + " themselves."
                         + (battery ? "" : " Close the Fardriver app first: the controller talks"
-                        + " to one phone at a time."));
+                        + " to one phone at a time. On some bikes neutral does not stop the"
+                        + " motor while a phone is connected, so keep off the throttle."));
         final TextView state = Ui.small(c, "Searching for " + what, Ui.TEXT_2);
         sheet.view(state);
         final View looking = Ui.skeleton(c, 56);

@@ -40,7 +40,9 @@ public class ProtocolTest {
     assertEquals(48.8f, d.volts, 0.001f); assertEquals(8.0f, d.amps, 0.001f); assertEquals(41, d.soc); assertEquals(14, d.cellVolts.length);
     assertEquals(170.0f, d.capacityAh, 0.01f); assertEquals(68.770f, d.remainingAh, 0.01f); assertEquals(390f, d.powerW, 0.01f);
     assertEquals(3.509f, d.maxCellV, 0.0005f); assertEquals(9, d.maxCell); assertEquals(3.468f, d.minCellV, 0.0005f); assertEquals(14, d.minCell);
-    assertEquals(6, d.temps.length); assertTrue(d.chargeOn && d.dischargeOn); assertTrue(d.problems.isEmpty());
+    // Six temperatures: the MOSFET, the balancer, then four on the cells.
+    assertEquals(4, d.temps.length); assertTrue(d.mosfetTempC != Integer.MIN_VALUE);
+    assertTrue(d.chargeOn && d.dischargeOn); assertTrue(d.problems.isEmpty());
   }
   @Test public void antAssemblerChunks() {
     for (String frame : new String[] {NEW16, OLD14}) {
@@ -88,15 +90,15 @@ public class ProtocolTest {
     for (int k = 0; k < 6; k++) { f[2 + 2 * k] = (byte) w[k]; f[3 + 2 * k] = (byte) (w[k] >> 8); }
     int crc = Fardriver.crc16(f, 0, 14); f[14] = (byte) crc; f[15] = (byte) (crc >> 8);
     assertTrue(fd.feed(f));
-    assertArrayEquals(hex("AAC62F2F410089A0"), fd.writeFrame(Fardriver.param("accel"), 65, 0));
+    assertArrayEquals(hex("AAC62F2F410089A0"), fd.writeFrame(Fardriver.param("accel"), 65, 224));
     byte[][] save = Fardriver.saveFrames(2026, 11, 21, 21, 50, 1);
     assertArrayEquals(hex("AAC6A0A08804C50C"), save[1]);
     assertEquals(12, save[0].length); assertEquals(0xCA, save[0][1] & 0xFF); assertEquals(0x22, save[0][2] & 0xFF); assertEquals(26, save[0][4]);
     // bitfield write keeps neighbours: throttle release is the low byte of 0x2C
     Fardriver.Param rel = Fardriver.param("release");
     assertEquals(0x0040, fd.word(0x2C));
-    byte[] r = fd.writeFrame(rel, 80, 0); assertEquals(80, r[4] & 0xFF); assertEquals(0x00, r[5] & 0xFF);
-    try { fd.writeFrame(Fardriver.param("accel"), 500, 0); fail(); } catch (IllegalArgumentException e) { }
+    byte[] r = fd.writeFrame(rel, 80, rel.max); assertEquals(80, r[4] & 0xFF); assertEquals(0x00, r[5] & 0xFF);
+    try { fd.writeFrame(Fardriver.param("accel"), 500, 224); fail(); } catch (IllegalArgumentException e) { }
     try { fd.writeFrame(Fardriver.param("line"), 600, 520); fail(); } catch (IllegalArgumentException e) { }
     // two frames in one notification, and one frame split over two
     Fardriver g = new Fardriver(); byte[] one = hex("AA8132030100000000000000000027EF"); byte[] two = new byte[32];

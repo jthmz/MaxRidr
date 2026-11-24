@@ -132,7 +132,9 @@ final class TunePanel extends Panel {
         } else {
             note(Icons.INFO, Ui.TEXT_2, "Changes are tried on the bike first and only kept"
                     + " when you save. A backup of the current settings is stored on this"
-                    + " phone before anything is changed.");
+                    + " phone before anything is changed. Work with the driven wheel off the"
+                    + " ground: on some bikes neutral does not stop the motor while a phone"
+                    + " is connected.");
         }
 
         String group = "";
@@ -247,8 +249,10 @@ final class TunePanel extends Panel {
         }
         final boolean edited = draft.containsKey(p.key);
         final int value = edited ? draft.get(p.key) : onBike;
-        final int max = Math.min(p.max, ceiling);
-        final int min = Math.min(p.floor(), onBike);
+        // What is on the bike can always be shown and gone back to, even where
+        // it lies outside what this app would choose.
+        final int max = Math.max(onBike, Math.min(Math.min(p.max, ceiling), above(p)));
+        final int min = Math.min(onBike, Math.max(p.min, below(p)));
 
         // Name and stepper on one line; the explanation gets the full width below.
         LinearLayout block = Ui.column(c);
@@ -276,6 +280,8 @@ final class TunePanel extends Panel {
         String help = p.help;
         if (p.cappedAtFactory && value >= max) {
             help += ". At this controller's own limit of " + p.format(max);
+        } else if (p.key.equals("high_rpm") && value >= max) {
+            help += ". At its speed limiter of " + p.format(max);
         }
         TextView h = Ui.small(c, edited ? "On the bike now: " + p.format(onBike) : help,
                 edited ? Ui.ACCENT : Ui.TEXT_3);
@@ -284,6 +290,41 @@ final class TunePanel extends Panel {
         hlp.topMargin = -dp(4); // the stepper's touch target pads the row above
         block.addView(h, hlp);
         card.addView(block, Ui.matchWrap());
+    }
+
+    /** The value a setting would have if the draft were sent. */
+    private int proposed(String key) {
+        Integer drafted = draft.get(key);
+        return drafted != null ? drafted
+                : Bike.get(getContext()).controllerMemory().raw(Fardriver.param(key));
+    }
+
+    /** A setting may not go above the one that must stay above it. */
+    private int above(Fardriver.Param p) {
+        switch (p.key) {
+            case "low_rpm":
+                return proposed("mid_rpm");
+            case "mid_rpm":
+                return proposed("high_rpm");
+            case "regen":
+                return proposed("regen_max");
+            default:
+                return Integer.MAX_VALUE;
+        }
+    }
+
+    /** Nor below the one that must stay below it. */
+    private int below(Fardriver.Param p) {
+        switch (p.key) {
+            case "mid_rpm":
+                return proposed("low_rpm");
+            case "high_rpm":
+                return proposed("mid_rpm");
+            case "regen_max":
+                return proposed("regen");
+            default:
+                return 0;
+        }
     }
 
     private ImageView stepper(String icon, String description, boolean enabled) {
