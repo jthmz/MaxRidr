@@ -11,7 +11,9 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -74,7 +76,9 @@ final class BikePanel extends Panel {
         if (!bike.anyConfigured()) {
             content.addView(Ui.emptyState(c, Icons.BLUETOOTH, "See inside your bike",
                     "Link an ANT BMS battery and a Fardriver controller to watch charge, power"
-                            + " and temperatures live, and to tune how the bike rides.",
+                            + " and temperatures live, and to tune how the bike rides. Link"
+                            + " each once, next to the bike with it switched on. After that"
+                            + " they connect by themselves.",
                     "Link battery", Ui.PRIMARY, v -> pick(Bike.KIND_BATTERY)));
             LinearLayout ctl = Ui.button(c, "LINK CONTROLLER", null, Ui.SECONDARY);
             ctl.setOnClickListener(v -> pick(Bike.KIND_CONTROLLER));
@@ -210,26 +214,64 @@ final class BikePanel extends Panel {
         });
     }
 
+    /** How long a search runs before it stops saying "searching" and says what to check. */
+    private static final long NOTHING_YET_MS = 8000;
+
     private void showPicker(final int kind) {
         final Context c = getContext();
         final Bike bike = Bike.get(c);
         final boolean battery = kind == Bike.KIND_BATTERY;
+        final String what = battery ? "ANT batteries" : "Fardriver controllers";
         final Sheet sheet = new Sheet(host.frame(),
                 battery ? "Link battery" : "Link controller",
-                battery ? "Switch the bike on. ANT batteries nearby appear here."
-                        : "Switch the bike on. Fardriver controllers nearby appear here. Close"
-                        + " the Fardriver app first: the controller talks to one phone at"
-                        + " a time.");
+                "Switch the bike on and stay within a few metres. " + what + " show up here by"
+                        + " themselves."
+                        + (battery ? "" : " Close the Fardriver app first: the controller talks"
+                        + " to one phone at a time."));
+        final TextView state = Ui.small(c, "Searching for " + what, Ui.TEXT_2);
+        sheet.view(state);
         final View looking = Ui.skeleton(c, 56);
         sheet.view(looking);
+        // Names already on the list, and the other devices heard so far.
+        final Set<String> listed = new HashSet<>();
+        final Map<String, String> others = new LinkedHashMap<>();
+        final boolean[] everything = {false};
+        final Runnable[] listOthers = {null};
+        listOthers[0] = () -> {
+            for (Map.Entry<String, String> o : others.entrySet()) {
+                final String name = o.getKey();
+                if (!listed.add(name)) continue;
+                looking.setVisibility(GONE);
+                sheet.item(Icons.BLUETOOTH, name, "Not recognised as a "
+                        + (battery ? "battery" : "controller"), false, () -> {
+                            bike.link(kind, name);
+                            host.say("Linked. If no readings arrive, it is not a "
+                                    + (battery ? "battery" : "controller")
+                                    + " this app can read");
+                        });
+            }
+            others.clear();
+        };
         sheet.action("Cancel", Ui.SECONDARY, true, null);
+        // For a module that calls itself something unexpected: every device in range.
+        sheet.action("Show all", Ui.SECONDARY, false, () -> {
+            everything[0] = true;
+            state.setText(listed.isEmpty() && others.isEmpty()
+                    ? "No Bluetooth devices in range yet" : "Every Bluetooth device in range");
+            listOthers[0].run();
+        });
         sheet.onDismiss(this::stopScan);
         sheet.show();
-        final Set<String> listed = new HashSet<>();
         stopScan();
         scan = bike.scan((name, address) -> {
-            if (!Bike.matches(kind, name) || !listed.add(name)) return;
+            if (!Bike.matches(kind, name)) {
+                if (!listed.contains(name)) others.put(name, address);
+                if (everything[0]) listOthers[0].run();
+                return;
+            }
+            if (!listed.add(name)) return;
             looking.setVisibility(GONE);
+            state.setText("Tap yours to link it");
             sheet.item(battery ? Icons.BATTERY_MEDIUM : Icons.CPU, name, address, false, () -> {
                 bike.link(kind, name);
                 host.say((battery ? "Battery" : "Controller") + " linked");
@@ -238,7 +280,17 @@ final class BikePanel extends Panel {
         if (scan == null) {
             sheet.dismiss();
             host.say("Bluetooth scanning could not start");
+            return;
         }
+        final ScanCallback mine = scan;
+        state.postDelayed(() -> {
+            // Still this search, and still nothing: say what to check instead of waiting in silence.
+            if (scan != mine || !listed.isEmpty()) return;
+            state.setText("Nothing yet. Check the bike is switched on and close by, and that no"
+                    + " other phone or app is connected to it. Show all lists every device in"
+                    + " range, in case yours goes by another name.");
+            state.setTextColor(Ui.WARN);
+        }, NOTHING_YET_MS);
     }
 
     private void stopScan() {

@@ -10,6 +10,8 @@
     <!-- Strava, Copilot, and the Deck on the local network (plain HTTP,
          hence usesCleartextTraffic below). -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Sending rides home only on Wi-Fi, never on mobile data. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Uninstall from the app drawer (the system still asks to confirm). -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <!-- Chop-for-flashlight gesture. -->
@@ -108,6 +110,12 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Motion gesture that toggles the flashlight" />
         </service>
+
+        <!-- Sends rides to the Deck once the phone is on Wi-Fi. Only the system can start it. -->
+        <service
+            android:name=".DeckJob"
+            android:exported="true"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <receiver
             android:name=".Updater$Receiver"

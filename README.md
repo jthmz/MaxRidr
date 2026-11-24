@@ -1,19 +1,43 @@
 # MaxRidr
 
-MAXAPACITY Ride: an Android home screen for the bike phone. GPS speedometer,
-automatic ride recording with history and Strava upload, a Bluetooth link to
-the bike (ANT BMS battery, Fardriver controller, with tuning), an app drawer,
-Copilot, a Deck mode, and over-the-air updates. Each ride records its furthest
-lean left and right, and an optional crash alert texts your location to a
-contact if a hard hit is followed by the bike not moving.
+Two halves that find each other:
 
-Plain Android SDK, Java, no libraries. Android 12 or newer.
+- **MAXAPACITY Ride** (`app/`): an Android home screen for the bike phone. GPS
+  speedometer, automatic ride recording with history and Strava upload, a
+  Bluetooth link to the bike (ANT BMS battery, Fardriver controller, with
+  tuning), an app drawer, Copilot, and over-the-air updates. Each ride records
+  its furthest lean left and right, and an optional crash alert texts your
+  location to a contact if a hard hit is followed by the bike not moving.
+- **MAXAPACITY Deck** (`deck/`): a service on the Mac that drives a desk
+  dashboard on a Spotify Car Thing, and takes rides home from the phone. It
+  has its own [README](deck/README.md).
+
+The app is plain Android SDK, Java, no libraries. Android 12 or newer.
+
+## How the phone and the Deck link
+
+Nobody types an address. The app looks for the Deck by itself: down a USB
+cable first, then by the Deck's announcement on the home Wi-Fi, then at the
+last address that worked.
+
+- **Over USB** nothing is asked: the Deck trusts a phone cabled to its Mac.
+- **Over Wi-Fi** the app shows "Deck found". On the Deck, tap the clock, then
+  Add a screen, and type the 6-digit code it shows into the app. Once.
+
+After that the app's Deck screen shows the desk, and every ride is sent to the
+Mac after it is saved, or as soon as the phone is next in reach of the Deck. It
+only ever uses Wi-Fi or the cable, never mobile data, and a ride is sent once.
+
+The Deck has to allow it: `"remote": true` in its `config.json` to be found on
+the network, and `"uploads": true` to take rides. The contract between the two
+is [deck/APP-LINK.md](deck/APP-LINK.md).
 
 ## Layout
 
 | Path | What |
 |---|---|
 | `app/` | The app: `src/`, `res/`, `assets/`, `AndroidManifest.xml`, and `tests/` |
+| `deck/` | The Deck: the Mac service, its screens, and `APP-LINK.md` |
 | `build.gradle`, `settings.gradle` | The Gradle build |
 | `tools/ride-test.sh` | Installs the app on a plugged-in phone and photographs every screen |
 | `tools/test/` | Checks for that script, against a pretend phone |

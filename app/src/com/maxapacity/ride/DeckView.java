@@ -1,6 +1,7 @@
 package com.maxapacity.ride;
 
 import android.content.Context;
+import android.os.BatteryManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
@@ -30,12 +31,13 @@ import java.util.concurrent.Executors;
  * the video pipeline, what Claude is working on and recent alerts, and sends
  * the Deck's own actions: Mac volume, mute and the Launch tiles.
  *
- * Talks to the Deck's /api/state and /api/action over the local network (with
- * the Deck's phone token) or over USB through `adb reverse`.
+ * Talks to the Deck's /api/state and /api/action wherever {@link Deck} has found
+ * it: on the home network once paired, or down a USB cable.
  */
 final class DeckView extends Panel {
 
     private static final long POLL_MS = 2000;
+    private static final long RELOOK_MS = 4000;
 
     private final Host host;
     private final LinearLayout content;
@@ -45,8 +47,18 @@ final class DeckView extends Panel {
     private int generation;
     /** What is on screen, so a poll that changes nothing does not rebuild it. */
     private String shownState = "";
+    /** The link this screen was last built for. */
+    private String showing = "";
 
     private final Runnable poll = this::fetchState;
+    /** While no Deck is linked, keep looking: a cable plugged in announces nothing. */
+    private final Runnable relook = new Runnable() {
+        @Override
+        public void run() {
+            Deck.get(getContext()).refresh();
+            main.postDelayed(this, RELOOK_MS);
+        }
+    };
 
     DeckView(Context context, Host host) {
         super(context, "Deck");
@@ -59,12 +71,24 @@ final class DeckView extends Panel {
 
     @Override
     protected void onOpen() {
+        Deck.get(getContext()).refresh();
+        stayAwake(true);
         restart();
     }
 
     @Override
     protected void onClose() {
+        stayAwake(false);
         stopPolling();
+    }
+
+    /**
+     * A phone left on this screen on a charger is a desk display, so it stays
+     * lit. On battery the screen times out as usual.
+     */
+    private void stayAwake(boolean showing) {
+        BatteryManager battery = getContext().getSystemService(BatteryManager.class);
+        setKeepScreenOn(showing && battery != null && battery.isCharging());
     }
 
     /** Stop talking to the Mac while the launcher is in the background. */
@@ -75,42 +99,54 @@ final class DeckView extends Panel {
 
     @Override
     void onHostResume() {
+        stayAwake(true);
         restart();
     }
 
-    /** Called after the address or token changes. */
+    /** Starts again from what the link is now. */
     void restart() {
         stopPolling();
         loadedOnce = false;
         shownState = "";
-        if (address().isEmpty()) {
-            showEmpty();
+        Deck d = Deck.get(getContext());
+        showing = d.state() + " " + d.address();
+        if (d.state() == Deck.LINKED) {
+            showLoading();
+            fetchState();
             return;
         }
-        showLoading();
-        fetchState();
+        if (d.state() == Deck.FOUND) showPair();
+        else showEmpty();
+        main.postDelayed(relook, RELOOK_MS);
+    }
+
+    /** The link came up, dropped or moved to another address. */
+    void linkChanged() {
+        Deck d = Deck.get(getContext());
+        if (isOpen() && !showing.equals(d.state() + " " + d.address())) restart();
     }
 
     private void stopPolling() {
         generation++; // replies to requests already in flight are dropped
         main.removeCallbacks(poll);
-    }
-
-    private String address() {
-        return Units.prefs(getContext()).getString("deck_host", "").trim();
+        main.removeCallbacks(relook);
     }
 
     private String baseUrl() {
-        String a = address();
-        return "http://" + (a.contains(":") ? a : a + ":8791");
+        return "http://" + Deck.get(getContext()).address();
     }
 
     // ---- Network ---------------------------------------------------------
 
     private void fetchState() {
+        // The link went between polls: show what is true now instead of asking nobody.
+        if (Deck.get(getContext()).state() != Deck.LINKED) {
+            restart();
+            return;
+        }
         final int gen = generation;
         final String url = baseUrl() + "/api/state";
-        final String token = Units.prefs(getContext()).getString("deck_token", "");
+        final String token = Deck.get(getContext()).requestKey();
         io.execute(() -> {
             JSONObject state = null;
             String error = null;
@@ -121,17 +157,15 @@ final class DeckView extends Panel {
                 if (!token.isEmpty()) conn.setRequestProperty("x-deck-token", token);
                 int code = conn.getResponseCode();
                 if (code == 401) {
-                    error = "The Deck refused the token. Check it matches phoneToken in the"
-                            + " Deck's config.json";
+                    error = "This phone is no longer paired with the Deck";
                 } else if (code != 200) {
                     error = "The Deck answered with error " + code;
                 } else {
                     state = new JSONObject(read(conn.getInputStream()));
                 }
                 conn.disconnect();
-            } catch (IOException | IllegalArgumentException e) {
-                error = "Cannot reach the Deck at " + address()
-                        + ". Is the Mac on, on this network, and the Deck running?";
+            } catch (IOException | RuntimeException e) {
+                error = "The Deck stopped answering. Is the Mac awake and on this network?";
             } catch (JSONException e) {
                 error = "The Deck sent something this app could not read";
             }
@@ -142,11 +176,15 @@ final class DeckView extends Panel {
                 if (fState != null) {
                     loadedOnce = true;
                     showState(fState);
-                } else if (!loadedOnce) {
-                    showError(fError);
                 } else {
-                    // Keep the last good screen; just say the link dropped.
-                    status.set("RECONNECTING", Ui.WARN);
+                    if (!loadedOnce) {
+                        showError(fError);
+                    } else {
+                        // Keep the last good screen; just say the link dropped.
+                        status.set("RECONNECTING", Ui.WARN);
+                    }
+                    // Find out where the Deck is now; this screen follows the answer.
+                    Deck.get(getContext()).refresh();
                 }
                 main.postDelayed(poll, POLL_MS);
             });
@@ -155,7 +193,7 @@ final class DeckView extends Panel {
 
     private void act(final JSONObject action, String toast) {
         final String url = baseUrl() + "/api/action";
-        final String token = Units.prefs(getContext()).getString("deck_token", "");
+        final String token = Deck.get(getContext()).requestKey();
         if (toast != null) host.say(toast);
         io.execute(() -> {
             boolean ok;
@@ -171,7 +209,7 @@ final class DeckView extends Panel {
                 }
                 ok = conn.getResponseCode() == 200;
                 conn.disconnect();
-            } catch (IOException | IllegalArgumentException e) {
+            } catch (IOException | RuntimeException e) {
                 ok = false;
             }
             if (!ok) {
@@ -203,12 +241,24 @@ final class DeckView extends Panel {
     // ---- States ---------------------------------------------------------
 
     private void showEmpty() {
-        status.set("NOT CONNECTED", Ui.TEXT_3);
+        boolean looking = Deck.get(getContext()).state() == Deck.LOOKING;
+        status.set(looking ? "LOOKING" : "OUT OF REACH", Ui.TEXT_3);
         content.removeAllViews();
         content.addView(Ui.emptyState(getContext(), Icons.MONITOR, "Your desk, in your pocket",
-                "Channel numbers, the video pipeline, Claude's progress and Mac controls,"
-                        + " from the Deck service running on your Mac.",
-                "Connect Deck", Ui.PRIMARY, v -> host.editDeckConnection()));
+                "Channel numbers, the video pipeline, Claude's progress and Mac controls, from"
+                        + " the Deck on your Mac. It links by itself when this phone is on the"
+                        + " same Wi-Fi as the Mac, or plugged into it.",
+                "Deck connection", Ui.PRIMARY, v -> host.editDeckConnection()));
+    }
+
+    /** A Deck is in reach and only wants its code. */
+    private void showPair() {
+        status.set("FOUND", Ui.WARN);
+        content.removeAllViews();
+        content.addView(Ui.emptyState(getContext(), Icons.LINK, "Deck found",
+                "On the Deck, tap the clock, then Add a screen, and enter the 6-digit code it"
+                        + " shows.",
+                "Enter code", Ui.PRIMARY, v -> host.editDeckConnection()));
     }
 
     /** Layout-matched placeholders rather than a spinner. */
@@ -228,7 +278,7 @@ final class DeckView extends Panel {
         status.set("OFFLINE", Ui.DANGER);
         content.removeAllViews();
         content.addView(Ui.emptyState(getContext(), Icons.UNLINK, "Deck is out of reach", text,
-                "Change connection", Ui.SECONDARY, v -> host.editDeckConnection()));
+                "Deck connection", Ui.SECONDARY, v -> host.editDeckConnection()));
     }
 
     private void showState(JSONObject s) {

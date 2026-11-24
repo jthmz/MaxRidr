@@ -27,15 +27,13 @@ interface Host {
 
     void editGeminiKey();
 
+    /** The Deck link: pair with the code, or see why it is out of reach. */
     void editDeckConnection();
 
     void connectStrava();
 
     /** Show the note left by the last crash, with a way to share it. */
     void showLastCrash();
-
-    /** Ask for the read-only GitHub token updates need if the repository is private. */
-    void editUpdateToken();
 
     /** Choose who is texted after a crash, or turn the alert off. */
     void editCrashAlert();
