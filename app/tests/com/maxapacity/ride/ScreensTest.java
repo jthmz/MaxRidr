@@ -52,6 +52,7 @@ public class ScreensTest {
   RideActivity a;
   BikeSimTest.FakeController ctl;
   BikeSimTest.FakeBms bms;
+  FakeDeck fakeDeck;
 
   @Before public void setUp() throws Exception {
     c = RuntimeEnvironment.getApplication();
@@ -75,6 +76,17 @@ public class ScreensTest {
   @After public void tearDown() {
     if (controller != null) controller.pause().stop().destroy();
     Bike.links = BleLink::new;
+    Deck.usb = DeckLink.USB;
+    if (fakeDeck != null) fakeDeck.stop();
+  }
+
+  /** Real time for the background threads, and the main thread's queue along with it. */
+  void await(String what, java.util.function.BooleanSupplier ok) throws Exception {
+    for (int i = 0; i < 600 && !ok.getAsBoolean(); i++) {
+      Thread.sleep(20);
+      idle(100);
+    }
+    if (!ok.getAsBoolean()) throw new AssertionError("timed out waiting for " + what);
   }
 
   void start() {
@@ -201,11 +213,6 @@ public class ScreensTest {
     sweep("deck sheet");
     Sheet.dismissCurrent();
     idle(400);
-    a.editUpdateToken();
-    idle(400);
-    sweep("update token sheet");
-    Sheet.dismissCurrent();
-    idle(400);
     a.editCrashAlert();
     idle(400);
     sweep("crash alert sheet");
@@ -217,6 +224,50 @@ public class ScreensTest {
   }
 
   // ---- In use: riding, rides saved, bike linked ------------------------------
+
+  /** The Deck link at each step: found and wanting its code, then paired and showing the desk. */
+  @Test public void theDeckFoundThenPairedAndLinked() throws Exception {
+    fakeDeck = new FakeDeck(true);
+    fakeDeck.code = "424242";
+    Deck.usb = "127.0.0.1:1";           // no cable
+    FakeDeck.onWifi(c);
+    Units.prefs(c).edit().putString("deck_host", fakeDeck.address()).apply();
+    seedRides();
+    start();
+    await("the Deck to be found", () -> Deck.get(c).state() == Deck.FOUND);
+    a.editDeckConnection();
+    idle(400);
+    sweep("deck code sheet");
+    Sheet.dismissCurrent();
+    idle(400);
+    panel("deck").open();
+    idle(400);
+    sweep("deck found, wanting its code");
+    panel("settings").open();
+    idle(400);
+    sweep("settings with a deck found");
+    panel("settings").close();
+    idle(400);
+
+    Deck.get(c).pair("424242", (ok, message) -> { });
+    await("pairing", () -> Deck.get(c).state() == Deck.LINKED);
+    await("the rides to go home", () -> fakeDeck.stored.size() == 6);
+    for (int i = 0; i < 20; i++) {      // the Deck screen reads the desk off the main thread
+      Thread.sleep(30);
+      idle(200);
+    }
+    sweep("deck linked, showing the desk");
+    a.editDeckConnection();
+    idle(400);
+    sweep("deck linked sheet");
+    Sheet.dismissCurrent();
+    idle(400);
+    panel("deck").close();
+    idle(400);
+    a.showRide(RideStore.load(c).getJSONObject(0));
+    idle(400);
+    sweep("a ride that is on the Mac");
+  }
 
   @Test public void dashboardWhileRidingWithTheBikeLinked() throws Exception {
     start();
@@ -242,8 +293,7 @@ public class ScreensTest {
 
   @Test public void everyScreenPopulated() throws Exception {
     seedRides();
-    Units.prefs(c).edit().putString("gemini_key", "test-key").putString("deck_host", "192.168.1.20")
-        .putString(Updater.TOKEN_PREF, "github_pat_test").apply();
+    Units.prefs(c).edit().putString("gemini_key", "test-key").apply();
     start();
     Bike.get(c).link(Bike.KIND_BATTERY, "ANT-BLE16ZMUB");
     Bike.get(c).link(Bike.KIND_CONTROLLER, "CONTROLCN368");

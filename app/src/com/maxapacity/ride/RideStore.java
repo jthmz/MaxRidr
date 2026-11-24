@@ -25,6 +25,8 @@ final class RideStore {
     static final String STRAVA_PENDING = "pending";
     static final String STRAVA_UPLOADED = "uploaded";
     static final String STRAVA_FAILED = "failed";
+    /** A ride's "deck" mark once the Mac has it. */
+    static final String ON_MAC = "sent";
 
     private RideStore() {
     }
@@ -104,6 +106,7 @@ final class RideStore {
             // The GPX is saved; only the history entry is missing.
         }
         if (strava) Strava.uploadPending(c);
+        Deck.get(c).rideSaved();
 
         return "Ride saved: " + Units.distance(c, state.distanceM()) + " "
                 + Units.distanceLabel(c) + " in " + Units.duration(state.movingMs())
@@ -111,12 +114,21 @@ final class RideStore {
     }
 
     static void setStravaStatus(Context c, String file, String status) {
+        mark(c, file, "strava", status);
+    }
+
+    /** The Mac has this ride: it is not offered to the Deck again. */
+    static void setOnMac(Context c, String file) {
+        mark(c, file, "deck", ON_MAC);
+    }
+
+    private static void mark(Context c, String file, String key, String value) {
         JSONArray rides = load(c);
         for (int i = 0; i < rides.length(); i++) {
             JSONObject r = rides.optJSONObject(i);
             if (r != null && file.equals(r.optString("file"))) {
                 try {
-                    r.put("strava", status);
+                    r.put(key, value);
                 } catch (JSONException e) {
                     return;
                 }

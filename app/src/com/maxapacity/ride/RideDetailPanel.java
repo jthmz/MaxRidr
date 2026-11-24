@@ -123,6 +123,10 @@ final class RideDetailPanel extends Panel {
                     + r.optInt("leanRight") + "\u00B0", true);
         }
         addMeta(meta, "Strava", RidesPanel.stravaLine(r), true);
+        boolean onMac = RideStore.ON_MAC.equals(r.optString("deck"));
+        if (onMac || Deck.get(c).everLinked()) {
+            addMeta(meta, "Mac", onMac ? "Sent" : "Waiting to send", true);
+        }
         addMeta(meta, "File", file, true);
         content.addView(meta, Ui.top(c, Ui.matchWrap(), 12));
 

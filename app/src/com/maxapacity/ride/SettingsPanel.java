@@ -31,6 +31,8 @@ final class SettingsPanel extends Panel {
     @Override
     protected void onOpen() {
         Updater.addListener(updaterChanged);
+        // The Deck row shows the link as it is now, not as it was at last look.
+        Deck.get(getContext()).refresh();
         build();
     }
 
@@ -101,11 +103,33 @@ final class SettingsPanel extends Panel {
         link(links, Icons.SPARKLES, "Copilot", key
                 ? "Answers with Google Gemini" : "Needs a free Gemini API key",
                 key ? "Key saved" : "Add key", key, v -> host.editGeminiKey());
-        final String deckHost = prefs.getString("deck_host", "");
-        link(links, Icons.MONITOR, "Deck", deckHost.isEmpty()
-                ? "Your Mac's desk dashboard" : deckHost,
-                deckHost.isEmpty() ? "Connect" : "Linked", !deckHost.isEmpty(),
-                v -> host.editDeckConnection());
+        final Deck deck = Deck.get(c);
+        String deckDetail;
+        String deckAction;
+        switch (deck.state()) {
+            case Deck.LINKED:
+                deckDetail = !deck.problem().isEmpty() ? deck.problem()
+                        : !deck.uploads() ? "Linked. Ride upload is off on the Deck"
+                        : deck.viaUsb() ? "Linked over USB. Rides go home by themselves"
+                        : "Linked. Rides go home by themselves";
+                deckAction = "Linked";
+                break;
+            case Deck.FOUND:
+                deckDetail = "Found nearby. Enter its code to pair";
+                deckAction = "Pair";
+                break;
+            case Deck.LOOKING:
+                deckDetail = "Looking for your Deck";
+                deckAction = "";
+                break;
+            default:
+                deckDetail = deck.everLinked() ? "Out of reach. It links again at home"
+                        : "Your Mac's desk dashboard";
+                deckAction = deck.everLinked() ? "" : "Set up";
+                break;
+        }
+        link(links, Icons.MONITOR, "Deck", deckDetail, deckAction,
+                deck.state() == Deck.LINKED, v -> host.editDeckConnection());
 
         LinearLayout app = group("APP");
         toggle(app, Icons.DOWNLOAD, "Update automatically",
@@ -121,9 +145,6 @@ final class SettingsPanel extends Panel {
                     if (Updater.state() == Updater.READY) Updater.install(c);
                     else Updater.check(c, host, true);
                 });
-        final boolean token = Updater.hasToken(c);
-        link(app, Icons.KEY_ROUND, "Update token", "Only if the app's repository is private",
-                token ? "Saved" : "Not needed", token, v -> host.editUpdateToken());
         if (CrashLog.read(c) != null) {
             link(app, Icons.TRIANGLE_ALERT, "Last crash", "The app closed unexpectedly",
                     "View", false, v -> host.showLastCrash());

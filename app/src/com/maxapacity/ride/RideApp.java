@@ -13,5 +13,6 @@ public final class RideApp extends Application {
     public void onCreate() {
         super.onCreate();
         CrashLog.install(this);
+        Deck.start(this);
     }
 }

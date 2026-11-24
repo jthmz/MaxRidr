@@ -41,9 +41,7 @@ import java.util.concurrent.Executors;
  * downloads a newer APK, checks its SHA-256 against the manifest and hands it
  * to the system installer.
  *
- * The repository is public, so the phone needs nothing to read it. If it is
- * ever made private, a read-only GitHub token pasted in Settings is sent
- * along and updates carry on.
+ * The repository is public, so the phone needs nothing to read it.
  *
  * The first update on a phone needs one tap on the system's install prompt.
  * After that this app is its own "installer of record", which lets Android
@@ -61,7 +59,6 @@ final class Updater {
 
     private static final String API = "https://api.github.com/repos/jthmz/MaxRidr";
     private static final String RELEASE_TAG = "ride-ota";
-    static final String TOKEN_PREF = "update_token";
 
     static final int IDLE = 0;
     static final int CHECKING = 1;
@@ -119,10 +116,6 @@ final class Updater {
         } catch (PackageManager.NameNotFoundException e) {
             return "?";
         }
-    }
-
-    static boolean hasToken(Context c) {
-        return !Units.prefs(c).getString(TOKEN_PREF, "").trim().isEmpty();
     }
 
     static boolean autoEnabled(Context c) {
@@ -193,13 +186,12 @@ final class Updater {
         }
         final Context c = context.getApplicationContext();
         final long installed = versionCode(c);
-        final String token = Units.prefs(c).getString(TOKEN_PREF, "").trim();
         error = null;
         set(CHECKING);
         IO.execute(() -> {
             try {
                 JSONObject release = new JSONObject(new String(fetch(
-                        API + "/releases/tags/" + RELEASE_TAG, token, "application/vnd.github+json",
+                        API + "/releases/tags/" + RELEASE_TAG, "application/vnd.github+json",
                         1 << 20), StandardCharsets.UTF_8));
                 // The manifest is the release notes: one JSON object.
                 String notes = release.optString("body");
@@ -238,7 +230,7 @@ final class Updater {
                     set(DOWNLOADING);
                 });
                 File apk = apkFile(c);
-                download(API + "/releases/assets/" + assetId, token, apk, size);
+                download(API + "/releases/assets/" + assetId, apk, size);
                 if (!sha256.equals(sha256(apk))) {
                     apk.delete();
                     throw new IOException("The download did not match its checksum");
@@ -249,7 +241,7 @@ final class Updater {
                 });
             } catch (IOException | JSONException e) {
                 final String message = e instanceof IOException
-                        ? offlineMessage((IOException) e, !token.isEmpty())
+                        ? offlineMessage((IOException) e)
                         : "The update listing could not be read";
                 MAIN.post(() -> {
                     error = message;
@@ -263,21 +255,16 @@ final class Updater {
         });
     }
 
-    private static String offlineMessage(IOException e, boolean withToken) {
+    private static String offlineMessage(IOException e) {
         String m = e.getMessage();
         if (m != null && m.startsWith("The ")) return m;
         if ("HTTP 401".equals(m) || "HTTP 403".equals(m) || "HTTP 429".equals(m)) {
-            // Without a token GitHub allows a limited number of checks an
-            // hour from one network; that is the only way it says no.
-            return withToken ? "GitHub refused the update token. Check it in Settings"
-                    : "GitHub is not taking update checks from this network right now."
+            // GitHub allows a limited number of checks an hour from one
+            // network; that is the only way it says no.
+            return "GitHub is not taking update checks from this network right now."
                     + " Try again in an hour";
         }
-        if ("HTTP 404".equals(m)) {
-            return withToken ? "No update found. Either none is published yet or the token"
-                    + " cannot read the repository"
-                    : "No update has been published yet";
-        }
+        if ("HTTP 404".equals(m)) return "No update has been published yet";
         return "Could not reach the update server. Check the connection and try again";
     }
 
@@ -419,27 +406,21 @@ final class Updater {
 
     // ---- Network -----------------------------------------------------------
 
-    private static HttpURLConnection open(String url, String token, String accept)
-            throws IOException {
+    private static HttpURLConnection open(String url, String accept) throws IOException {
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
         conn.setConnectTimeout(8000);
         conn.setReadTimeout(30000);
         conn.setUseCaches(false);
-        if (!token.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + token);
         conn.setRequestProperty("Accept", accept);
         conn.setRequestProperty("X-GitHub-Api-Version", "2022-11-28");
         conn.setRequestProperty("User-Agent", "maxapacity-ride");
         return conn;
     }
 
-    private static byte[] fetch(String url, String token, String accept, int maxBytes)
-            throws IOException {
-        HttpURLConnection conn = open(url, token, accept);
+    private static byte[] fetch(String url, String accept, int maxBytes) throws IOException {
+        HttpURLConnection conn = open(url, accept);
         try {
             int code = conn.getResponseCode();
-            // A saved token that has expired is refused even where no token
-            // is needed, so ask again without it before giving up.
-            if (code == 401 && !token.isEmpty()) return fetch(url, "", accept, maxBytes);
             if (code != 200) throw new IOException("HTTP " + code);
             try (InputStream in = conn.getInputStream()) {
                 ByteArrayOutputStream buf = new ByteArrayOutputStream();
@@ -456,21 +437,12 @@ final class Updater {
         }
     }
 
-    /**
-     * Downloads a release asset. GitHub answers with a redirect to a
-     * short-lived storage link; the token is sent to GitHub only, never on to
-     * the storage host.
-     */
-    private static void download(String url, String token, File to, long expectedSize)
-            throws IOException {
-        HttpURLConnection conn = open(url, token, "application/octet-stream");
+    /** Downloads a release asset. GitHub answers with a redirect to a short-lived storage link. */
+    private static void download(String url, File to, long expectedSize) throws IOException {
+        HttpURLConnection conn = open(url, "application/octet-stream");
         conn.setInstanceFollowRedirects(false);
         try {
             int code = conn.getResponseCode();
-            if (code == 401 && !token.isEmpty()) {
-                download(url, "", to, expectedSize);
-                return;
-            }
             if (code == 301 || code == 302 || code == 307) {
                 String location = conn.getHeaderField("Location");
                 conn.disconnect();
