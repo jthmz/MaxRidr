@@ -38,6 +38,9 @@ import java.util.concurrent.TimeUnit;
  * screen whenever the keyboard opened: squeezed to a few pixels, it tried to
  * build a glow with no radius. That is exactly the kind of fault a phone
  * finds in seconds and a compile never does.
+ *
+ * Each screen is also kept as a picture at full phone size, under
+ * build/screens/, so the design can be looked over without a phone in hand.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 35, qualifiers = "w393dp-h851dp-440dpi")
@@ -46,6 +49,12 @@ public class ScreensTest {
 
   static final int[] HEIGHTS = {851, 700, 560, 520, 500, 480, 440, 400, 360, 300, 220, 120, 40};
   static final int[] WIDTHS = {393, 320, 280, 600};
+
+  /** Where a picture of each screen is kept. */
+  static final File PICTURES = new File(System.getProperty("ride.screens", "build/screens"));
+
+  @org.junit.Rule public org.junit.rules.TestName test = new org.junit.rules.TestName();
+  int pictures;
 
   Context c;
   ActivityController<RideActivity> controller;
@@ -110,6 +119,10 @@ public class ScreensTest {
   }
 
   void drawAt(int wDp, int hDp, String what) {
+    drawAt(wDp, hDp, what, false);
+  }
+
+  void drawAt(int wDp, int hDp, String what, boolean keep) {
     float d = a.getResources().getDisplayMetrics().density;
     int w = Math.round(wDp * d);
     int h = Math.round(hDp * d);
@@ -121,6 +134,7 @@ public class ScreensTest {
       run(200);                         // the bike keeps talking while the screen changes
       Bitmap b = Bitmap.createBitmap(w, Math.max(1, h), Bitmap.Config.ARGB_8888);
       v.draw(new Canvas(b));
+      if (keep) keep(b, what);
       b.recycle();
     } catch (RuntimeException e) {
       throw new AssertionError(what + " at " + wDp + "x" + hDp + "dp: " + e, e);
@@ -129,7 +143,22 @@ public class ScreensTest {
 
   void sweep(String what) {
     for (int w : WIDTHS) for (int h : HEIGHTS) drawAt(w, h, what);
-    drawAt(393, 851, what);
+    drawAt(393, 851, what, true);
+  }
+
+  /** build/screens/<test>/<nn>-<what>.png. A convenience: failing to write one fails nothing. */
+  void keep(Bitmap b, String what) {
+    try {
+      File dir = new File(PICTURES, test.getMethodName());
+      dir.mkdirs();
+      String name = String.format(java.util.Locale.US, "%02d-%s.png", ++pictures,
+          what.replaceAll("[^A-Za-z0-9]+", "-").replaceAll("^-|-$", ""));
+      try (FileOutputStream out = new FileOutputStream(new File(dir, name))) {
+        b.compress(Bitmap.CompressFormat.PNG, 100, out);
+      }
+    } catch (Exception e) {
+      // The drawing is the test; the picture is for people.
+    }
   }
 
   Panel panel(String name) throws Exception {
@@ -139,7 +168,7 @@ public class ScreensTest {
   }
 
   void everyPanel(String state) throws Exception {
-    for (String n : new String[] {"drawer", "rides", "copilot", "bike", "tune", "deck", "settings"}) {
+    for (String n : new String[] {"drawer", "rides", "copilot", "bike", "tune", "deck", "fullDeck", "settings"}) {
       panel(n).open();
       run(400);
       sweep(n + " (" + state + ")");
@@ -213,8 +242,23 @@ public class ScreensTest {
     a.editDeckConnection();
     idle(400);
     sweep("deck sheet");
-    Sheet.dismissCurrent();
-    idle(400);
+    // Every other way in is one tap from there, and each comes back to it.
+    tap("Type or paste the address");
+    sweep("deck address sheet");
+    tap("Back");
+    org.junit.Assert.assertNotNull("back at the ways in", Sheet.current());
+    tap("Use a USB cable");
+    sweep("deck usb sheet");
+    tap("Back");
+    tap("What to check");
+    sweep("deck checks sheet");
+    tap("Back");
+    tap("Link report");
+    sweep("deck report sheet");
+    tap("Share");
+    String report = handedOver();
+    org.junit.Assert.assertNotNull("the report can be sent to whoever is helping", report);
+    org.junit.Assert.assertTrue(report, report.contains("Link: ") && report.contains("Network: "));
     a.editCrashAlert();
     idle(400);
     sweep("crash alert sheet");
@@ -240,6 +284,10 @@ public class ScreensTest {
     a.editDeckConnection();
     idle(400);
     sweep("deck code sheet");
+    tap("Code not working?");
+    sweep("deck code help sheet");
+    tap("Back");
+    org.junit.Assert.assertNotNull("back at the code", find(Sheet.current(), android.widget.EditText.class, null));
     Sheet.dismissCurrent();
     idle(400);
     panel("deck").open();
@@ -251,7 +299,10 @@ public class ScreensTest {
     panel("settings").close();
     idle(400);
 
-    Deck.get(c).pair("424242", (ok, message) -> { });
+    // Typing the sixth digit is enough: the code pairs by itself.
+    a.editDeckConnection();
+    idle(400);
+    find(Sheet.current(), android.widget.EditText.class, null).setText("424242");
     await("pairing", () -> Deck.get(c).state() == Deck.LINKED);
     await("the rides to go home", () -> fakeDeck.stored.size() == 6);
     for (int i = 0; i < 20; i++) {      // the Deck screen reads the desk off the main thread
@@ -259,9 +310,33 @@ public class ScreensTest {
       idle(200);
     }
     sweep("deck linked, showing the desk");
+    // The whole Deck is one tap from the glance, let in with the key this phone already holds.
+    tap("Full Deck");
+    org.junit.Assert.assertTrue(panel("fullDeck").isOpen());
+    android.webkit.WebView page = find(panel("fullDeck"), android.webkit.WebView.class, null);
+    org.junit.Assert.assertNotNull("the Deck's own page is on screen", page);
+    org.junit.Assert.assertEquals("http://" + fakeDeck.address() + "/", Shadows.shadowOf(page).getLastLoadedUrl());
+    org.junit.Assert.assertEquals(fakeDeck.key, Shadows.shadowOf(page).getLastAdditionalHttpHeaders().get("x-deck-token"));
+    sweep("full deck, linked");
+    panel("fullDeck").close();
+    idle(400);
+    org.junit.Assert.assertNull("the page is let go when the screen closes", find(panel("fullDeck"), android.webkit.WebView.class, null));
     a.editDeckConnection();
     idle(400);
     sweep("deck linked sheet");
+    tap("Link report");
+    sweep("deck report sheet, linked");
+    tap("Share");
+    String report = handedOver();
+    org.junit.Assert.assertTrue(report, report.contains("Link: linked at " + fakeDeck.address()));
+    org.junit.Assert.assertFalse("the key never leaves the phone in a report", report.contains(fakeDeck.key));
+    // Forgetting can be taken back while the Deck still knows this phone.
+    a.editDeckConnection();
+    idle(400);
+    tap("Forget this Deck");
+    await("the Deck to want its code again", () -> Deck.get(c).state() == Deck.FOUND);
+    tap("UNDO");
+    await("the forget to be undone", () -> Deck.get(c).state() == Deck.LINKED);
     Sheet.dismissCurrent();
     idle(400);
     panel("deck").close();
@@ -491,7 +566,7 @@ public class ScreensTest {
   /** Which screen, if any, is on top. */
   String openScreen() throws Exception {
     String open = null;
-    for (String n : new String[] {"drawer", "rides", "copilot", "bike", "tune", "deck", "settings"}) {
+    for (String n : new String[] {"drawer", "rides", "copilot", "bike", "tune", "deck", "fullDeck", "settings"}) {
       if (panel(n).isOpen()) {
         org.junit.Assert.assertNull("only one screen open at a time", open);
         open = n;
@@ -503,7 +578,7 @@ public class ScreensTest {
   @Test public void aLaunchCanNameTheScreenToOpen() throws Exception {
     start();
     String[][] names = {{"apps", "drawer"}, {"rides", "rides"}, {"copilot", "copilot"},
-        {"bike", "bike"}, {"tune", "tune"}, {"deck", "deck"}, {"settings", "settings"}};
+        {"bike", "bike"}, {"tune", "tune"}, {"deck", "deck"}, {"fulldeck", "fullDeck"}, {"settings", "settings"}};
     for (String[] n : names) {
       // The on-phone test script does this once a second or so, over adb.
       a.onNewIntent(new android.content.Intent(android.content.Intent.ACTION_MAIN).putExtra("open", n[0]));

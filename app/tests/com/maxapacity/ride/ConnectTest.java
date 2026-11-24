@@ -63,6 +63,9 @@ import java.util.function.BooleanSupplier;
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 public class ConnectTest {
 
+  @org.junit.Rule public org.junit.rules.TestName test = new org.junit.rules.TestName();
+  int pictures;
+
   Context c;
   ActivityController<RideActivity> controller;
   RideActivity a;
@@ -111,11 +114,16 @@ public class ConnectTest {
     assertTrue("timed out waiting for " + what, ok.getAsBoolean());
   }
 
-  /** Lays the screen out and draws it at a phone, a small phone and with the keyboard up. */
+  /**
+   * Lays the screen out and draws it at a small phone, with the keyboard up,
+   * and at full phone size, keeping that last one as a picture beside the
+   * ones ScreensTest keeps.
+   */
   void draw(String what) {
     float d = a.getResources().getDisplayMetrics().density;
     View v = a.getWindow().getDecorView();
-    for (int[] size : new int[][] {{393, 851}, {320, 560}, {393, 400}, {393, 851}}) {
+    int[][] sizes = {{320, 560}, {393, 400}, {393, 851}};
+    for (int[] size : sizes) {
       int w = Math.round(size[0] * d);
       int h = Math.round(size[1] * d);
       try {
@@ -125,10 +133,26 @@ public class ConnectTest {
         ScreensTest.idle(200);
         Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         v.draw(new Canvas(b));
+        if (size == sizes[sizes.length - 1]) keep(b, what);
         b.recycle();
       } catch (RuntimeException e) {
         throw new AssertionError(what + " at " + size[0] + "x" + size[1] + "dp: " + e, e);
       }
+    }
+  }
+
+  /** build/screens/<test>/<nn>-<what>.png. A convenience: failing to write one fails nothing. */
+  void keep(Bitmap b, String what) {
+    try {
+      File dir = new File(ScreensTest.PICTURES, test.getMethodName());
+      dir.mkdirs();
+      String name = String.format(Locale.US, "%02d-%s.png", ++pictures,
+          what.replaceAll("[^A-Za-z0-9]+", "-").replaceAll("^-|-$", ""));
+      try (FileOutputStream out = new FileOutputStream(new File(dir, name))) {
+        b.compress(Bitmap.CompressFormat.PNG, 100, out);
+      }
+    } catch (Exception e) {
+      // The drawing is the test; the picture is for people.
     }
   }
 

@@ -30,6 +30,9 @@ interface Host {
     /** The Deck link: pair with the code, or see why it is out of reach. */
     void editDeckConnection();
 
+    /** The whole Deck, as the Car Thing shows it, over whatever screen is open. */
+    void showFullDeck();
+
     /**
      * Sign in to Strava. Nothing is typed when the build carries its own
      * Strava application.

@@ -160,6 +160,17 @@ jobs:
           fi
           gradle --no-daemon testReleaseUnitTest assembleRelease -PrideVersionCode="$VERSION_CODE"
 
+      # The screen tests keep a picture of every screen and sheet they draw.
+      # Held for two days so the design can be looked over without a phone.
+      - name: Keep the screen pictures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screens
+          path: build/screens
+          retention-days: 2
+          if-no-files-found: ignore
+
       - name: Rename APK
         run: cp build/outputs/apk/release/*.apk maxapacity-ride.apk
 

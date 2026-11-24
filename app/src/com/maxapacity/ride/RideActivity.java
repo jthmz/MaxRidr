@@ -4,6 +4,8 @@ import android.Manifest;
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -22,9 +24,11 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.speech.RecognizerIntent;
+import android.text.Editable;
 import android.text.InputFilter;
 import android.text.InputType;
 import android.text.TextUtils;
+import android.text.TextWatcher;
 import android.util.TypedValue;
 import android.view.GestureDetector;
 import android.view.Gravity;
@@ -110,6 +114,7 @@ public final class RideActivity extends Activity
     private BikePanel bike;
     private TunePanel tune;
     private DeckView deck;
+    private FullDeck fullDeck;
     /** The "looking for your Deck" sheet while it is open, so finding the Deck can move it on. */
     private Sheet deckLooking;
     private final Deck.Listener deckChanged = this::onDeckChanged;
@@ -118,7 +123,8 @@ public final class RideActivity extends Activity
         @Override
         public void run() {
             if (deckLooking == null || Sheet.current() != deckLooking) return;
-            Deck.get(RideActivity.this).refresh();
+            // Spaced out by the link itself: a look every time, the whole network now and then.
+            Deck.get(RideActivity.this).search(false);
             handler.postDelayed(this, 4000);
         }
     };
@@ -247,6 +253,8 @@ public final class RideActivity extends Activity
                 return tune;
             case "deck":
                 return deck;
+            case "fulldeck":
+                return fullDeck;
             case "settings":
                 return settings;
             default:
@@ -369,6 +377,11 @@ public final class RideActivity extends Activity
     }
 
     @Override
+    public void showFullDeck() {
+        fullDeck.open();
+    }
+
+    @Override
     public void listen() {
         try {
             startActivityForResult(new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
@@ -439,84 +452,249 @@ public final class RideActivity extends Activity
     }
 
     /**
-     * The Deck link. Nothing is typed unless the network hides the Deck: it is
-     * found by itself, and all it asks for is the 6-digit code it shows.
+     * The Deck link. The phone finds the Deck by itself, by its announcement
+     * or by asking the network, and all it wants is the 6-digit code. When
+     * that does not happen, every other way in is one tap from here.
      */
     @Override
     public void editDeckConnection() {
         final Deck d = Deck.get(this);
         deckLooking = null;
-        if (d.state() == Deck.LINKED) {
-            Sheet sheet = new Sheet(frame, "Deck linked",
-                    (d.viaUsb() ? "This phone reaches your Mac down the USB cable."
-                            : "This phone reaches your Mac on this network.")
-                            + (d.uploads() ? " Rides are sent home by themselves when you get"
-                            + " back."
-                            : " Ride upload is switched off on the Deck, so rides stay on this"
-                            + " phone. Set uploads to true in the Deck's config.json to send"
-                            + " them home."));
-            // The cable needs no pairing, so there is nothing to forget.
-            if (!d.viaUsb()) {
-                sheet.action("Forget", Ui.SECONDARY, true, () -> {
-                    d.forget();
-                    say("This phone has forgotten the Deck");
-                });
-            }
-            sheet.action("Done", Ui.PRIMARY, true, null).show();
-        } else if (d.state() == Deck.FOUND) {
-            deckCodeSheet();
-        } else {
-            d.refresh();
-            handler.removeCallbacks(deckRelook);
-            handler.postDelayed(deckRelook, 4000);
-            deckLooking = new Sheet(frame, "Looking for your Deck",
-                    "Nothing has answered yet. The phone finds the Deck by itself when both are"
-                            + " on the same Wi-Fi and the Deck has other screens switched on, or"
-                            + " when the phone is plugged into the Mac. This changes the moment"
-                            + " it is found.")
-                    .action("Type address", Ui.SECONDARY, true, this::deckAddressSheet)
-                    .action("Close", Ui.PRIMARY, true, null)
-                    .show();
+        if (d.state() == Deck.LINKED) deckLinkedSheet();
+        else if (d.state() == Deck.FOUND) deckCodeSheet();
+        else deckLookingSheet();
+    }
+
+    private void deckLinkedSheet() {
+        final Deck d = Deck.get(this);
+        final int waiting = d.ridesWaiting();
+        String rides = !d.uploads()
+                ? " Ride upload is switched off on the Deck, so rides stay on this phone. Set"
+                + " uploads to true in the Deck's config.json to send them home."
+                : waiting == 1 ? " 1 ride is waiting to go home."
+                : waiting > 1 ? " " + waiting + " rides are waiting to go home."
+                : RideStore.load(this).length() == 0 ? " Rides go home by themselves after each"
+                + " one." : " Every ride on this phone is on your Mac.";
+        Sheet sheet = new Sheet(frame, "Deck linked",
+                (d.viaUsb() ? "This phone reaches your Mac down the USB cable."
+                        : "This phone reaches your Mac on this network, at " + d.address() + ".")
+                        + rides);
+        if (d.uploads() && waiting > 0) {
+            sheet.item(Icons.CLOUD_UPLOAD, "Send rides now",
+                    "They also go by themselves when you get home", false,
+                    () -> d.offload((ok, message) -> {
+                        if (!ok && message == null) say("The Deck went out of reach");
+                    }));
         }
+        sheet.item(Icons.MONITOR, "Open the full Deck",
+                "Everything the Car Thing shows, with all its controls", false,
+                this::showFullDeck);
+        sheet.item(Icons.INFO, "Link report", "What this phone sees, to share if you need help",
+                false, this::deckReportSheet);
+        // The cable needs no pairing, so there is nothing to forget.
+        if (!d.viaUsb()) {
+            sheet.item(Icons.UNLINK, "Forget this Deck", "It will want a new code to pair again",
+                    true, () -> {
+                        final String key = d.key();
+                        d.forget();
+                        say("This phone has forgotten the Deck", "UNDO", () -> d.remember(key));
+                    });
+        }
+        sheet.action("Done", Ui.PRIMARY, true, null).show();
+    }
+
+    private void deckLookingSheet() {
+        final Deck d = Deck.get(this);
+        d.search(false);
+        handler.removeCallbacks(deckRelook);
+        handler.postDelayed(deckRelook, 4000);
+        deckLooking = new Sheet(frame, "Link your Deck", deckLookingText(d))
+                .item(Icons.LINK, "Type or paste the address",
+                        "The Deck shows it under Add a screen", false, this::deckAddressSheet)
+                .item(Icons.USB, "Use a USB cable", "No Wi-Fi and no code needed", false,
+                        this::deckUsbSheet)
+                .item(Icons.LIST_CHECKS, "What to check",
+                        "Four things that keep a phone from finding the Deck", false,
+                        this::deckChecksSheet)
+                .item(Icons.INFO, "Link report",
+                        "What this phone tried, to share if you need help", false,
+                        this::deckReportSheet)
+                .action("Search again", Ui.SECONDARY, false, () -> Deck.get(this).search(true))
+                .action("Close", Ui.PRIMARY, true, null)
+                .show();
+    }
+
+    /** What the looking sheet says right now. It is rewritten as the search moves on. */
+    private static String deckLookingText(Deck d) {
+        if (!d.onNetwork()) {
+            return "This phone is not on Wi-Fi, so it cannot reach your Mac. Join the Wi-Fi your"
+                    + " Mac is on, or plug this phone into the Mac.";
+        }
+        if (d.state() == Deck.LOOKING || d.searching()) {
+            return "Searching this Wi-Fi for your Deck. That takes a few seconds.";
+        }
+        String me = d.phoneAddress();
+        return "No Deck has answered on this Wi-Fi yet." + (me.isEmpty() ? ""
+                : " This phone is at " + me + ".") + " The moment one answers, this moves on by"
+                + " itself.";
     }
 
     private void deckCodeSheet() {
         final EditText code = Ui.input(this, "6-digit code", false);
         code.setInputType(InputType.TYPE_CLASS_NUMBER);
         code.setFilters(new InputFilter[] {new InputFilter.LengthFilter(6)});
-        new Sheet(frame, "Deck found",
+        final Runnable pair = () -> {
+            String digits = code.getText().toString().replaceAll("\\D", "");
+            if (digits.length() != 6) {
+                say("The code is six digits", "RETRY", this::deckCodeSheet);
+                return;
+            }
+            Deck.get(this).pair(digits, (ok, message) -> {
+                if (ok) say(message);
+                else say(message, "RETRY", this::editDeckConnection);
+            });
+        };
+        final Sheet sheet = new Sheet(frame, "Deck found",
                 "On the Deck, tap the clock, then Add a screen. Type the 6-digit code it shows.")
                 .view(code)
+                .item(Icons.INFO, "Code not working?",
+                        "A code pairs one screen and lasts five minutes", false,
+                        this::deckCodeHelp)
                 .action("Cancel", Ui.SECONDARY, true, null)
-                .action("Pair", Ui.PRIMARY, true, () -> {
-                    String digits = code.getText().toString().replaceAll("\\D", "");
-                    if (digits.length() != 6) {
-                        say("The code is six digits", "RETRY", this::deckCodeSheet);
-                        return;
-                    }
-                    Deck.get(this).pair(digits, (ok, message) -> {
-                        if (ok) say(message);
-                        else say(message, "RETRY", this::editDeckConnection);
-                    });
-                })
+                .action("Pair", Ui.PRIMARY, true, pair);
+        // The sixth digit is the whole code: no need to reach for the button.
+        code.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence text, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence text, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable text) {
+                if (text.length() == 6 && Sheet.current() == sheet) {
+                    Sheet.dismissCurrent();
+                    pair.run();
+                }
+            }
+        });
+        sheet.show();
+    }
+
+    private void deckCodeHelp() {
+        new Sheet(frame, "If the code does not work",
+                "A code lasts five minutes and pairs one screen. Scanning the Deck's QR code"
+                        + " with the camera pairs the phone's browser instead, and that uses the"
+                        + " code up. On the Deck, open Add a screen again, or tap New code, and"
+                        + " type the new one here.")
+                .action("Back", Ui.PRIMARY, true, this::editDeckConnection)
                 .show();
     }
 
-    /** Only for a network that stops the phone hearing the Deck's announcement. */
+    /** For a network that will not let the phone find the Deck: its address, typed or pasted. */
     private void deckAddressSheet() {
         final EditText address = Ui.input(this, "Such as 192.168.1.20", false);
         address.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
-        address.setText(prefs.getString("deck_host", ""));
+        String typed = prefs.getString("deck_host", "");
+        // Most of the Deck's address is the same as this phone's, so start with that part.
+        address.setText(typed.isEmpty() ? Deck.sharedStart(Deck.get(this).phoneAddress())
+                : typed);
+        address.setSelection(address.getText().length());
         new Sheet(frame, "Type the Deck's address",
-                "Only for a network that stops the phone finding the Deck by itself. The Deck"
-                        + " shows its address under Add a screen.")
+                "The Deck shows its address under Add a screen: tap the clock on the Deck to get"
+                        + " there. A link copied from there works too, code and all.")
                 .view(address)
-                .action("Cancel", Ui.SECONDARY, true, null)
-                .action("Look", Ui.PRIMARY, true, () ->
-                        Deck.get(this).useAddress(address.getText().toString(), (ok, message) -> {
-                            if (ok && message == null) deckCodeSheet();
-                            else say(message);
-                        }))
+                .action("Back", Ui.SECONDARY, true, this::editDeckConnection)
+                .action("Paste", Ui.SECONDARY, false, () -> {
+                    CharSequence copied = clipboardText();
+                    if (copied == null || copied.toString().trim().isEmpty()) {
+                        say("Nothing has been copied");
+                        return;
+                    }
+                    address.setText(copied.toString().trim());
+                    address.setSelection(address.getText().length());
+                })
+                .action("Look", Ui.PRIMARY, true, () -> deckLookAt(address.getText().toString()))
+                .show();
+    }
+
+    /** Looks for a Deck at a typed or pasted address. If the text held its code too, pairs. */
+    void deckLookAt(final String text) {
+        final String code = Deck.codeIn(text);
+        Deck.get(this).useAddress(text, (ok, message) -> {
+            if (!ok) {
+                say(message, "RETRY", this::deckAddressSheet);
+            } else if (message != null) {
+                say(message);
+            } else if (code.isEmpty()) {
+                deckCodeSheet();
+            } else {
+                Deck.get(this).pair(code, (paired, said) -> {
+                    if (paired) say(said);
+                    else say(said, "RETRY", this::editDeckConnection);
+                });
+            }
+        });
+    }
+
+    private CharSequence clipboardText() {
+        try {
+            ClipboardManager clipboard = getSystemService(ClipboardManager.class);
+            ClipData clip = clipboard == null ? null : clipboard.getPrimaryClip();
+            return clip == null || clip.getItemCount() == 0 ? null
+                    : clip.getItemAt(0).coerceToText(this);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private void deckUsbSheet() {
+        new Sheet(frame, "Link over a USB cable",
+                "1. On the Mac, set usbScreens to true in the Deck's config.json and restart the"
+                        + " Deck.\n2. On this phone, turn on USB debugging: Settings, About"
+                        + " phone, tap Build number seven times, then Developer options.\n3."
+                        + " Plug the phone into the Mac and allow the Mac when the phone asks."
+                        + "\n\nThe Deck then links by itself within a few seconds. No code is"
+                        + " needed, and rides go home down the cable.")
+                .action("Back", Ui.PRIMARY, true, this::editDeckConnection)
+                .show();
+    }
+
+    private void deckChecksSheet() {
+        String me = Deck.get(this).phoneAddress();
+        new Sheet(frame, "If the phone cannot find the Deck",
+                "1. The Mac is awake and the Deck is running. The Car Thing lights up when it"
+                        + " is.\n2. On the Deck, tap the clock, then Add a screen. If it says"
+                        + " that is switched off, set remote to true in the Deck's config.json"
+                        + " on the Mac and restart the Deck.\n3. Phone and Mac are on the same"
+                        + " router." + (me.isEmpty() ? "" : " This phone is at " + me + ".")
+                        + " The Deck shows its own address under Add a screen, and the first"
+                        + " three numbers should match.\n4. Guest Wi-Fi and some mesh systems"
+                        + " keep devices apart. Use the main Wi-Fi, or a USB cable.")
+                .action("Back", Ui.PRIMARY, true, this::editDeckConnection)
+                .show();
+    }
+
+    /** Where the link stands and what led there, to read or to send to whoever is helping. */
+    private void deckReportSheet() {
+        final String report = Deck.get(this).report();
+        TextView text = Ui.small(this, report, Ui.TEXT_2);
+        text.setTypeface(Ui.mono);
+        text.setTextSize(TypedValue.COMPLEX_UNIT_SP, Ui.T_LABEL);
+        text.setTextIsSelectable(true);
+        text.setBackground(Ui.panel(this, Ui.BG, Ui.HAIRLINE, 10));
+        text.setPadding(dp(12), dp(12), dp(12), dp(12));
+        new Sheet(frame, "Link report",
+                "Where the link stands and what this phone tried. It names addresses on your"
+                        + " home network and this phone's model, and nothing else.")
+                .view(text)
+                .action("Back", Ui.SECONDARY, true, this::editDeckConnection)
+                .action("Share", Ui.PRIMARY, true, () -> launch(Intent.createChooser(
+                        new Intent(Intent.ACTION_SEND).setType("text/plain")
+                                .putExtra(Intent.EXTRA_SUBJECT, "MAXAPACITY Deck link report")
+                                .putExtra(Intent.EXTRA_TEXT, report), null)))
                 .show();
     }
 
@@ -524,6 +702,7 @@ public final class RideActivity extends Activity
     private void onDeckChanged() {
         settings.refresh();
         deck.linkChanged();
+        fullDeck.linkChanged();
         Deck found = Deck.get(this);
         // The first time a Deck turns up, say so: nobody should have to go looking for it.
         if (found.state() == Deck.FOUND
@@ -535,13 +714,16 @@ public final class RideActivity extends Activity
         }
         // Someone waiting on the "looking" sheet is taken straight to the next step.
         if (deckLooking == null || Sheet.current() != deckLooking) return;
-        deckLooking = null;
         Deck d = Deck.get(this);
         if (d.state() == Deck.FOUND) {
+            deckLooking = null;
             deckCodeSheet();
         } else if (d.state() == Deck.LINKED) {
+            deckLooking = null;
             Sheet.dismissCurrent();
             say("Linked to your Deck");
+        } else {
+            deckLooking.setMessage(deckLookingText(d));
         }
     }
 
@@ -1059,6 +1241,7 @@ public final class RideActivity extends Activity
         bike = new BikePanel(this, this);
         tune = new TunePanel(this, this);
         deck = new DeckView(this, this);
+        fullDeck = new FullDeck(this, this);
         settings = new SettingsPanel(this, this);
         panels.add(drawer);
         panels.add(rides);
@@ -1067,6 +1250,7 @@ public final class RideActivity extends Activity
         panels.add(bike);
         panels.add(tune);
         panels.add(deck);
+        panels.add(fullDeck);
         panels.add(settings);
         for (Panel p : panels) {
             frame.addView(p, new FrameLayout.LayoutParams(
