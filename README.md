@@ -12,8 +12,11 @@ Two halves that find each other:
   made-up numbers when no bike is nearby. On the Tune screen, Tunes loads a
   whole tune in one tap: three made to measure for the controller in hand
   (Calm, Balanced, Aggressive, as shares of what it came set to), or one
-  published for a MAXAPACITY build. A tune loads as changes to look over and
-  goes through the same trial as any other change. Tune ideas writes up the
+  from MAXAPACITY's own bikes: the tunes published for its builds, and the
+  Arctic Leopard XE Pro R as it was delivered, to put a changed bike back. A
+  tune loads as changes to look over and goes through the same trial as any
+  other change. Currents and top speed never go above what the controller
+  held when the app first met it. Tune ideas writes up the
   bike's settings and limits for the rider to send to an AI app or a tuner;
   it only reads, and nothing leaves the phone until the rider sends it. The
   reply can be copied and pasted back: the app loads the changes it names,

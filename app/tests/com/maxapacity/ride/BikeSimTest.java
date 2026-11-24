@@ -472,9 +472,10 @@ public class BikeSimTest {
   @Test public void whatAVerifiedTunerRefusesIsRefusedHere() {
     linkController();
     Object[][] refused = {
-        {"faster than the controller's own speed limiter", change("high_rpm", 12000)},
-        {"low gear above mid", change("low_rpm", 5000)},
-        {"mid gear above high", change("mid_rpm", 4300)},
+        {"faster than the top gear was when the app first met it", change("high_rpm", 4300)},
+        {"as fast as its speed-limit mode is set, which is no ceiling", change("high_rpm", 6000)},
+        {"low gear above mid", change("low_rpm", 3000)},
+        {"high gear below mid", change("high_rpm", 2000)},
         {"regen above its own maximum", change("regen", 10)},
         {"regen on throttle release", change("regen_mode", 3)},
         {"the undocumented regen mode", change("regen_mode", 0)},
@@ -492,24 +493,93 @@ public class BikeSimTest {
       assertTrue((String) c[0], ctl.settingWrites().isEmpty());
       assertEquals(Bike.TUNE_IDLE, bike.tuneState());
     }
-    assertEquals("the limiter is the ceiling for every gear", 6000, bike.ceiling(Fardriver.param("high_rpm")));
+    assertEquals(6000, ctl.ram[0x6C]);
+    for (String gear : new String[] {"low_rpm", "mid_rpm", "high_rpm"}) {
+      assertEquals("the top speed it came with is the ceiling for every gear", 4200,
+          bike.ceiling(Fardriver.param(gear)));
+    }
   }
 
   @Test public void gearSpeedsNeverPassThroughAForbiddenOrderOnTheWay() {
     linkController();
-    // All three go up past where the next one stood: top first, or low would overtake mid.
-    Result up = new Result();
-    bike.tryValues(change("low_rpm", 3000, "mid_rpm", 4400, "high_rpm", 5000), up);
-    run(12000);
-    assertEquals(up.calls.toString(), Boolean.TRUE, up.ok);
-    assertEquals(Arrays.asList("15=5000", "2A=4400", "28=3000"), ctl.settingWrites());
-    ctl.written.clear();
-    // And back down: bottom first.
+    // All three come down past where the one below stood: bottom first, or high would
+    // drop under mid.
     Result down = new Result();
-    bike.tryValues(change("high_rpm", 4200, "mid_rpm", 2800, "low_rpm", 1800), down);
+    bike.tryValues(change("high_rpm", 1700, "mid_rpm", 1400, "low_rpm", 1000), down);
     run(12000);
     assertEquals(down.calls.toString(), Boolean.TRUE, down.ok);
-    assertEquals(Arrays.asList("28=1800", "2A=2800", "15=4200"), ctl.settingWrites());
+    assertEquals(Arrays.asList("28=1000", "2A=1400", "15=1700"), ctl.settingWrites());
+    ctl.written.clear();
+    // And back up to where they stood: top first, or low would overtake mid.
+    Result up = new Result();
+    bike.tryValues(change("low_rpm", 1800, "mid_rpm", 2800, "high_rpm", 4200), up);
+    run(12000);
+    assertEquals(up.calls.toString(), Boolean.TRUE, up.ok);
+    assertEquals(Arrays.asList("15=4200", "2A=2800", "28=1800"), ctl.settingWrites());
+  }
+
+  /** The simulated controller becomes a stock Arctic Leopard XE Pro R, then links. */
+  void linkXeProR() {
+    XeProRTest.asDelivered(ctl.ram);
+    XeProRTest.asDelivered(ctl.flash);
+    bike.link(Bike.KIND_CONTROLLER, "CONTROLCN368");
+    run(1500);
+    assertNotNull("controller live", bike.controller());
+    assertNull("a stock XE Pro R is not locked out", bike.writeBlocker());
+  }
+
+  @Test public void aStockXeProRIsTunedDownAndBroughtBackToHowItWasDelivered() {
+    linkXeProR();
+    // What it came with is the most it can be given, speed-limit mode or not.
+    assertEquals(3500, ctl.ram[0x6C]);
+    assertEquals(12500, bike.ceiling(Fardriver.param("high_rpm")));
+    assertEquals(12500, bike.ceiling(Fardriver.param("low_rpm")));
+    assertEquals(1320, bike.ceiling(Fardriver.param("line")));
+    assertEquals(2796, bike.ceiling(Fardriver.param("phase")));
+    assertEquals("more regen than the app offers, because it shipped with it", 30,
+        bike.ceiling(Fardriver.param("regen")));
+    assertEquals(50, bike.ceiling(Fardriver.param("regen_max")));
+    for (Map<String, Integer> over : Arrays.asList(change("high_rpm", 12600), change("regen", 31),
+        change("regen_max", 51), change("line", 1340), change("phase", 2800))) {
+      Result no = new Result();
+      bike.tryValues(over, no);
+      run(1000);
+      assertEquals(over.toString(), Boolean.FALSE, no.ok);
+      assertTrue(over.toString(), ctl.settingWrites().isEmpty());
+    }
+
+    // A calmer bike with a softer brake: every drop goes in from the bottom up.
+    Result calmer = new Result();
+    bike.tryValues(change("regen", 15, "regen_max", 20, "high_rpm", 10000, "line", 1040), calmer);
+    run(30000);
+    assertEquals(calmer.calls.toString(), Boolean.TRUE, calmer.ok);
+    assertEquals(Arrays.asList("19=1040", "26=1040", "30=15", "31=20", "15=10000"), ctl.settingWrites());
+    Result kept = new Result();
+    bike.save(kept);
+    run(6000);
+    assertEquals(kept.calls.toString(), Boolean.TRUE, kept.ok);
+    assertEquals(1040, ctl.flash[0x19]);
+    ctl.written.clear();
+
+    // The way back stays open: the factory tune puts all of it back, burst included.
+    TunePlan.Tune factory = null;
+    for (TunePlan.Tune t : TunePlan.ourBikes()) if (t.id.equals("xe-pro-r-factory")) factory = t;
+    TunePlan.Loaded loaded = TunePlan.load(factory, bike.controllerMemory(), bike::ceiling);
+    assertNull(loaded.refused, loaded.refused);
+    assertEquals("{line=1320, high_rpm=12500, regen=30, regen_max=50}", loaded.changes.toString());
+    Result back = new Result();
+    bike.tryValues(loaded.changes, back);
+    run(30000);
+    assertEquals(back.calls.toString(), Boolean.TRUE, back.ok);
+    assertEquals(Arrays.asList("15=12500", "31=50", "30=30", "26=1320", "19=1320"), ctl.settingWrites());
+    int[] delivered = new int[256];
+    System.arraycopy(ctl.flash, 0, delivered, 0, 256);
+    XeProRTest.asDelivered(delivered);
+    for (Fardriver.Param[] group : new Fardriver.Param[][] {Fardriver.PARAMS, Fardriver.FOLLOWERS}) {
+      for (Fardriver.Param p : group) {
+        assertEquals(p.name, p.extract(delivered[p.addr]), p.extract(ctl.ram[p.addr]));
+      }
+    }
   }
 
   @Test public void ceilingsBelongToTheControllerNotToItsBluetoothName() {

@@ -10,7 +10,7 @@ import java.util.function.ToIntFunction;
 
 /**
  * Whole tunes: the three made to measure for a controller, and the ones
- * published for MAXAPACITY's own builds. What matters most is that no tune
+ * from MAXAPACITY's own bikes. What matters most is that no tune
  * ever asks for more than the controller in hand came with. Built from the
  * demo bike's memory, a capture of a real controller. Plain JUnit.
  */
@@ -34,7 +34,7 @@ public class TunePlanTest {
   }
 
   static TunePlan.Tune build(String id) {
-    for (TunePlan.Tune t : TunePlan.builds()) if (t.id.equals(id)) return t;
+    for (TunePlan.Tune t : TunePlan.ourBikes()) if (t.id.equals(id)) return t;
     throw new AssertionError("no build tune " + id);
   }
 
@@ -132,11 +132,20 @@ public class TunePlanTest {
     assertEquals("600 A", PHASE.format(build("drax-daily").values.get("phase")));
     assertEquals("8 A", Fardriver.param("regen").format(build("drax-regen").values.get("regen")));
     assertEquals("12 A", Fardriver.param("regen_max").format(build("drax-regen").values.get("regen_max")));
-    for (TunePlan.Tune t : TunePlan.builds()) {
-      assertTrue(t.name + " says which bike it is for", t.note.contains("Fardriver ND72680") && t.note.contains("Amorge"));
+    int drax = 0;
+    for (TunePlan.Tune t : TunePlan.ourBikes()) {
       assertFalse(t.detail.isEmpty());
+      if (!t.id.startsWith("drax-")) continue;
+      drax++;
+      assertTrue(t.name + " says which bike it is for", t.note.contains("Fardriver ND72680") && t.note.contains("Amorge"));
     }
-    assertEquals("the tune the website says not to use is not on offer", 3, TunePlan.builds().size());
+    assertEquals("the tune the website says not to use is not on offer", 3, drax);
+    // Each caution the guide gives goes with its tune.
+    assertTrue(build("drax-chill").note.contains("not as a tested starting tune"));
+    assertTrue(build("drax-daily").note.contains("above that pack's listed 220 A continuous rating"));
+    assertTrue(build("drax-daily").note.contains("no test log"));
+    assertTrue(build("drax-regen").note.contains("This app sets the two currents only"));
+    assertTrue(build("drax-regen").note.contains("try it at 70 to 80% charge"));
   }
 
   @Test public void aPublishedTuneForAnotherBikeIsRefusedWhole() {

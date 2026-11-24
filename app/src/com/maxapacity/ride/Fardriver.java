@@ -98,20 +98,18 @@ final class Fardriver {
     /**
      * True once every setting in {@link #PARAMS} has been read at least twice,
      * along with the words tuning leans on: the firmware tag, the controller's
-     * serial, its speed limiter and its throttle thresholds.
+     * serial and its throttle thresholds.
      */
     boolean settingsLoaded() {
         if (legacy) return false;
         for (Param p : PARAMS) if (seen[p.addr] < 2) return false;
         for (Param p : FOLLOWERS) if (seen[p.addr] < 2) return false;
-        return seen[0x86] >= 1 && seen[0xA1] >= 1 && seen[0xAA] >= 1 && seen[LIMITER] >= 1
+        return seen[0x86] >= 1 && seen[0xA1] >= 1 && seen[0xAA] >= 1
                 && seen[THROTTLE_RANGE] >= 1;
     }
 
     // ---- What the controller says about itself ----------------------------
 
-    /** The speed limiter target, in rpm: no gear speed may be set above it. */
-    private static final int LIMITER = 0x6C;
     /** Low byte: throttle-closed voltage in 1/20 V. High byte: full-throttle voltage. */
     private static final int THROTTLE_RANGE = 0x08;
 
@@ -127,11 +125,6 @@ final class Fardriver {
             }
         }
         return sb.toString();
-    }
-
-    /** The controller's speed limiter in rpm, or 0 if it has none set or it is not read yet. */
-    int limiterRpm() {
-        return legacy || seen[LIMITER] == 0 ? 0 : words[LIMITER];
     }
 
     /** The controller's own flag for "the wheel is rolling", which can be set while rpm reads 0. */
@@ -447,6 +440,17 @@ final class Fardriver {
             }
         }
 
+        /**
+         * The highest raw value this app will write on a controller whose
+         * ceiling for this setting is {@code ceiling}, as {@link Bike#ceiling}
+         * works it out. The ceiling already holds whatever applies to the unit
+         * in hand, including more regen than this app would choose where the
+         * unit shipped with it.
+         */
+        int top(int ceiling) {
+            return Math.min(readMax(), ceiling);
+        }
+
         int mask() {
             return ((1 << bits) - 1) << shift;
         }
@@ -486,14 +490,26 @@ final class Fardriver {
     static final String G_REGEN = "REGEN BRAKING";
 
     /**
+     * The fastest gear speed taken as a real setting. Geared motors spin fast:
+     * a stock Arctic Leopard XE Pro R is set to 12500 rpm. A reading above
+     * this is not a speed, and tuning stays locked.
+     */
+    private static final int TOP_RPM = 20000;
+
+    /**
      * Every setting this app will write. Each address and scale is agreed by
      * at least two independent readings of the official app, and ranges are
      * the official app's own limits where it has them. Three further limits
      * depend on the controller in hand and are applied by {@link Bike}: currents
      * never above what this unit was first seen with, gear speeds in order
-     * and never above its speed limiter, and regen never above its max.
-     * Calibration, identity, motor-matching and system-command words are
-     * deliberately absent.
+     * and never above the top speed it was first seen with, and regen never
+     * above its max. Calibration, identity, motor-matching and system-command
+     * words are deliberately absent.
+     *
+     * The word at 0x6C, "LimitSpeed" in the official app, is not a ceiling
+     * for the gear speeds and is not used: the Fardriver manual gives it as
+     * the speed for the switchable speed-limit mode only, and a stock Arctic
+     * Leopard XE Pro R holds 3500 rpm there beside a 12500 rpm top gear.
      */
     static final Param[] PARAMS = {
             new Param("response", G_THROTTLE, "Throttle response",
@@ -523,20 +539,20 @@ final class Fardriver {
                     0x2D, 160, 8000, 40, 0.25f, "A", true),
 
             word("low_rpm", G_MODES, "Low mode top speed",
-                    "Motor speed limit in the low mode. Never above mid", 0x28, 300, 12000, 100,
-                    1f, "rpm", false),
+                    "Motor speed limit in the low mode. Never above mid", 0x28, 300, TOP_RPM,
+                    100, 1f, "rpm", false),
             new Param("low_line", G_MODES, "Low mode power",
                     "Share of the battery current limit in the low mode", 0x32, 0, 8, 13, 128,
                     6, 100f / 128f, "%", null, false),
             word("mid_rpm", G_MODES, "Mid mode top speed",
-                    "Motor speed limit in the mid mode. Between low and high", 0x2A, 300, 12000,
-                    100, 1f, "rpm", false),
+                    "Motor speed limit in the mid mode. Between low and high", 0x2A, 300,
+                    TOP_RPM, 100, 1f, "rpm", false),
             new Param("mid_line", G_MODES, "Mid mode power",
                     "Share of the battery current limit in the mid mode", 0x32, 8, 8, 13, 128,
                     6, 100f / 128f, "%", null, false),
             word("high_rpm", G_MODES, "High mode top speed",
-                    "Motor speed limit in the high mode. Never above the controller's own"
-                            + " speed limiter", 0x15, 300, 12000, 100, 1f, "rpm", false),
+                    "Motor speed limit in the high mode. Never above the speed this"
+                            + " controller came with", 0x15, 300, TOP_RPM, 100, 1f, "rpm", false),
 
             // Only Off and On brake can be chosen: they are the two a verified
             // tuner has set on a real bike. Regen on throttle release brakes the
