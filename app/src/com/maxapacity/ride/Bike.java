@@ -71,11 +71,13 @@ final class Bike {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final List<Runnable> listeners = new ArrayList<>();
     private boolean active;
+    /** The pretend bike is standing in for a real one. Never saved. */
+    private boolean demo;
 
     // ---- Battery -----------------------------------------------------------
 
     private final AntBms.Assembler bmsFrames = new AntBms.Assembler();
-    private final BleLink bmsLink;
+    private BleLink bmsLink;
     private AntBms.Data battery;
     private long batteryAtMs;
     private String batteryStatus = "Not linked";
@@ -86,7 +88,7 @@ final class Bike {
     // ---- Controller --------------------------------------------------------
 
     private final Fardriver controllerMemory = new Fardriver();
-    private final BleLink controllerLink;
+    private BleLink controllerLink;
     private Fardriver.Live controller;
     private long controllerAtMs;
     private String controllerStatus = "Not linked";
@@ -95,8 +97,14 @@ final class Bike {
     private Bike(Context c) {
         context = c;
         prefs = Units.prefs(c);
+        makeLinks();
+    }
 
-        bmsLink = links.make(c, BleLink.uuid(0xFFE1), new BleLink.Listener() {
+    /** The two links, to the real bike or to the pretend one. */
+    private void makeLinks() {
+        final Context c = context;
+        Links make = demo ? DemoBike::make : links;
+        bmsLink = make.make(c, BleLink.uuid(0xFFE1), new BleLink.Listener() {
             @Override
             public void onReady() {
                 batteryStatus = "Reading";
@@ -121,7 +129,7 @@ final class Bike {
                 bmsAskedAtMs = 0;
                 bmsMisses = 0;
                 batteryStatus = "Live";
-                if (d.legacy != prefs.getBoolean("bike_bms_legacy", false)) {
+                if (!demo && d.legacy != prefs.getBoolean("bike_bms_legacy", false)) {
                     prefs.edit().putBoolean("bike_bms_legacy", d.legacy).apply();
                 }
                 changed();
@@ -137,7 +145,7 @@ final class Bike {
             }
         });
 
-        controllerLink = links.make(c, BleLink.uuid(0xFFEC), new BleLink.Listener() {
+        controllerLink = make.make(c, BleLink.uuid(0xFFEC), new BleLink.Listener() {
             @Override
             public void onReady() {
                 controllerStatus = "Reading";
@@ -225,7 +233,8 @@ final class Bike {
 
     private void connectMissing() {
         if (!active) return;
-        if (context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
+        // The pretend bike uses no radio, so it needs no permission.
+        if (!demo && context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT)
                 != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             return;
         }
@@ -261,11 +270,48 @@ final class Bike {
     }
 
     boolean batteryLinked() {
-        return !prefs.getString("bike_bms_name", "").isEmpty();
+        return demo || !prefs.getString("bike_bms_name", "").isEmpty();
     }
 
     boolean controllerLinked() {
-        return !prefs.getString("bike_ctl_name", "").isEmpty();
+        return demo || !prefs.getString("bike_ctl_name", "").isEmpty();
+    }
+
+    // ---- The pretend bike --------------------------------------------------
+
+    /** True while the pretend bike stands in for a real one. */
+    boolean demo() {
+        return demo;
+    }
+
+    /**
+     * Swaps the real links for the pretend bike, or back. It lives only in
+     * memory: restarting the app is back to the real bike, and nothing saved
+     * about a real bike, on the phone or on the bike, is touched.
+     *
+     * @return false when a change to a real controller is under way and this must wait
+     */
+    boolean setDemo(boolean on) {
+        if (on == demo) return true;
+        if (on && tuneState != TUNE_IDLE) return false;
+        main.removeCallbacks(retry);
+        main.removeCallbacks(bmsPoll);
+        main.removeCallbacks(hello);
+        bmsLink.close();
+        controllerLink.close();
+        battery = null;
+        controller = null;
+        // Whatever was on trial belonged to the bike that is going away.
+        abortTuning();
+        backedUp = false;
+        demo = on;
+        makeLinks();
+        batteryStatus = batteryLinked() ? "Connecting" : "Not linked";
+        controllerStatus = controllerLinked() ? "Connecting" : "Not linked";
+        active = true;
+        connectMissing();
+        changed();
+        return true;
     }
 
     boolean anyConfigured() {
@@ -273,14 +319,16 @@ final class Bike {
     }
 
     String batteryName() {
-        return prefs.getString("bike_bms_name", "");
+        return demo ? DemoBike.BATTERY_NAME : prefs.getString("bike_bms_name", "");
     }
 
     String controllerName() {
-        return prefs.getString("bike_ctl_name", "");
+        return demo ? DemoBike.CONTROLLER_NAME : prefs.getString("bike_ctl_name", "");
     }
 
     void link(int kind, String name) {
+        // Linking a real bike ends the pretend one.
+        setDemo(false);
         if (kind == KIND_BATTERY) {
             bmsLink.close();
             prefs.edit().putString("bike_bms_name", name).remove("bike_bms_legacy").apply();
@@ -502,7 +550,8 @@ final class Bike {
             }
         }
         if (!backedUp) {
-            if (!saveBackup()) {
+            // A pretend controller has nothing worth keeping a copy of.
+            if (!demo && !saveBackup()) {
                 cb.done(false, "A backup of the current settings could not be saved, so"
                         + " nothing was changed");
                 return;

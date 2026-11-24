@@ -7,7 +7,9 @@ Two halves that find each other:
   Bluetooth link to the bike (ANT BMS battery, Fardriver controller, with
   tuning), an app drawer, Copilot, and over-the-air updates. Each ride records
   its furthest lean left and right, and an optional crash alert texts your
-  location to a contact if a hard hit is followed by the bike not moving.
+  location to a contact if a hard hit is followed by the bike not moving. A
+  demo bike on the Bike screen shows every battery and controller screen with
+  made-up numbers when no bike is nearby.
 - **MAXAPACITY Deck** (`deck/`): a service on the Mac that drives a desk
   dashboard on a Spotify Car Thing, and takes rides home from the phone. It
   has its own [README](deck/README.md).

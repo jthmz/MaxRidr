@@ -946,8 +946,14 @@ public final class RideActivity extends Activity
         addBikeCell("TEMP", temp == Integer.MIN_VALUE ? null : String.valueOf(temp), "\u00B0C",
                 temp >= 85 ? Ui.DANGER : temp >= 70 ? Ui.WARN : Ui.TEXT, false);
         boolean fault = c != null && c.faults != 0;
-        addBikeCell(fault ? "FAULT" : "MODE", c == null ? null : fault ? "!" : c.speedModeName(),
-                "", fault ? Ui.DANGER : Ui.TEXT, false);
+        // The pretend bike says so in the cell that would otherwise name the mode.
+        if (link.demo() && !fault) {
+            addBikeCell("BIKE", "Demo", "", Ui.WARN, false);
+        } else {
+            addBikeCell(fault ? "FAULT" : "MODE",
+                    c == null ? null : fault ? "!" : c.speedModeName(),
+                    "", fault ? Ui.DANGER : Ui.TEXT, false);
+        }
         bikeStrip.addView(Ui.icon(this, Icons.CHEVRON_RIGHT, 20, Ui.TEXT_3));
     }
 
