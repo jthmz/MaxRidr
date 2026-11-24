@@ -20,8 +20,8 @@ unplugging it and plugging it back in returns it to the stock screen.
 | **Videos** | Every video on the board with a percent ring, status, next step and the newest cut file. Tap for details, then Watch cut / Folder / Studio / YouTube |
 | **Claude** | Each recent Claude session with a live task bar, renders and encodes in progress, things that just happened, files ready for you, and what is waiting on you |
 | **Launch** | App tiles with icons, mute, volume |
-| **Settings** (tap the clock, or the fifth button) | Day / Night brightness, alert sound, ring gauges for disk space and Mac load, Add a screen, Reload |
-| **Standby** | After four idle minutes: a large clock, subscribers, pipeline counts, and large rows with a bar for each Claude session, render and encode (the first one also lists its individual steps). Behind it: code rain, pictures from the channel and the website, and now and then a short silent clip from a finished video. Any touch or button wakes it |
+| **Settings** (tap the clock, or the fifth button) | Day / Night brightness, Standby, alert sound, ring gauges for disk space and Mac load, Add a screen, Reload |
+| **Standby** | After four idle minutes, or at once from **Standby** in Settings: a large clock, subscribers, pipeline counts, and large rows with a bar for each Claude session, render and encode (the first one also lists its individual steps). Behind it: code rain, pictures from the channel and the website, and now and then a short silent clip from a finished video. Any touch or button wakes it |
 
 Alerts pop up on the device when Claude finishes a task, a file becomes ready for you, a video
 changes status, a render or long encode ends, or the subscriber count moves.
@@ -31,6 +31,10 @@ changes status, a render or long encode ends, or the subscriber count moves.
 - **Knob**: Mac volume. **Knob press**: mute.
 - **Top buttons 1 to 4**: Home, Videos, Claude, Launch. **Fifth button**: Settings.
 - **Back button**: close the open sheet, or go Home.
+- **Standby whenever you like**: tap the clock (or press the fifth button), then **Standby**. It
+  works the same on the Car Thing, the preview on the Mac, a paired screen and the Ride app's Full
+  Deck, and sends that one screen to standby. A window on the Mac that is controlling the other
+  screens takes them with it.
 
 ## Other screens: a phone, a tablet, another computer
 
