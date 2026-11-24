@@ -307,12 +307,33 @@ final class DeckView extends Panel {
         shownState = now;
 
         content.removeAllViews();
+        addFullDeck();
         addChannel(s.optJSONObject("yt"));
         addPipeline(s.optJSONObject("board"));
         addClaude(s.optJSONArray("claude"));
         addAlerts(s.optJSONArray("alerts"));
         addMac(s);
         addApps(s.optJSONArray("apps"));
+    }
+
+    /** This screen is a glance. The whole Deck, with every control it has, is one tap away. */
+    private void addFullDeck() {
+        Context c = getContext();
+        LinearLayout row = Ui.row(c);
+        row.setBackground(Ui.pressable(c, Ui.SURFACE, Ui.HAIRLINE, 16));
+        row.setPadding(dp(16), dp(12), dp(16), dp(12));
+        row.addView(Ui.icon(c, Icons.MONITOR, 18, Ui.TEXT_2));
+        LinearLayout text = Ui.column(c);
+        text.addView(Ui.body(c, "Full Deck", Ui.TEXT));
+        text.addView(Ui.small(c, "Everything the Car Thing shows, with all its controls",
+                Ui.TEXT_3));
+        row.addView(text, Ui.left(c, Ui.weighted(), 12));
+        android.widget.ImageView go = Ui.icon(c, Icons.CHEVRON_RIGHT, 18, Ui.TEXT_3);
+        ((LinearLayout.LayoutParams) go.getLayoutParams()).leftMargin = dp(8);
+        row.addView(go);
+        row.setOnClickListener(v -> host.showFullDeck());
+        Ui.press(row);
+        content.addView(row, Ui.matchWrap());
     }
 
     private void addChannel(JSONObject yt) {

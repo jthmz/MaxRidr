@@ -35,6 +35,11 @@ After that the app's Deck screen shows the desk, and every ride is sent to the
 Mac after it is saved, or as soon as the phone is next in reach of the Deck. It
 only ever uses Wi-Fi or the cable, never mobile data, and a ride is sent once.
 
+The Deck screen is a glance in the app's own style. "Full Deck" on it opens
+the whole Deck, the same page the Car Thing shows with every tab and control,
+let in with the key the phone already holds. A phone left there on a charger
+is a desk display.
+
 When the link will not come up, the Deck connection sheet offers every other
 way in (search again, type or paste the Deck's address or its whole link, a
 USB cable), a short list of what to check, and a link report: what the phone
