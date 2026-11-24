@@ -139,6 +139,11 @@ final class DeckView extends Panel {
     // ---- Network ---------------------------------------------------------
 
     private void fetchState() {
+        // The link went between polls: show what is true now instead of asking nobody.
+        if (Deck.get(getContext()).state() != Deck.LINKED) {
+            restart();
+            return;
+        }
         final int gen = generation;
         final String url = baseUrl() + "/api/state";
         final String token = Deck.get(getContext()).requestKey();
@@ -159,7 +164,7 @@ final class DeckView extends Panel {
                     state = new JSONObject(read(conn.getInputStream()));
                 }
                 conn.disconnect();
-            } catch (IOException | IllegalArgumentException e) {
+            } catch (IOException | RuntimeException e) {
                 error = "The Deck stopped answering. Is the Mac awake and on this network?";
             } catch (JSONException e) {
                 error = "The Deck sent something this app could not read";
@@ -204,7 +209,7 @@ final class DeckView extends Panel {
                 }
                 ok = conn.getResponseCode() == 200;
                 conn.disconnect();
-            } catch (IOException | IllegalArgumentException e) {
+            } catch (IOException | RuntimeException e) {
                 ok = false;
             }
             if (!ok) {

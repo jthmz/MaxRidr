@@ -77,8 +77,8 @@ final class DeckLink {
             if (r.code == 403 && "not allowed".equals(r.text.trim())) {
                 return new Probe(SHUT, false, null);
             }
-        } catch (IOException | IllegalArgumentException e) {
-            // Not there.
+        } catch (IOException | RuntimeException e) {
+            // Not there, or not an address at all. Either way: no Deck here.
         }
         return new Probe(ABSENT, false, null);
     }
@@ -109,7 +109,7 @@ final class DeckLink {
             }
             String key = r.json.optString("key", "");
             return new Pairing(true, key.isEmpty() ? null : key, null);
-        } catch (IOException | JSONException | IllegalArgumentException e) {
+        } catch (IOException | JSONException | RuntimeException e) {
             return new Pairing(false, null, "unreachable");
         }
     }
@@ -180,7 +180,7 @@ final class DeckLink {
                 JSONObject f = no.optJSONObject(i);
                 if (f != null) out.refused.put(f.optString("name"), f.optString("why"));
             }
-        } catch (IOException | JSONException | IllegalArgumentException e) {
+        } catch (IOException | JSONException | RuntimeException e) {
             out.stopped = "The Deck stopped answering";
             return out;
         }
@@ -204,7 +204,7 @@ final class DeckLink {
                 } else {
                     out.refused.put(it.name, why(r, "The Deck did not accept it"));
                 }
-            } catch (IOException | IllegalArgumentException e) {
+            } catch (IOException | RuntimeException e) {
                 out.stopped = "The connection to the Deck dropped part-way";
                 return out;
             }

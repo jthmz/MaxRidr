@@ -268,6 +268,7 @@ public final class RideActivity extends Activity
         Bike.get(this).resume();
         Deck.get(this).addListener(deckChanged);
         Deck.get(this).attach(this);
+        if (deckLooking != null) handler.postDelayed(deckRelook, 4000);
         for (Panel p : panels) if (p.isOpen()) p.onHostResume();
         Updater.autoCheck(this, this);
         handler.post(tick);
@@ -282,6 +283,7 @@ public final class RideActivity extends Activity
         for (Panel p : panels) if (p.isOpen()) p.onHostPause();
         Deck.get(this).detach(this);
         Deck.get(this).removeListener(deckChanged);
+        handler.removeCallbacks(deckRelook);
         Bike.get(this).removeListener(bikeChanged);
         // The bike link stays up during a ride so telemetry keeps flowing
         // with the screen off; otherwise it is dropped to save both batteries.
