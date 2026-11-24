@@ -88,6 +88,12 @@ jobs:
         with:
           path: ~/.m2/repository/org/robolectric
           key: robolectric-runtime-sdk33-sdk35-v1
+          # Until main has saved a store under that name, start from the one
+          # it already has: only what is missing is then downloaded. A build
+          # that had to fetch everything was turned away by the download site
+          # (HTTP 429) and failed every screen test.
+          restore-keys: |
+            robolectric-runtime-sdk35-v1
 
       - name: Signing key
         env:
