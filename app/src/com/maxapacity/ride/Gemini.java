@@ -133,7 +133,7 @@ final class Gemini {
     }
 
     /** Who the copilot is, plus what the dashboard knows right now. */
-    private static String persona(Context c) {
+    static String persona(Context c) {
         RideState s = RideState.get();
         StringBuilder sb = new StringBuilder()
                 .append("You are the MAXAPACITY Copilot, built into a ride phone mounted on an ")
@@ -175,6 +175,8 @@ final class Gemini {
                     l.powerW() / 1000f, l.rpm, l.mosfetTempC, l.speedModeName()));
             if (l.faults != 0) sb.append(" Controller faults: ").append(l.faultNames()).append('.');
         }
+        // With the settings and their limits in hand, tune questions get real answers.
+        sb.append(TuneBrief.forCopilot(bike));
         if (bike.demo()) {
             sb.append(" Those battery and controller readings come from the app's demo bike:"
                     + " they are made up, and no real bike is connected. Say so if asked"

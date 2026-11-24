@@ -292,6 +292,8 @@ public class ScreensTest {
     panel("tune").open();
     idle(400);
     sweep("tune screen with the demo bike");
+    org.junit.Assert.assertTrue("a brief written from the demo says it is one",
+        TuneBrief.build(c, "More range.").startsWith("Note: this comes from the app's demo bike."));
     panel("tune").close();
     idle(400);
 
@@ -367,6 +369,121 @@ public class ScreensTest {
     Bike.get(c).revert((ok, m) -> { });
     run(8000);
     org.junit.Assert.assertEquals(Bike.TUNE_IDLE, Bike.get(c).tuneState());
+  }
+
+  /** The first view of a kind under a root, or the one showing these words (buttons show theirs in capitals). */
+  static <T extends View> T find(View root, Class<T> kind, String text) {
+    if (kind.isInstance(root) && (text == null || (root instanceof android.widget.TextView
+        && text.equalsIgnoreCase(((android.widget.TextView) root).getText().toString())))) {
+      return kind.cast(root);
+    }
+    if (root instanceof android.view.ViewGroup) {
+      android.view.ViewGroup g = (android.view.ViewGroup) root;
+      for (int i = 0; i < g.getChildCount(); i++) {
+        T hit = find(g.getChildAt(i), kind, text);
+        if (hit != null) return hit;
+      }
+    }
+    return null;
+  }
+
+  /** Taps whatever carries these words: on the sheet if one is up, else on the screen. */
+  void tap(String words) {
+    View root = Sheet.current() != null ? Sheet.current() : a.getWindow().getDecorView();
+    View v = find(root, android.widget.TextView.class, words);
+    org.junit.Assert.assertNotNull("on screen: " + words, v);
+    while (v != null && !v.hasOnClickListeners()) v = v.getParent() instanceof View ? (View) v.getParent() : null;
+    org.junit.Assert.assertNotNull("tappable: " + words, v);
+    v.performClick();
+    idle(400);
+  }
+
+  /** The text another app was just handed, or null if none was. */
+  String handedOver() {
+    android.content.Intent started;
+    do {
+      started = Shadows.shadowOf(a).getNextStartedActivity();
+    } while (started != null && !android.content.Intent.ACTION_CHOOSER.equals(started.getAction()));
+    if (started == null) return null;
+    android.content.Intent send = started.getParcelableExtra(android.content.Intent.EXTRA_INTENT);
+    org.junit.Assert.assertEquals(android.content.Intent.ACTION_SEND, send.getAction());
+    org.junit.Assert.assertEquals("text/plain", send.getType());
+    return send.getStringExtra(android.content.Intent.EXTRA_TEXT);
+  }
+
+  /** Tune ideas writes the bike up and hands it to another app. The bike itself is never written to. */
+  @Test public void tuneIdeasSendsABriefAndLeavesTheBikeAlone() throws Exception {
+    start();
+    Bike bike = Bike.get(c);
+    bike.link(Bike.KIND_BATTERY, "ANT-BLE16ZMUB");
+    bike.link(Bike.KIND_CONTROLLER, "CONTROLCN368");
+    run(3000);
+    a.showTune();
+    run(600);
+    int[] saved = ctl.flash.clone();
+    sweep("tune, offering ideas");
+
+    tap("Tune ideas");
+    org.junit.Assert.assertNotNull("the goals come up", Sheet.current());
+    sweep("tune ideas sheet");
+    tap("More range");
+    String brief = handedOver();
+    org.junit.Assert.assertNotNull("another app is offered the brief", brief);
+    org.junit.Assert.assertTrue(brief, brief.contains("WHAT I WANT\nMore range."));
+    org.junit.Assert.assertTrue("the linked battery is in it: " + brief, brief.contains(" cells in series, "));
+    org.junit.Assert.assertFalse(brief, brief.contains("demo bike") || brief.contains("ABOUT MY BIKE"));
+    for (Fardriver.Param p : Fardriver.PARAMS) {
+      String now = p.format(bike.controllerMemory().raw(p));
+      org.junit.Assert.assertTrue(p.name, brief.contains("- " + p.name + ": " + now + ". "));
+      if (p.options != null) continue;
+      // The range it gives is the one the Tune screen holds this very controller to.
+      String top = p.format(TuneBrief.highest(p, bike.controllerMemory().raw(p), bike.ceiling(p)));
+      org.junit.Assert.assertTrue(p.name + " up to " + top, brief.contains("- " + p.name + ": " + now + ". Range "
+          + p.format(TuneBrief.lowest(p, bike.controllerMemory().raw(p))) + " to " + top));
+    }
+
+    // A note about the bike, kept for every brief after it.
+    ((TunePanel) panel("tune")).showIdeas();
+    idle(400);
+    tap("About my bike");
+    sweep("about my bike sheet");
+    find(Sheet.current(), android.widget.EditText.class, null).setText(" DRAX X-Pro 72V, 13/52 gearing, 190 lb rider ");
+    tap("Save");
+    org.junit.Assert.assertEquals("DRAX X-Pro 72V, 13/52 gearing, 190 lb rider", Units.prefs(c).getString(TuneBrief.ABOUT, ""));
+    org.junit.Assert.assertNotNull("back at the goals", Sheet.current());
+    sweep("tune ideas sheet, with the note");
+
+    // In the rider's own words: nothing goes out until something has been said.
+    tap("Something else");
+    sweep("own words sheet");
+    tap("Send");
+    org.junit.Assert.assertNull("an empty wish is not sent", handedOver());
+    org.junit.Assert.assertNotNull("and the sheet stays for another go", Sheet.current());
+    find(Sheet.current(), android.widget.EditText.class, null).setText("Less wheelspin on wet roots");
+    tap("Send");
+    brief = handedOver();
+    org.junit.Assert.assertNotNull(brief);
+    org.junit.Assert.assertTrue(brief, brief.contains("WHAT I WANT\nLess wheelspin on wet roots\n"));
+    org.junit.Assert.assertTrue(brief, brief.contains("ABOUT MY BIKE AND ME\nDRAX X-Pro 72V, 13/52 gearing, 190 lb rider\n"));
+
+    org.junit.Assert.assertEquals("no setting was written", 0, ctl.settingWriteCount);
+    org.junit.Assert.assertEquals(Bike.TUNE_IDLE, bike.tuneState());
+    org.junit.Assert.assertArrayEquals("and nothing was saved", saved, ctl.flash);
+  }
+
+  /** Copilot can answer tune questions once the settings are in: it is told them and their limits. */
+  @Test public void copilotIsToldTheTuneOnceTheSettingsAreRead() throws Exception {
+    start();
+    org.junit.Assert.assertFalse(Gemini.persona(c).contains("Tune settings on the controller"));
+    Bike.get(c).link(Bike.KIND_CONTROLLER, "CONTROLCN368");
+    run(3000);
+    String persona = Gemini.persona(c);
+    org.junit.Assert.assertTrue(persona, persona.contains("Tune settings on the controller now"));
+    for (Fardriver.Param p : Fardriver.PARAMS) {
+      org.junit.Assert.assertTrue(p.name, persona.contains("- " + p.name + ": "
+          + p.format(Bike.get(c).controllerMemory().raw(p)) + ". "));
+    }
+    org.junit.Assert.assertTrue(persona.contains("Rules the app enforces:"));
   }
 
   /** Which screen, if any, is on top. */
