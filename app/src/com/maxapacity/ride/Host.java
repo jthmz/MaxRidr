@@ -45,6 +45,12 @@ interface Host {
     /** Ask the phone to let rides be written to Health Connect. */
     void connectHealth();
 
+    /** Walk the rider round the dashboard, one part at a time. */
+    void showTour();
+
+    /** Every note on what updates have brought. */
+    void showWhatsNew();
+
     /** Show the note left by the last crash, with a way to share it. */
     void showLastCrash();
 

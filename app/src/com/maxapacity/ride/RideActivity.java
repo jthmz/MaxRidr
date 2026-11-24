@@ -105,7 +105,18 @@ public final class RideActivity extends Activity
     private LinearLayout bikeStrip;
     private String bikeStripKey = "";
     private LinearLayout slotRow;
+    private View statsCard;
+    private LinearLayout dock;
+    private View gear;
     private GestureDetector gestures;
+
+    /** The welcome or the what's-new sheet while it is up. */
+    private Sheet greeting;
+    /** A greeting has been shown, or there was none to show, since this screen was built. */
+    private boolean greeted;
+    /** This time in front belongs to something else: a launch that named a screen, or a crash to tell of. */
+    private boolean spokenFor;
+    private final Runnable greet = this::greet;
 
     private AppDrawer drawer;
     private RidesPanel rides;
@@ -152,12 +163,15 @@ public final class RideActivity extends Activity
         getWindow().setStatusBarColor(Ui.BG);
         getWindow().setNavigationBarColor(Ui.BG);
         RideStore.purgeRemoved(this);
+        WhatsNew.arrive(this);
         setContentView(buildUi());
         Strava.setScreen(this);
+        spokenFor = namesAScreen(getIntent());
         if (CrashLog.read(this) != null) {
             // Posted so the message bar is laid out over a finished screen.
             handler.post(() -> say("The app closed unexpectedly last time", "DETAILS",
                     this::showLastCrash));
+            spokenFor = true;
         }
         // Only on a fresh start: a rebuilt screen should not jump back to
         // whatever it was first launched into.
@@ -170,7 +184,7 @@ public final class RideActivity extends Activity
             @Override
             public boolean onFling(MotionEvent down, MotionEvent up, float vx, float vy) {
                 if (down == null || Math.abs(vy) < Math.abs(vx) * 1.5f) return false;
-                if (Sheet.current() != null) return false;
+                if (Sheet.current() != null || Tour.current() != null) return false;
                 float dy = up.getY() - down.getY();
                 Panel top = topPanel();
                 if (top == null && dy < -dp(72)) {
@@ -223,6 +237,8 @@ public final class RideActivity extends Activity
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         Sheet.dismissCurrent();
+        Tour.dismissCurrent();
+        spokenFor = namesAScreen(intent);
         Panel wanted = screenNamedBy(intent);
         for (Panel p : panels) if (p != wanted) p.close();
         if (wanted != null) wanted.open();
@@ -262,6 +278,11 @@ public final class RideActivity extends Activity
         }
     }
 
+    /** True for a launch that asks for a screen by name, the dashboard ("home") included. */
+    private static boolean namesAScreen(Intent intent) {
+        return intent != null && intent.getStringExtra("open") != null;
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
@@ -284,13 +305,19 @@ public final class RideActivity extends Activity
         for (Panel p : panels) if (p.isOpen()) p.onHostResume();
         Updater.autoCheck(this, this);
         handler.post(tick);
+        // Through the screen itself, so it waits until the screen is in its
+        // window: a sheet put up before that is not counted as showing, and
+        // the first thing to ask after it would lose track of it.
+        frame.post(greet);
     }
 
     @Override
     protected void onPause() {
         super.onPause();
         handler.removeCallbacks(tick);
+        frame.removeCallbacks(greet);
         resumed = false;
+        spokenFor = false;
         updateDial();
         for (Panel p : panels) if (p.isOpen()) p.onHostPause();
         Deck.get(this).detach(this);
@@ -305,10 +332,11 @@ public final class RideActivity extends Activity
         stopPassiveGps();
     }
 
-    /** Home screen: Back steps out of a sheet, then a screen, and stops at the dashboard. */
+    /** Home screen: Back steps out of a sheet, then the tour, then a screen, and stops at the dashboard. */
     @Override
     public void onBackPressed() {
         if (Sheet.dismissCurrent()) return;
+        if (Tour.dismissCurrent()) return;
         Panel top = topPanel();
         if (top != null) top.close();
     }
@@ -379,6 +407,106 @@ public final class RideActivity extends Activity
     @Override
     public void showFullDeck() {
         fullDeck.open();
+    }
+
+    // ---- Welcome, tour and what's new ---------------------------------------
+
+    /**
+     * Once each time the home screen is built, when nothing else is in the
+     * way: the offer of a tour to someone new, or what an update brought.
+     *
+     * It waits for a plain arrival at the dashboard. A launch that names a
+     * screen is someone driving the app from outside (a shortcut, or the
+     * on-phone test script, which would otherwise answer the welcome before
+     * the rider ever saw it), and a crash has its own thing to say; in both
+     * cases the greeting keeps for the next time the app comes to the front.
+     */
+    private void greet() {
+        if (greeted || !resumed || spokenFor || !frame.isAttachedToWindow()) return;
+        if (RideState.get().isRecording() || Sheet.current() != null || Tour.current() != null
+                || topPanel() != null) {
+            return;
+        }
+        greeted = true;
+        if (!prefs.getBoolean(Tour.OFFERED, false)) {
+            // Answered once it has gone, whichever way the rider closed it.
+            greeting = new Sheet(frame, "Welcome to MAXAPACITY Ride",
+                    "This is the bike's home screen: your speed, your rides, the bike's"
+                            + " battery and controller, and your apps. A one-minute tour shows"
+                            + " where everything is. It stays in Settings for whenever you want"
+                            + " it.")
+                    .action("Not now", Ui.SECONDARY, true, null)
+                    .action("Start tour", Ui.PRIMARY, true, this::showTour)
+                    .onDismiss(() -> {
+                        prefs.edit().putBoolean(Tour.OFFERED, true).apply();
+                        greetingOver();
+                    })
+                    .show();
+            return;
+        }
+        List<WhatsNew.Note> news = WhatsNew.unseen(this);
+        if (news.isEmpty()) return;
+        greeting = WhatsNew.news(this, news)
+                .onDismiss(() -> {
+                    WhatsNew.markSeen(this);
+                    greetingOver();
+                })
+                .show();
+    }
+
+    /** True while the welcome, the what's-new sheet or the tour has the screen, or is about to. */
+    private boolean greetingUp() {
+        if (Tour.current() != null || (greeting != null && Sheet.current() == greeting)) return true;
+        return !greeted && (!prefs.getBoolean(Tour.OFFERED, false)
+                || !WhatsNew.unseen(this).isEmpty());
+    }
+
+    private void greetingOver() {
+        greeting = null;
+        // A Deck that turned up meanwhile was held back so as not to be lost under the sheet.
+        offerDeck();
+    }
+
+    /** A walk round the dashboard, one part at a time. */
+    @Override
+    public void showTour() {
+        Sheet.dismissCurrent();
+        for (Panel p : panels) p.close();
+        new Tour(frame)
+                .stop(gauge, "Speed",
+                        "Your speed, from GPS. Tap the dial to switch between mph and km/h. If"
+                                + " the tag at the top says LOCATION OFF, tap it to allow"
+                                + " location.")
+                .stop(statsCard, "The ride so far",
+                        "Distance, time moving, top and average speed, stops and climb. They"
+                                + " count while a ride is recording.")
+                .stop(rideButtonSlot, "Recording a ride",
+                        "Rides record by themselves: one starts once you are moving and ends"
+                                + " after ten minutes stopped. This button starts or ends one by"
+                                + " hand. Settings can turn the automatic part off.")
+                .stop(bikeStrip, "Your bike",
+                        "Link the battery and the controller over Bluetooth to see charge,"
+                                + " power and temperature here, and to tune the controller. No"
+                                + " bike nearby? The Bike screen has a demo bike to try.")
+                .stop(slotRow, "Ride apps",
+                        "Four apps one tap away while riding. Tap an empty slot to choose one."
+                                + " Press and hold a slot to change it.")
+                .stop(dock, "Everything else",
+                        "Apps is every app on the phone, and swiping up opens it too. Rides is"
+                                + " your ride history. Copilot answers questions, typed or"
+                                + " spoken. Deck shows your desk dashboard, if you have a"
+                                + " MAXAPACITY Deck.")
+                .stop(gear, "Settings",
+                        "Strava, the crash alert, units and updates are in here. So is this"
+                                + " tour, whenever you want it again.")
+                .onEnd(this::greetingOver)
+                .show();
+    }
+
+    /** Every note on what updates have brought, newest first. */
+    @Override
+    public void showWhatsNew() {
+        WhatsNew.history(this).show();
     }
 
     @Override
@@ -703,15 +831,7 @@ public final class RideActivity extends Activity
         settings.refresh();
         deck.linkChanged();
         fullDeck.linkChanged();
-        Deck found = Deck.get(this);
-        // The first time a Deck turns up, say so: nobody should have to go looking for it.
-        if (found.state() == Deck.FOUND
-                && !found.address().equals(prefs.getString("deck_offered", ""))) {
-            prefs.edit().putString("deck_offered", found.address()).apply();
-            if (Sheet.current() == null) {
-                say("Your Deck is on this network", "PAIR", this::editDeckConnection);
-            }
-        }
+        offerDeck();
         // Someone waiting on the "looking" sheet is taken straight to the next step.
         if (deckLooking == null || Sheet.current() != deckLooking) return;
         Deck d = Deck.get(this);
@@ -724,6 +844,22 @@ public final class RideActivity extends Activity
             say("Linked to your Deck");
         } else {
             deckLooking.setMessage(deckLookingText(d));
+        }
+    }
+
+    /** The first time a Deck turns up, say so: nobody should have to go looking for it. */
+    private void offerDeck() {
+        Deck found = Deck.get(this);
+        if (found.state() != Deck.FOUND
+                || found.address().equals(prefs.getString("deck_offered", ""))) {
+            return;
+        }
+        // Under the welcome or the tour it would go unseen, and a sheet sliding up
+        // takes a message bar down with it: it is said once they are done.
+        if (greetingUp()) return;
+        prefs.edit().putString("deck_offered", found.address()).apply();
+        if (Sheet.current() == null) {
+            say("Your Deck is on this network", "PAIR", this::editDeckConnection);
         }
     }
 
@@ -1272,6 +1408,7 @@ public final class RideActivity extends Activity
             }
             Sheet.setInsets(typing.top, typing.bottom);
             Snack.setInsets(typing.top, typing.bottom);
+            Tour.setInsets(typing.top, typing.bottom);
             return insets;
         });
 
@@ -1303,7 +1440,7 @@ public final class RideActivity extends Activity
             if (!hasLocationPermission()) requestLocation(false);
         });
         header.addView(gpsStatus, Ui.wrap());
-        View gear = Ui.iconButton(this, Icons.SETTINGS, "Settings");
+        gear = Ui.iconButton(this, Icons.SETTINGS, "Settings");
         gear.setOnClickListener(v -> settings.open());
         header.addView(gear, Ui.left(this, new LinearLayout.LayoutParams(dp(48), dp(48)), 4));
         LinearLayout.LayoutParams headerLp = new LinearLayout.LayoutParams(
@@ -1343,6 +1480,7 @@ public final class RideActivity extends Activity
         climbValue = stat(statsBottom, "CLIMB");
         stats.addView(statsBottom, Ui.matchWrap());
         root.addView(stats, Ui.matchWrap());
+        statsCard = stats;
 
         // Primary action.
         rideButtonSlot = new FrameLayout(this);
@@ -1363,7 +1501,7 @@ public final class RideActivity extends Activity
         root.addView(slotRow, Ui.top(this, Ui.matchWrap(), 12));
 
         // Dock: the other destinations.
-        LinearLayout dock = Ui.row(this);
+        dock = Ui.row(this);
         addDock(dock, Icons.LAYOUT_GRID, "Apps", v -> drawer.open());
         addDock(dock, Icons.ROUTE, "Rides", v -> rides.open());
         addDock(dock, Icons.SPARKLES, "Copilot", v -> copilot.open());

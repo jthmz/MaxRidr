@@ -69,8 +69,9 @@ public class ScreensTest {
         android.Manifest.permission.ACCESS_FINE_LOCATION,
         android.Manifest.permission.BLUETOOTH_CONNECT,
         android.Manifest.permission.BLUETOOTH_SCAN);
-    // No update checks: the tests must not depend on, or download from, GitHub.
-    Units.prefs(c).edit().clear().putBoolean("auto_update", false).apply();
+    // No update checks: the tests must not depend on, or download from, GitHub. And as a rider
+    // who has already answered the welcome, so each test starts on the bare dashboard.
+    Units.prefs(c).edit().clear().putBoolean("auto_update", false).putBoolean(Tour.OFFERED, true).apply();
     // As a build with no Strava application of its own, whatever this one was built with.
     Strava.setBuiltInApp(null, null);
     Bike.links = (ctx, uuid, l) -> {
@@ -464,9 +465,10 @@ public class ScreensTest {
     return null;
   }
 
-  /** Taps whatever carries these words: on the sheet if one is up, else on the screen. */
+  /** Taps whatever carries these words: on the sheet if one is up, else on the tour's card, else on the screen. */
   void tap(String words) {
-    View root = Sheet.current() != null ? Sheet.current() : a.getWindow().getDecorView();
+    View root = Sheet.current() != null ? Sheet.current()
+        : Tour.current() != null ? Tour.current() : a.getWindow().getDecorView();
     View v = find(root, android.widget.TextView.class, words);
     org.junit.Assert.assertNotNull("on screen: " + words, v);
     while (v != null && !v.hasOnClickListeners()) v = v.getParent() instanceof View ? (View) v.getParent() : null;
@@ -644,6 +646,273 @@ public class ScreensTest {
           + p.format(Bike.get(c).controllerMemory().raw(p)) + ". "));
     }
     org.junit.Assert.assertTrue(persona.contains("Rules the app enforces:"));
+  }
+
+  // ---- The welcome, the tour and what's new ------------------------------------
+
+  /** As the phone of someone who has only just installed the app. */
+  void asANewRider() {
+    Units.prefs(c).edit().remove(Tour.OFFERED).remove(WhatsNew.SEEN).apply();
+  }
+
+  /** As a phone whose app has updated itself since it was installed. */
+  void asAnUpdatedApp() {
+    android.content.pm.PackageInfo info =
+        Shadows.shadowOf(c.getPackageManager()).getInternalMutablePackageInfo(c.getPackageName());
+    info.firstInstallTime = 1000L;
+    info.lastUpdateTime = 2000L;
+  }
+
+  /** The home screen torn down and built again, as when the app is next opened. */
+  void restart() {
+    controller.pause().stop().destroy();
+    controller = null;
+    start();
+  }
+
+  View onScreen(String words) {
+    return find(a.getWindow().getDecorView(), android.widget.TextView.class, words);
+  }
+
+  /** Where the tour's light is, as last drawn. */
+  android.graphics.RectF lit() throws Exception {
+    Field f = Tour.class.getDeclaredField("lit");
+    f.setAccessible(true);
+    return (android.graphics.RectF) f.get(Tour.current());
+  }
+
+  static final String[] STOPS = {"Speed", "The ride so far", "Recording a ride", "Your bike", "Ride apps",
+      "Everything else", "Settings"};
+
+  @Test public void aNewRiderIsWelcomedAndWalkedRoundTheDashboard() throws Exception {
+    asANewRider();
+    start();
+    org.junit.Assert.assertNotNull("the welcome is up",
+        find(Sheet.current(), android.widget.TextView.class, "Welcome to MAXAPACITY Ride"));
+    sweep("welcome sheet");
+    tap("Start tour");
+    org.junit.Assert.assertNull(Sheet.current());
+    org.junit.Assert.assertNotNull("the tour starts", Tour.current());
+    float d = a.getResources().getDisplayMetrics().density;
+    for (int i = 0; i < STOPS.length; i++) {
+      org.junit.Assert.assertNotNull(STOPS[i], find(Tour.current(), android.widget.TextView.class, STOPS[i]));
+      org.junit.Assert.assertNotNull(find(Tour.current(), android.widget.TextView.class, (i + 1) + " OF " + STOPS.length));
+      sweep("tour, " + STOPS[i]);
+      // At a phone's full size each stop lights a real part of the dashboard, and the card sits clear of it.
+      android.graphics.RectF lit = lit();
+      org.junit.Assert.assertTrue(STOPS[i] + " lights " + lit, lit.width() >= 40 * d && lit.height() >= 40 * d);
+      View card = Tour.current().getChildAt(0);
+      float top = card.getTop() + card.getTranslationY();
+      org.junit.Assert.assertTrue(STOPS[i] + ": the card (" + top + " to " + (top + card.getHeight()) + ") is clear of " + lit,
+          top >= lit.bottom || top + card.getHeight() <= lit.top);
+      org.junit.Assert.assertTrue(STOPS[i] + ": the card is on the screen", top >= 0 && top + card.getHeight() <= 851 * d);
+      tap(i == STOPS.length - 1 ? "Done" : "Next");
+    }
+    org.junit.Assert.assertNull("Done on the last stop ends it", Tour.current());
+    org.junit.Assert.assertTrue(Units.prefs(c).getBoolean(Tour.OFFERED, false));
+    sweep("dashboard after the tour");
+
+    // Offered once: the next time the app opens it is the plain dashboard.
+    restart();
+    org.junit.Assert.assertNull(Sheet.current());
+    org.junit.Assert.assertNull(Tour.current());
+  }
+
+  @Test public void aTourTurnedDownStaysInSettings() throws Exception {
+    asANewRider();
+    start();
+    tap("Not now");
+    org.junit.Assert.assertNull(Sheet.current());
+    org.junit.Assert.assertNull(Tour.current());
+    org.junit.Assert.assertTrue("no is an answer too", Units.prefs(c).getBoolean(Tour.OFFERED, false));
+    restart();
+    org.junit.Assert.assertNull("and it is not asked again", Sheet.current());
+
+    panel("settings").open();
+    idle(400);
+    tap("Take the tour");
+    org.junit.Assert.assertNotNull(Tour.current());
+    org.junit.Assert.assertFalse("it is a tour of the dashboard, so Settings steps aside", panel("settings").isOpen());
+    // Nothing underneath reacts while it is up: a swipe does not open the app drawer.
+    View under = a.getWindow().getDecorView();
+    long t = android.os.SystemClock.uptimeMillis();
+    for (int i = 0; i <= 6; i++) {
+      android.view.MotionEvent e = android.view.MotionEvent.obtain(t, t + i * 10,
+          i == 0 ? android.view.MotionEvent.ACTION_DOWN : i == 6 ? android.view.MotionEvent.ACTION_UP
+              : android.view.MotionEvent.ACTION_MOVE, under.getWidth() / 2f, under.getHeight() * 0.8f - i * 120, 0);
+      a.dispatchTouchEvent(e);
+      e.recycle();
+    }
+    idle(400);
+    org.junit.Assert.assertNull("no screen opened under the tour", openScreen());
+
+    // Skip on the first card ends it, as do the cross and the Back key from anywhere.
+    tap("Skip");
+    org.junit.Assert.assertNull(Tour.current());
+    a.showTour();
+    idle(400);
+    tap("Next");
+    tap("Next");
+    tap("Back");
+    org.junit.Assert.assertNotNull("Back goes one stop back", find(Tour.current(), android.widget.TextView.class, "2 OF " + STOPS.length));
+    a.onBackPressed();
+    idle(400);
+    org.junit.Assert.assertNull("the Back key ends the tour", Tour.current());
+    a.showTour();
+    idle(400);
+    View cross = null;
+    java.util.ArrayDeque<View> look = new java.util.ArrayDeque<>();
+    look.add(Tour.current());
+    while (!look.isEmpty() && cross == null) {
+      View v = look.poll();
+      if ("End the tour".contentEquals(v.getContentDescription() == null ? "" : v.getContentDescription())) cross = v;
+      if (v instanceof android.view.ViewGroup) {
+        for (int i = 0; i < ((android.view.ViewGroup) v).getChildCount(); i++) look.add(((android.view.ViewGroup) v).getChildAt(i));
+      }
+    }
+    org.junit.Assert.assertNotNull("the cross is there", cross);
+    cross.performClick();
+    idle(400);
+    org.junit.Assert.assertNull(Tour.current());
+    // Home, or a launch that names a screen, takes it down as well.
+    a.showTour();
+    idle(400);
+    a.onNewIntent(new android.content.Intent(android.content.Intent.ACTION_MAIN).putExtra("open", "rides"));
+    idle(400);
+    org.junit.Assert.assertNull(Tour.current());
+    org.junit.Assert.assertEquals("rides", openScreen());
+  }
+
+  /** The welcome keeps for a moment when it would be seen: not under a launch that names a screen, not mid-ride. */
+  @Test public void theWelcomeWaitsForAPlainArrivalAtTheDashboard() throws Exception {
+    asANewRider();
+    // The on-phone test script opens the app this way, a second or so before it asks for the next screen.
+    controller = Robolectric.buildActivity(RideActivity.class,
+        new android.content.Intent(android.content.Intent.ACTION_MAIN).putExtra("open", "home"));
+    a = controller.setup().get();
+    idle(400);
+    org.junit.Assert.assertNull("not while something else is driving the app", Sheet.current());
+    org.junit.Assert.assertFalse(Units.prefs(c).getBoolean(Tour.OFFERED, false));
+    controller.pause();
+    a.onNewIntent(new android.content.Intent(android.content.Intent.ACTION_MAIN).putExtra("open", "settings"));
+    controller.resume();
+    idle(400);
+    org.junit.Assert.assertNull(Sheet.current());
+    controller.pause();
+    a.onNewIntent(new android.content.Intent(android.content.Intent.ACTION_MAIN).putExtra("open", "home"));
+    controller.resume();
+    idle(400);
+    org.junit.Assert.assertNull(Sheet.current());
+    org.junit.Assert.assertFalse("still owed", Units.prefs(c).getBoolean(Tour.OFFERED, false));
+
+    // Mid-ride is no time for it either.
+    RideState.get().start();
+    try {
+      controller.pause();
+      controller.resume();
+      idle(400);
+      org.junit.Assert.assertNull("not during a ride", Sheet.current());
+    } finally {
+      RideState.get().stop();
+    }
+
+    // The rider picks the phone up afterwards: there it is.
+    controller.pause();
+    controller.resume();
+    idle(400);
+    org.junit.Assert.assertNotNull(find(Sheet.current(), android.widget.TextView.class, "Welcome to MAXAPACITY Ride"));
+    // Closing it any way is an answer. Here, the Back key.
+    a.onBackPressed();
+    idle(400);
+    org.junit.Assert.assertTrue(Units.prefs(c).getBoolean(Tour.OFFERED, false));
+  }
+
+  @Test public void anUpdateSaysWhatItBroughtOnce() throws Exception {
+    // A phone whose app was last a build from before there were notes.
+    asAnUpdatedApp();
+    asANewRider();
+    start();
+    org.junit.Assert.assertNotNull("headed with the version the phone now has",
+        find(Sheet.current(), android.widget.TextView.class, "What's new in " + Updater.versionName(c)));
+    for (WhatsNew.Item item : WhatsNew.NOTES[0].items) {
+      org.junit.Assert.assertNotNull(item.title, find(Sheet.current(), android.widget.TextView.class, item.title));
+      org.junit.Assert.assertNotNull(item.title, find(Sheet.current(), android.widget.TextView.class, item.detail));
+    }
+    org.junit.Assert.assertNull("only the newest note is news to them",
+        find(Sheet.current(), android.widget.TextView.class, WhatsNew.NOTES[1].items[0].title));
+    org.junit.Assert.assertTrue("someone who already has the app is not given the welcome",
+        Units.prefs(c).getBoolean(Tour.OFFERED, false));
+    sweep("what's new sheet");
+    tap("Got it");
+    org.junit.Assert.assertNull(Sheet.current());
+    org.junit.Assert.assertEquals(WhatsNew.latest(), Units.prefs(c).getInt(WhatsNew.SEEN, -1));
+    restart();
+    org.junit.Assert.assertNull("said once", Sheet.current());
+
+    // A phone two updates behind is told about both, newest first.
+    Units.prefs(c).edit().putInt(WhatsNew.SEEN, WhatsNew.latest() - 2).apply();
+    restart();
+    for (int n = 0; n < 2; n++) {
+      for (WhatsNew.Item item : WhatsNew.NOTES[n].items) {
+        org.junit.Assert.assertNotNull(item.title, find(Sheet.current(), android.widget.TextView.class, item.title));
+      }
+    }
+    sweep("what's new sheet, two updates at once");
+    Sheet.dismissCurrent();
+    idle(400);
+    org.junit.Assert.assertEquals(WhatsNew.latest(), Units.prefs(c).getInt(WhatsNew.SEEN, -1));
+
+    // Settings keeps every note, under the month it came in.
+    panel("settings").open();
+    idle(400);
+    tap("What's new");
+    org.junit.Assert.assertNotNull(find(Sheet.current(), android.widget.TextView.class, "What's new"));
+    org.junit.Assert.assertNotNull(find(Sheet.current(), android.widget.TextView.class, WhatsNew.NOTES[0].when));
+    for (WhatsNew.Note note : WhatsNew.NOTES) {
+      for (WhatsNew.Item item : note.items) {
+        org.junit.Assert.assertNotNull(item.title, find(Sheet.current(), android.widget.TextView.class, item.title));
+      }
+    }
+    sweep("what's new, every note");
+    tap("Done");
+    org.junit.Assert.assertNull(Sheet.current());
+  }
+
+  @Test public void settingsHasTheWayToTheWebsite() throws Exception {
+    start();
+    panel("settings").open();
+    idle(400);
+    tap("MAXAPACITY website");
+    android.content.Intent opened;
+    do {
+      opened = Shadows.shadowOf(a).getNextStartedActivity();
+    } while (opened != null && !android.content.Intent.ACTION_VIEW.equals(opened.getAction()));
+    org.junit.Assert.assertNotNull("the browser is asked for the site", opened);
+    org.junit.Assert.assertEquals("https://maxapacitybikes.com", opened.getDataString());
+  }
+
+  /**
+   * A Deck found while the welcome has the screen is not lost under it: it is offered once the welcome is
+   * done. The Deck here answers at once, so it is found while the home screen is still starting: the
+   * welcome has to come up all the same, and be the sheet that Back and the buttons act on.
+   */
+  @Test public void aDeckThatTurnsUpDuringTheWelcomeIsOfferedAfterIt() throws Exception {
+    fakeDeck = new FakeDeck(true);
+    fakeDeck.code = "424242";
+    Deck.usb = "127.0.0.1:1";           // no cable
+    FakeDeck.onWifi(c);
+    Units.prefs(c).edit().putString("deck_host", fakeDeck.address()).apply();
+    asANewRider();
+    start();
+    await("the Deck to be found", () -> Deck.get(c).state() == Deck.FOUND);
+    org.junit.Assert.assertNotNull("the welcome still has the screen",
+        find(Sheet.current(), android.widget.TextView.class, "Welcome to MAXAPACITY Ride"));
+    org.junit.Assert.assertNull(onScreen("Your Deck is on this network"));
+    org.junit.Assert.assertEquals("not yet counted as offered", "", Units.prefs(c).getString("deck_offered", ""));
+    tap("Not now");
+    org.junit.Assert.assertNull("the welcome has gone", onScreen("Welcome to MAXAPACITY Ride"));
+    org.junit.Assert.assertNotNull("offered once the welcome has gone", onScreen("Your Deck is on this network"));
+    org.junit.Assert.assertEquals(Deck.get(c).address(), Units.prefs(c).getString("deck_offered", ""));
   }
 
   /** Which screen, if any, is on top. */

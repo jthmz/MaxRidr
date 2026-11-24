@@ -8,7 +8,10 @@ Two halves that find each other:
   tuning), an app drawer, Copilot, and over-the-air updates. Each ride records
   its furthest lean left and right, and an optional crash alert texts your
   location to a contact if a hard hit is followed by the bike not moving. A
-  demo bike on the Bike screen shows every battery and controller screen with
+  new rider is offered a tour of the home screen, and after an update that
+  brings something new the app says what (both stay in Settings, with a
+  button to the MAXAPACITY website).
+  A demo bike on the Bike screen shows every battery and controller screen with
   made-up numbers when no bike is nearby. On the Tune screen, Tunes loads a
   whole tune in one tap: three made to measure for the controller in hand
   (Calm, Balanced, Aggressive, as shares of what it came set to), or one
@@ -44,6 +47,7 @@ repository).
 - [MAXAPACITY Deck](https://maxapacitybikes.com/apps/deck) offers this
   repository as a ZIP and gives the setup steps from `deck/README.md`.
 - In the app, Settings ends with "About and help", which opens the app's page.
+  The row above it, "MAXAPACITY website", opens the site's home page.
 - [maxapacitybikes.com/apps.json](https://maxapacitybikes.com/apps.json) is the
   same directory for a program: where each app lives, how to get it, how to
   reach it (the Deck's port, its Bonjour name, its key header) and every link
@@ -166,6 +170,14 @@ environment it is signed with the debug key; see the top of
 Every push that touches the app builds a draft release. A push to `main`, or
 a run of the "Build app" workflow started by hand, also publishes that build
 to the `ride-ota` release, which installed phones check every six hours.
+
+Phones update quietly, so the app tells the rider what an update brought: a
+"What's new" sheet the first time the home screen opens on it. The notes are
+written by hand, at the top of `NOTES` in
+[WhatsNew.java](app/src/com/maxapacity/ride/WhatsNew.java); the comment there
+says how. A build with no new note says nothing, and Settings keeps the
+earlier notes. The same Settings group has the tour and the two ways to the
+website.
 
 Builds are signed with a key the workflow creates on its first run and keeps
 on a draft release. Android only installs an update signed with the same key
