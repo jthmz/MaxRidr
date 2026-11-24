@@ -56,10 +56,15 @@ on:
 permissions:
   contents: write
 
-# One at a time: two first runs must not both create a signing key, and the
-# published manifest must end up describing the newest build.
+# One at a time per kind of build. Builds that publish to phones (main, and
+# runs started by hand) queue behind each other, so the published manifest
+# ends up describing the newest build. Work-in-progress pushes queue among
+# themselves: GitHub drops a waiting run when a newer one joins its queue,
+# and with a single queue a branch push used to drop a waiting build of main,
+# leaving a merged change unpublished. The signing key already exists, so two
+# builds running side by side only ever read it.
 concurrency:
-  group: build-app
+  group: build-app-${{ (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && 'publish' || 'wip' }}
   cancel-in-progress: false
 
 env:
