@@ -244,6 +244,22 @@ public class ScreensTest {
     everyPanel("empty");
   }
 
+  /** With no rides yet, the Rides screen's one button starts one. */
+  @Test public void theEmptyRidesScreenStartsARide() throws Exception {
+    start();
+    panel("rides").open();
+    run(400);
+    org.junit.Assert.assertFalse(RideState.get().isRecording());
+    while (Shadows.shadowOf(a).getNextStartedService() != null) { }   // whatever started earlier
+    tap("Start a ride");
+    run(400);
+    android.content.Intent asked = Shadows.shadowOf(a).getNextStartedService();
+    org.junit.Assert.assertNotNull("the ride recorder is asked to start", asked);
+    org.junit.Assert.assertEquals(RideService.class.getName(), asked.getComponent().getClassName());
+    org.junit.Assert.assertEquals(RideService.ACTION_START, asked.getAction());
+    org.junit.Assert.assertFalse("and the dashboard is back on show", panel("rides").isOpen());
+  }
+
   @Test public void everySheetAndTheMessageBar() throws Exception {
     start();
     a.editGeminiKey();

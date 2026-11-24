@@ -64,6 +64,9 @@ interface Host {
 
     void showRide(JSONObject ride);
 
+    /** Starts recording a ride, asking to use location first if that has not been allowed. */
+    void beginRide();
+
     /** A ride was deleted, restored or changed status. */
     void ridesChanged();
 
