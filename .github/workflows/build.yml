@@ -88,11 +88,16 @@ jobs:
           gradle-version: '8.10.2'
 
       # The screen tests run Android's own code on the build machine, which
-      # needs a ~200 MB runtime download; keep it between runs.
+      # needs a ~200 MB runtime download for each Android version tested; keep
+      # them between runs. When the list of versions changes the key changes
+      # with it, and an older copy is still restored, so only what is new has
+      # to be downloaded.
       - uses: actions/cache@v4
         with:
           path: ~/.m2/repository/org/robolectric
           key: robolectric-runtime-sdk33-sdk35-v1
+          restore-keys: |
+            robolectric-runtime-
 
       - name: Signing key
         env:
@@ -163,7 +168,22 @@ jobs:
           else
             echo "::notice::No STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET repo secrets, so this build asks each rider for a Strava application of their own. See the top of build.yml."
           fi
-          gradle --no-daemon testReleaseUnitTest assembleRelease -PrideVersionCode="$VERSION_CODE"
+          # The runtime the screen tests need is downloaded by the tests
+          # themselves the first time, and the server it comes from sometimes
+          # answers "too many requests". That is not a failing test, so the
+          # build is tried again for that one reason and no other.
+          set -o pipefail
+          for attempt in 1 2 3; do
+            if gradle --no-daemon testReleaseUnitTest assembleRelease -PrideVersionCode="$VERSION_CODE" 2>&1 | tee "$RUNNER_TEMP/gradle.log"; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ] && grep -q "Failed to fetch maven artifact" "$RUNNER_TEMP/gradle.log"; then
+              echo "::warning::The test runtime could not be downloaded (attempt $attempt). Waiting a minute and trying again."
+              sleep 60
+            else
+              exit 1
+            fi
+          done
 
       # The screen tests keep a picture of every screen and sheet they draw.
       # Held for two days so the design can be looked over without a phone.
