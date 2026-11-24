@@ -2,6 +2,7 @@ package com.maxapacity.ride;
 
 import android.content.Context;
 import android.content.Intent;
+import android.text.InputFilter;
 import android.text.InputType;
 import android.text.TextUtils;
 import android.view.Gravity;
@@ -21,9 +22,12 @@ import java.util.Map;
  * keeps them or Undo puts the old values back. Switching the bike off also
  * discards anything that was not saved.
  *
- * "Tune ideas" is for the rider who does not know what to change: it writes
- * the bike up as a {@link TuneBrief} to send to an AI app or a tuner. It reads
- * only; the advice that comes back is entered here like any other change.
+ * Two shortcuts sit above the settings for the rider who does not know what
+ * to change. "Tunes" loads a whole {@link TunePlan} tune, made to measure for
+ * this controller or published for a MAXAPACITY build, as changes to look
+ * over. "Tune ideas" writes the bike up as a {@link TuneBrief} to send to an
+ * AI app or a tuner. Neither sends anything to the bike: what they produce
+ * is tried and kept here like any other change.
  */
 final class TunePanel extends Panel {
 
@@ -145,7 +149,7 @@ final class TunePanel extends Panel {
                     + " is connected.");
         }
 
-        content.addView(ideasRow(), Ui.top(c, Ui.matchWrap(), 12));
+        content.addView(shortcuts(), Ui.top(c, Ui.matchWrap(), 12));
 
         String group = "";
         LinearLayout card = null;
@@ -236,25 +240,148 @@ final class TunePanel extends Panel {
                 .show();
     }
 
-    // ---- Tune ideas ----------------------------------------------------------
+    // ---- Tunes and tune ideas ------------------------------------------------
 
-    private View ideasRow() {
+    /** Two ways to a tune without knowing what to change: load a whole one, or ask for ideas. */
+    private View shortcuts() {
+        Context c = getContext();
+        LinearLayout card = Ui.column(c);
+        card.setBackground(Ui.panel(c, Ui.SURFACE, Ui.HAIRLINE, 16));
+        card.addView(shortcut(Icons.SLIDERS_HORIZONTAL, "Tunes",
+                "Load a whole tune made for this bike", v -> showTunes()), Ui.matchWrap());
+        LinearLayout.LayoutParams line = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(1)));
+        line.leftMargin = dp(16);
+        card.addView(Ui.divider(c), line);
+        card.addView(shortcut(Icons.SPARKLES, "Tune ideas",
+                "Not sure what to change? Get suggestions for this bike", v -> showIdeas()),
+                Ui.matchWrap());
+        return card;
+    }
+
+    private View shortcut(String icon, String name, String detail, View.OnClickListener tap) {
         Context c = getContext();
         LinearLayout row = Ui.row(c);
-        row.setBackground(Ui.pressable(c, Ui.SURFACE, Ui.HAIRLINE, 16));
+        row.setBackground(Ui.ghost(c, 16));
         row.setPadding(dp(16), dp(12), dp(16), dp(12));
-        row.addView(Ui.icon(c, Icons.SPARKLES, 18, Ui.TEXT_2));
+        row.addView(Ui.icon(c, icon, 18, Ui.TEXT_2));
         LinearLayout text = Ui.column(c);
-        text.addView(Ui.body(c, "Tune ideas", Ui.TEXT));
-        text.addView(Ui.small(c, "Not sure what to change? Get suggestions for this bike",
-                Ui.TEXT_3));
+        text.addView(Ui.body(c, name, Ui.TEXT));
+        text.addView(Ui.small(c, detail, Ui.TEXT_3));
         row.addView(text, Ui.left(c, Ui.weighted(), 12));
         ImageView go = Ui.icon(c, Icons.CHEVRON_RIGHT, 18, Ui.TEXT_3);
         ((LinearLayout.LayoutParams) go.getLayoutParams()).leftMargin = dp(8);
         row.addView(go);
-        row.setOnClickListener(v -> showIdeas());
+        row.setOnClickListener(tap);
         Ui.press(row);
         return row;
+    }
+
+    /**
+     * Whole tunes to load: three made to measure for this controller, and the
+     * ones MAXAPACITY has published for its own builds. Picking one only fills
+     * in the changes; the rider still looks them over and taps Try on bike.
+     */
+    void showTunes() {
+        final Context c = getContext();
+        final Bike bike = Bike.get(c);
+        if (!TuneBrief.ready(bike)) {
+            host.say("The controller's settings have not been read yet");
+            return;
+        }
+        Fardriver.Live live = bike.controller();
+        final int pack = Units.prefs(c).getInt(TunePlan.PACK_AMPS, 0);
+        Fardriver.Param line = Fardriver.param("line");
+        int drawNow = Math.round(bike.controllerMemory().raw(line) * line.scale);
+        Sheet sheet = new Sheet(host.frame(), "Tunes",
+                "Three made to measure for this controller, from calm to everything it came"
+                        + " set to. A tune loads as changes to look over, and nothing reaches"
+                        + " the bike until you tap Try on bike."
+                        + (pack > 0 && drawNow > pack ? " This controller is set to draw "
+                        + drawNow + " A now, more than the " + pack + " A you gave for the"
+                        + " battery." : ""));
+        for (final TunePlan.Tune t : TunePlan.measured(bike::ceiling,
+                live == null ? 0f : live.volts, pack)) {
+            sheet.item(t.icon, t.name, t.detail, false, () -> load(t));
+        }
+        sheet.item(Icons.BATTERY, "Battery rating", pack > 0
+                ? pack + " A. These tunes stay at or under it"
+                : "Add what your pack is rated for and these tunes stay under it", false,
+                this::editPackRating);
+        sheet.item(Icons.WAREHOUSE, "MAXAPACITY builds", "Tunes published for our own bikes",
+                false, this::showBuilds);
+        sheet.show();
+    }
+
+    private void showBuilds() {
+        Sheet sheet = new Sheet(host.frame(), "MAXAPACITY builds",
+                "Each was published for one exact bike. On a different controller or battery"
+                        + " they are not safe to copy, and the app will not load one that asks"
+                        + " for more than this controller came with.");
+        for (final TunePlan.Tune t : TunePlan.builds()) {
+            sheet.item(t.icon, t.name, t.detail, false, () -> confirmBuild(t));
+        }
+        sheet.action("Back", Ui.PRIMARY, true, this::showTunes).show();
+    }
+
+    /** A published tune says which bike it is for before it is loaded. */
+    private void confirmBuild(final TunePlan.Tune t) {
+        new Sheet(host.frame(), t.name, t.detail + ". " + t.note)
+                .action("Back", Ui.SECONDARY, true, this::showBuilds)
+                .action("Load", Ui.PRIMARY, true, () -> load(t))
+                .show();
+    }
+
+    /** Fills in a tune's changes for looking over. What was being edited can be had back. */
+    private void load(TunePlan.Tune t) {
+        Bike bike = Bike.get(getContext());
+        TunePlan.Loaded loaded = TunePlan.load(t, bike.controllerMemory(), bike::ceiling);
+        if (loaded.refused != null) {
+            host.say(loaded.refused);
+            return;
+        }
+        if (loaded.changes.isEmpty()) {
+            host.say("This bike is already set to " + t.name);
+            return;
+        }
+        final Map<String, Integer> was = new LinkedHashMap<>(draft);
+        draft.clear();
+        draft.putAll(loaded.changes);
+        refresh();
+        int n = loaded.changes.size();
+        host.say(t.name + " loaded: " + (n == 1 ? "1 change" : n + " changes") + " to look over"
+                + (loaded.note == null ? "" : ". " + loaded.note), "UNDO", () -> {
+                    draft.clear();
+                    draft.putAll(was);
+                    refresh();
+                });
+    }
+
+    private void editPackRating() {
+        final Context c = getContext();
+        final EditText amps = Ui.input(c, "Amps, such as 220", false);
+        amps.setInputType(InputType.TYPE_CLASS_NUMBER);
+        amps.setFilters(new InputFilter[] {new InputFilter.LengthFilter(4)});
+        int pack = Units.prefs(c).getInt(TunePlan.PACK_AMPS, 0);
+        if (pack > 0) amps.setText(String.valueOf(pack));
+        new Sheet(host.frame(), "Battery rating",
+                "What your battery can give continuously, in amps. It is on the pack's label"
+                        + " or from whoever sold it; the app cannot read it from the battery."
+                        + " Leave it empty if you do not know, and the tunes go by the"
+                        + " controller alone.")
+                .view(amps)
+                .action("Back", Ui.SECONDARY, true, this::showTunes)
+                .action("Save", Ui.PRIMARY, true, () -> {
+                    int given = 0;
+                    try {
+                        given = Integer.parseInt(amps.getText().toString().trim());
+                    } catch (NumberFormatException e) {
+                        // Empty: no rating.
+                    }
+                    Units.prefs(c).edit().putInt(TunePlan.PACK_AMPS, Math.max(0, given)).apply();
+                    showTunes();
+                })
+                .show();
     }
 
     /**

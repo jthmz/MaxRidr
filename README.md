@@ -9,10 +9,13 @@ Two halves that find each other:
   its furthest lean left and right, and an optional crash alert texts your
   location to a contact if a hard hit is followed by the bike not moving. A
   demo bike on the Bike screen shows every battery and controller screen with
-  made-up numbers when no bike is nearby. Tune ideas, on the Tune screen,
-  writes up the bike's settings and limits for the rider to send to an AI app
-  or a tuner; it only reads, and nothing leaves the phone until the rider
-  sends it.
+  made-up numbers when no bike is nearby. On the Tune screen, Tunes loads a
+  whole tune in one tap: three made to measure for the controller in hand
+  (Calm, Balanced, Aggressive, as shares of what it came set to), or one
+  published for a MAXAPACITY build. A tune loads as changes to look over and
+  goes through the same trial as any other change. Tune ideas writes up the
+  bike's settings and limits for the rider to send to an AI app or a tuner;
+  it only reads, and nothing leaves the phone until the rider sends it.
 - **MAXAPACITY Deck** (`deck/`): a service on the Mac that drives a desk
   dashboard on a Spotify Car Thing, and takes rides home from the phone. It
   has its own [README](deck/README.md).

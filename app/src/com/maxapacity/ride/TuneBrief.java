@@ -230,6 +230,8 @@ final class TuneBrief {
         sb.append("- Regen strength stays at or below Max regen strength.\n"
                 + "- The two current limits can come down, but never go above where this"
                 + " controller stood when the app first met it.\n"
+                + "- The controller's short burst (boost) currents move with the two limits by"
+                + " themselves, so a burst never draws more than a limit allows.\n"
                 + "- Each change is tried on the bike first and only kept when I save it, so"
                 + " anything that feels wrong can be undone.\n");
         return sb.toString();
