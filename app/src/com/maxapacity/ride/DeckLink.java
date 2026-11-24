@@ -109,7 +109,7 @@ final class DeckLink {
             }
             String key = r.json.optString("key", "");
             return new Pairing(true, key.isEmpty() ? null : key, null);
-        } catch (IOException | JSONException | RuntimeException e) {
+        } catch (Exception e) {
             return new Pairing(false, null, "unreachable");
         }
     }
@@ -180,7 +180,7 @@ final class DeckLink {
                 JSONObject f = no.optJSONObject(i);
                 if (f != null) out.refused.put(f.optString("name"), f.optString("why"));
             }
-        } catch (IOException | JSONException | RuntimeException e) {
+        } catch (Exception e) {
             out.stopped = "The Deck stopped answering";
             return out;
         }
