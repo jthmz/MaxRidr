@@ -469,12 +469,18 @@ final class Fardriver {
             if (options != null) {
                 return raw >= 0 && raw < options.length ? options[raw] : "Unknown (" + raw + ")";
             }
+            String number = number(raw);
+            if ("%".equals(unit)) return number + "%";
+            return unit.isEmpty() ? number : number + " " + unit;
+        }
+
+        /** The value without its unit: "130" for 130 A. A choice has none, so its name. */
+        String number(int raw) {
+            if (options != null) return format(raw);
             float v = raw * scale;
-            if ("%".equals(unit)) return Math.round(v) + "%";
-            String number = scale == 1f || Math.abs(v - Math.round(v)) < 0.005f
+            return "%".equals(unit) || scale == 1f || Math.abs(v - Math.round(v)) < 0.005f
                     ? String.valueOf(Math.round(v))
                     : String.format(java.util.Locale.US, "%.1f", v);
-            return unit.isEmpty() ? number : number + " " + unit;
         }
     }
 

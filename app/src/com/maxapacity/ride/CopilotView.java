@@ -150,7 +150,7 @@ final class CopilotView extends Panel {
             return;
         }
         LinearLayout box = Ui.emptyState(c, Icons.SPARKLES, "Ask Copilot",
-                "It knows your current speed, distance and ride time.", null, 0, null);
+                "It can see this ride, and your bike when it is linked.", null, 0, null);
         for (final String s : STARTERS) {
             TextView chip = Ui.small(c, s, Ui.TEXT);
             chip.setGravity(Gravity.CENTER_VERTICAL);

@@ -41,7 +41,16 @@ final class Snack {
         show(host, message, null, null);
     }
 
-    static void show(final ViewGroup host, String message, String action, final Runnable run) {
+    static void show(ViewGroup host, String message, String action, Runnable run) {
+        show(host, message, action, run, 0);
+    }
+
+    /**
+     * @param lift how far above the bottom edge to sit, in pixels, so the bar
+     *        clears something that stays in use underneath it
+     */
+    static void show(final ViewGroup host, String message, String action, final Runnable run,
+            int lift) {
         Context c = host.getContext();
         Ui.init(c);
         dismissNow(host);
@@ -81,7 +90,7 @@ final class Snack {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
                 atTop ? Gravity.TOP : Gravity.BOTTOM);
         lp.setMargins(Ui.dp(c, 16), atTop ? Ui.dp(c, 16) + topInsetPx : 0, Ui.dp(c, 16),
-                atTop ? 0 : Ui.dp(c, 16) + bottomInsetPx);
+                atTop ? 0 : Ui.dp(c, 16) + bottomInsetPx + lift);
         host.addView(bar, lp);
         final float slide = Ui.dp(c, atTop ? -16 : 16);
         bar.setAlpha(0f);

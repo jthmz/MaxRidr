@@ -50,16 +50,16 @@ public class TunePlanTest {
     assertEquals(1400, (int) t.get(TunePlan.AGGRESSIVE).values.get("phase"));
     assertEquals("Sport", Fardriver.param("response").format(t.get(TunePlan.AGGRESSIVE).values.get("response")));
 
-    assertEquals("100 A battery, 280 A motor, Linear throttle, about 8.0 kW", t.get(TunePlan.BALANCED).detail);
+    assertEquals("100 A battery, 280 A motor\nLinear throttle, about 8.0 kW", t.get(TunePlan.BALANCED).detail);
     assertEquals(400, (int) t.get(TunePlan.BALANCED).values.get("line"));
     assertEquals(1120, (int) t.get(TunePlan.BALANCED).values.get("phase"));
 
-    assertEquals("75 A battery, 210 A motor, Eco throttle, about 6.0 kW", t.get(TunePlan.CALM).detail);
+    assertEquals("75 A battery, 210 A motor\nEco throttle, about 6.0 kW", t.get(TunePlan.CALM).detail);
     assertEquals(300, (int) t.get(TunePlan.CALM).values.get("line"));
     assertEquals(840, (int) t.get(TunePlan.CALM).values.get("phase"));
 
     // With no voltage to go by, no power is guessed at.
-    assertEquals("75 A battery, 210 A motor, Eco throttle",
+    assertEquals("75 A battery, 210 A motor\nEco throttle",
         TunePlan.measured(TuneBriefTest.ceilings(fd), 0f, 0).get(TunePlan.CALM).detail);
   }
 
