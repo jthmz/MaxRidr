@@ -93,7 +93,9 @@ final class TunePanel extends Panel {
         shown = key.toString();
 
         boolean busy = state == Bike.APPLYING || state == Bike.SAVING || state == Bike.REVERTING;
-        if (locked != null) status.set(live == null ? "OFFLINE" : "LOCKED", Ui.TEXT_3);
+        if (bike.demo() && locked == null && state != Bike.TRYING && !busy && draft.isEmpty()) {
+            status.set("DEMO", Ui.WARN);
+        } else if (locked != null) status.set(live == null ? "OFFLINE" : "LOCKED", Ui.TEXT_3);
         else if (state == Bike.TRYING) status.set("LIVE, NOT SAVED", Ui.WARN);
         else if (busy) status.set("WORKING", Ui.WARN);
         else status.set(draft.isEmpty() ? "IN SYNC" : draft.size() + " CHANGED",

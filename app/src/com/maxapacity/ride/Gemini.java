@@ -175,6 +175,11 @@ final class Gemini {
                     l.powerW() / 1000f, l.rpm, l.mosfetTempC, l.speedModeName()));
             if (l.faults != 0) sb.append(" Controller faults: ").append(l.faultNames()).append('.');
         }
+        if (bike.demo()) {
+            sb.append(" Those battery and controller readings come from the app's demo bike:"
+                    + " they are made up, and no real bike is connected. Say so if asked"
+                    + " about them.");
+        }
         JSONArray rides = RideStore.load(c);
         if (rides.length() > 0) {
             sb.append(" Recent rides, newest first: ");

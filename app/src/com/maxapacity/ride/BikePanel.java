@@ -62,10 +62,11 @@ final class BikePanel extends Panel {
         boolean live = b != null || l != null;
         boolean problem = (b != null && b.hasProblem()) || (l != null && l.faults != 0);
         if (!bike.anyConfigured()) status.set("", Ui.TEXT_3);
+        else if (bike.demo()) status.set("DEMO", Ui.WARN);
         else if (problem) status.set("ATTENTION", Ui.DANGER);
         else status.set(live ? "LIVE" : "CONNECTING", live ? Ui.OK : Ui.WARN);
 
-        String key = bike.summaryKey() + "|" + (b == null ? "" : Math.round(b.amps * 10) + "/"
+        String key = bike.demo() + "|" + bike.summaryKey() + "|" + (b == null ? "" : Math.round(b.amps * 10) + "/"
                 + Math.round(b.deltaCellV() * 1000) + "/" + b.maxTempC())
                 + "|" + (l == null ? "" : l.rpm + "/" + Math.round(l.amps) + "/" + l.motorTempC
                 + "/" + Math.round(l.volts * 10));
@@ -86,10 +87,38 @@ final class BikePanel extends Panel {
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
             lp.setMargins(dp(24), -dp(12), dp(24), 0);
             content.addView(ctl, lp);
+            // No bike to hand: see what the screens look like with one.
+            LinearLayout demo = Ui.button(c, "TRY A DEMO BIKE", null, Ui.QUIET);
+            demo.setOnClickListener(v -> {
+                if (bike.setDemo(true)) host.say("Demo bike on. The numbers are made up");
+            });
+            LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+            dlp.setMargins(dp(24), dp(8), dp(24), 0);
+            content.addView(demo, dlp);
             return;
         }
+        if (bike.demo()) addDemoNotice(bike);
         addBattery(bike, b);
         addController(bike, l);
+    }
+
+    /** While the pretend bike is on, say so first and offer the way out. */
+    private void addDemoNotice(final Bike bike) {
+        Context c = getContext();
+        LinearLayout card = Ui.card(c);
+        card.addView(Ui.label(c, "DEMO BIKE"));
+        card.addView(Ui.body(c, "These numbers are made up, so you can see the screens with no"
+                + " bike nearby. Nothing is read from or sent to a real bike, and tuning"
+                + " here changes nothing real.", Ui.TEXT_2), Ui.top(c, Ui.matchWrap(), 8));
+        LinearLayout end = Ui.button(c, "END DEMO", null, Ui.SECONDARY);
+        end.setOnClickListener(v -> {
+            bike.setDemo(false);
+            host.say("Demo bike off");
+        });
+        card.addView(end, Ui.top(c, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48)), 16));
+        content.addView(card, Ui.matchWrap());
     }
 
     // ---- Battery -----------------------------------------------------------
@@ -302,6 +331,15 @@ final class BikePanel extends Panel {
     private void confirmUnlink(final int kind) {
         final boolean battery = kind == Bike.KIND_BATTERY;
         final Bike bike = Bike.get(getContext());
+        if (bike.demo()) {
+            new Sheet(host.frame(), "Demo bike", null)
+                    .item(Icons.UNLINK, "End demo", "Back to your own bike", false, () -> {
+                        bike.setDemo(false);
+                        host.say("Demo bike off");
+                    })
+                    .show();
+            return;
+        }
         new Sheet(host.frame(), battery ? bike.batteryName() : bike.controllerName(), null)
                 .item(Icons.UNLINK, battery ? "Unlink battery" : "Unlink controller",
                         "Nothing on the bike changes", true, () -> {

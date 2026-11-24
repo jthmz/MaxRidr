@@ -269,6 +269,42 @@ public class ScreensTest {
     sweep("a ride that is on the Mac");
   }
 
+  /** The pretend bike drives the same screens a real one does, and leaves no trace when it goes. */
+  @Test public void theDemoBikeFillsEveryBikeScreenAndLeavesNoTrace() throws Exception {
+    start();
+    Bike bike = Bike.get(c);
+    org.junit.Assert.assertFalse(bike.anyConfigured());
+    panel("bike").open();
+    idle(400);
+    sweep("bike screen offering the demo");
+    org.junit.Assert.assertTrue(bike.setDemo(true));
+    for (int i = 0; i < 25; i++) idle(200);     // five seconds of the pretend ride
+    org.junit.Assert.assertTrue(bike.demo());
+    org.junit.Assert.assertNotNull("battery readings", bike.battery());
+    org.junit.Assert.assertNotNull("controller readings", bike.controller());
+    org.junit.Assert.assertEquals(20, bike.battery().cellVolts.length);
+    org.junit.Assert.assertEquals("HA80", bike.controller().firmware);
+    sweep("bike screen with the demo bike");
+    panel("bike").close();
+    idle(400);
+    for (int i = 0; i < 40; i++) idle(200);     // on into the pull-away
+    sweep("dashboard with the demo bike");
+    panel("tune").open();
+    idle(400);
+    sweep("tune screen with the demo bike");
+    panel("tune").close();
+    idle(400);
+
+    org.junit.Assert.assertTrue(bike.setDemo(false));
+    idle(400);
+    org.junit.Assert.assertFalse(bike.anyConfigured());
+    org.junit.Assert.assertNull(bike.battery());
+    org.junit.Assert.assertNull(bike.controller());
+    org.junit.Assert.assertEquals("", Units.prefs(c).getString("bike_bms_name", ""));
+    org.junit.Assert.assertEquals("", Units.prefs(c).getString("bike_ctl_name", ""));
+    sweep("dashboard after the demo");
+  }
+
   @Test public void dashboardWhileRidingWithTheBikeLinked() throws Exception {
     start();
     Bike.get(c).link(Bike.KIND_BATTERY, "ANT-BLE16ZMUB");
