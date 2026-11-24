@@ -58,7 +58,7 @@ final class TuneAdvice {
                 out.leftOut.add("\"" + name + "\" is not a setting this app changes");
                 continue;
             }
-            int top = Math.min(p.max, ceiling.applyAsInt(p));
+            int top = p.top(ceiling.applyAsInt(p));
             Integer raw = p.options != null ? choice(p, value) : amount(p, value);
             if (raw == null) {
                 out.leftOut.add(p.name + ": \"" + value + "\" could not be read"

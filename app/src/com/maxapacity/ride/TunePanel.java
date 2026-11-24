@@ -24,8 +24,8 @@ import java.util.Map;
  *
  * Two shortcuts sit above the settings for the rider who does not know what
  * to change. "Tunes" loads a whole {@link TunePlan} tune, made to measure for
- * this controller or published for a MAXAPACITY build, as changes to look
- * over. "Tune ideas" writes the bike up as a {@link TuneBrief} to send to an
+ * this controller or taken from one of MAXAPACITY's own bikes, as changes to
+ * look over. "Tune ideas" writes the bike up as a {@link TuneBrief} to send to an
  * AI app or a tuner. Neither sends anything to the bike: what they produce
  * is tried and kept here like any other change.
  */
@@ -279,8 +279,8 @@ final class TunePanel extends Panel {
 
     /**
      * Whole tunes to load: three made to measure for this controller, and the
-     * ones MAXAPACITY has published for its own builds. Picking one only fills
-     * in the changes; the rider still looks them over and taps Try on bike.
+     * ones from MAXAPACITY's own bikes. Picking one only fills in the changes;
+     * the rider still looks them over and taps Try on bike.
      */
     void showTunes() {
         final Context c = getContext();
@@ -308,26 +308,26 @@ final class TunePanel extends Panel {
                 ? pack + " A. These tunes stay at or under it"
                 : "Add what your pack is rated for and these tunes stay under it", false,
                 this::editPackRating);
-        sheet.item(Icons.WAREHOUSE, "MAXAPACITY builds", "Tunes published for our own bikes",
-                false, this::showBuilds);
+        sheet.item(Icons.WAREHOUSE, "MAXAPACITY bikes",
+                "Our build tunes, and the XE Pro R as delivered", false, this::showOurBikes);
         sheet.show();
     }
 
-    private void showBuilds() {
-        Sheet sheet = new Sheet(host.frame(), "MAXAPACITY builds",
-                "Each was published for one exact bike. On a different controller or battery"
-                        + " they are not safe to copy, and the app will not load one that asks"
-                        + " for more than this controller came with.");
-        for (final TunePlan.Tune t : TunePlan.builds()) {
-            sheet.item(t.icon, t.name, t.detail, false, () -> confirmBuild(t));
+    private void showOurBikes() {
+        Sheet sheet = new Sheet(host.frame(), "MAXAPACITY bikes",
+                "Each belongs to one exact bike. On a different controller or battery they"
+                        + " are not safe to copy, and the app will not load one that asks for"
+                        + " more than this controller came with.");
+        for (final TunePlan.Tune t : TunePlan.ourBikes()) {
+            sheet.item(t.icon, t.name, t.detail, false, () -> confirmOurs(t));
         }
         sheet.action("Back", Ui.PRIMARY, true, this::showTunes).show();
     }
 
-    /** A published tune says which bike it is for before it is loaded. */
-    private void confirmBuild(final TunePlan.Tune t) {
+    /** A tune from one of our bikes says which bike it is for before it is loaded. */
+    private void confirmOurs(final TunePlan.Tune t) {
         new Sheet(host.frame(), t.name, t.detail + ". " + t.note)
-                .action("Back", Ui.SECONDARY, true, this::showBuilds)
+                .action("Back", Ui.SECONDARY, true, this::showOurBikes)
                 .action("Load", Ui.PRIMARY, true, () -> load(t))
                 .show();
     }
@@ -549,7 +549,7 @@ final class TunePanel extends Panel {
         final int value = edited ? draft.get(p.key) : onBike;
         // What is on the bike can always be shown and gone back to, even where
         // it lies outside what this app would choose.
-        final int max = Math.max(onBike, Math.min(Math.min(p.max, ceiling), above(p)));
+        final int max = Math.max(onBike, Math.min(p.top(ceiling), above(p)));
         final int min = Math.min(onBike, Math.max(p.min, below(p)));
 
         // Name and stepper on one line; the explanation gets the full width below.
@@ -579,7 +579,7 @@ final class TunePanel extends Panel {
         if (p.cappedAtFactory && value >= max) {
             help += ". At this controller's own limit of " + p.format(max);
         } else if (p.key.equals("high_rpm") && value >= max) {
-            help += ". At its speed limiter of " + p.format(max);
+            help += ". That is " + p.format(max);
         }
         TextView h = Ui.small(c, edited ? "On the bike now: " + p.format(onBike) : help,
                 edited ? Ui.ACCENT : Ui.TEXT_3);

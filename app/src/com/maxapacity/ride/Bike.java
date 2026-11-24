@@ -534,15 +534,13 @@ final class Bike {
      *
      * Currents never go above what this unit was first seen with: the phone
      * cannot know what the hardware was built for, so it never raises them.
-     * Gear speeds never go above the controller's own speed limiter. Regen
-     * keeps the official app's limits, unless the unit shipped with more.
+     * For the same reason no gear speed goes above the top gear's speed as
+     * this unit was first seen. Regen keeps the official app's limits, unless
+     * the unit shipped with more.
      */
     int ceiling(Fardriver.Param p) {
         if (p.key.endsWith("_rpm")) {
-            int limiter = controllerMemory.limiterRpm();
-            // With no limiter to go by, the fastest gear as it stands is the most there is.
-            if (limiter <= 0) limiter = controllerMemory.raw(Fardriver.param("high_rpm"));
-            return Math.min(limiter, p.max);
+            return Math.min(firstSeen(Fardriver.param("high_rpm")), p.max);
         }
         boolean regen = p.key.equals("regen") || p.key.equals("regen_max");
         if (!p.cappedAtFactory && !regen) return p.max;
