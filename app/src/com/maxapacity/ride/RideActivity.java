@@ -305,15 +305,17 @@ public final class RideActivity extends Activity
         for (Panel p : panels) if (p.isOpen()) p.onHostResume();
         Updater.autoCheck(this, this);
         handler.post(tick);
-        // Posted so a sheet slides up over a finished screen.
-        handler.post(greet);
+        // Through the screen itself, so it waits until the screen is in its
+        // window: a sheet put up before that is not counted as showing, and
+        // the first thing to ask after it would lose track of it.
+        frame.post(greet);
     }
 
     @Override
     protected void onPause() {
         super.onPause();
         handler.removeCallbacks(tick);
-        handler.removeCallbacks(greet);
+        frame.removeCallbacks(greet);
         resumed = false;
         spokenFor = false;
         updateDial();
@@ -420,7 +422,7 @@ public final class RideActivity extends Activity
      * cases the greeting keeps for the next time the app comes to the front.
      */
     private void greet() {
-        if (greeted || !resumed || spokenFor) return;
+        if (greeted || !resumed || spokenFor || !frame.isAttachedToWindow()) return;
         if (RideState.get().isRecording() || Sheet.current() != null || Tour.current() != null
                 || topPanel() != null) {
             return;

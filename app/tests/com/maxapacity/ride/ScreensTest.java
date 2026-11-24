@@ -891,7 +891,11 @@ public class ScreensTest {
     org.junit.Assert.assertEquals("https://maxapacitybikes.com", opened.getDataString());
   }
 
-  /** A Deck found while the welcome has the screen is not lost under it: it is offered once the welcome is done. */
+  /**
+   * A Deck found while the welcome has the screen is not lost under it: it is offered once the welcome is
+   * done. The Deck here answers at once, so it is found while the home screen is still starting: the
+   * welcome has to come up all the same, and be the sheet that Back and the buttons act on.
+   */
   @Test public void aDeckThatTurnsUpDuringTheWelcomeIsOfferedAfterIt() throws Exception {
     fakeDeck = new FakeDeck(true);
     fakeDeck.code = "424242";
@@ -906,6 +910,7 @@ public class ScreensTest {
     org.junit.Assert.assertNull(onScreen("Your Deck is on this network"));
     org.junit.Assert.assertEquals("not yet counted as offered", "", Units.prefs(c).getString("deck_offered", ""));
     tap("Not now");
+    org.junit.Assert.assertNull("the welcome has gone", onScreen("Welcome to MAXAPACITY Ride"));
     org.junit.Assert.assertNotNull("offered once the welcome has gone", onScreen("Your Deck is on this network"));
     org.junit.Assert.assertEquals(Deck.get(c).address(), Units.prefs(c).getString("deck_offered", ""));
   }
