@@ -33,7 +33,17 @@ interface Host {
     /** The whole Deck, as the Car Thing shows it, over whatever screen is open. */
     void showFullDeck();
 
-    void connectStrava();
+    /**
+     * Sign in to Strava. Nothing is typed when the build carries its own
+     * Strava application.
+     *
+     * @param thenSend a ride file to upload as soon as the rider is signed
+     *                 in, or null
+     */
+    void connectStrava(String thenSend);
+
+    /** Ask the phone to let rides be written to Health Connect. */
+    void connectHealth();
 
     /** Show the note left by the last crash, with a way to share it. */
     void showLastCrash();

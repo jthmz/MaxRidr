@@ -71,6 +71,8 @@ public class ScreensTest {
         android.Manifest.permission.BLUETOOTH_SCAN);
     // No update checks: the tests must not depend on, or download from, GitHub.
     Units.prefs(c).edit().clear().putBoolean("auto_update", false).apply();
+    // As a build with no Strava application of its own, whatever this one was built with.
+    Strava.setBuiltInApp(null, null);
     Bike.links = (ctx, uuid, l) -> {
       if (uuid.equals(BleLink.uuid(0xFFEC))) return ctl = new BikeSimTest.FakeController(ctx, uuid, l);
       return bms = new BikeSimTest.FakeBms(ctx, uuid, l);
@@ -229,7 +231,7 @@ public class ScreensTest {
     sweep("gemini key sheet");
     Sheet.dismissCurrent();
     idle(400);
-    a.connectStrava();
+    a.connectStrava(null);
     idle(400);
     sweep("strava sheet");
     a.say("Both the Client ID and Client Secret are needed");

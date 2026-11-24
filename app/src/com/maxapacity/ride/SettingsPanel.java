@@ -82,11 +82,13 @@ final class SettingsPanel extends Panel {
                 bike.anyConfigured() && !bike.demo(),
                 v -> host.showBike());
         final boolean strava = Strava.isConnected(c);
-        link(links, Icons.CLOUD_UPLOAD, "Strava", strava
-                ? "Rides upload on their own" : "Upload rides to your account",
-                strava ? "Connected" : "Connect", strava, v -> {
+        final boolean signingIn = !strava && Strava.isConnecting();
+        link(links, Icons.CLOUD_UPLOAD, "Strava", strava ? "Rides upload on their own"
+                : signingIn ? "Finishing sign-in" : "Upload rides to your account",
+                strava ? "Connected" : signingIn ? "" : "Connect", strava,
+                signingIn ? null : v -> {
                     if (!strava) {
-                        host.connectStrava();
+                        host.connectStrava(null);
                         return;
                     }
                     new Sheet(host.frame(), "Disconnect Strava?",
@@ -100,6 +102,30 @@ final class SettingsPanel extends Panel {
                             })
                             .show();
                 });
+        // Only where Health Connect is part of the phone (Android 14 and later).
+        if (Health.available(c)) {
+            final boolean health = Health.isOn(c);
+            link(links, Icons.ACTIVITY, "Health Connect", health
+                    ? "Rides are shared with your health apps"
+                    : "Share rides with Oura, Google Health and more",
+                    health ? "On" : "Turn on", health, v -> {
+                        if (!health) {
+                            host.connectHealth();
+                            return;
+                        }
+                        new Sheet(host.frame(), "Stop sharing rides?",
+                                "New rides stay on this phone. Rides already in Health"
+                                        + " Connect stay there until you delete them in"
+                                        + " Health Connect.")
+                                .action("Cancel", Ui.SECONDARY, true, null)
+                                .action("Stop", Ui.DANGER_OUTLINE, true, () -> {
+                                    Health.setOn(c, false);
+                                    build();
+                                    host.say("Health Connect sharing is off");
+                                })
+                                .show();
+                    });
+        }
         final boolean key = Gemini.hasKey(c);
         link(links, Icons.SPARKLES, "Copilot", key
                 ? "Answers with Google Gemini" : "Needs a free Gemini API key",
