@@ -69,9 +69,11 @@ final class TuneBrief {
     /** The brief for the bike linked to this phone. Call only when {@link #ready}. */
     static String build(Context c, String goal) {
         Bike bike = Bike.get(c);
+        Fardriver.Param line = Fardriver.param("line");
         return build(goal, Units.prefs(c).getString(ABOUT, ""), bike.demo(), Units.metric(c),
                 bike.battery(), bike.controller(), bike.controllerMemory(), bike::ceiling,
-                Units.prefs(c).getInt(TunePlan.PACK_AMPS, 0));
+                Units.prefs(c).getInt(TunePlan.PACK_AMPS, 0),
+                RideStore.lastBikeRide(c, bike.controllerMemory().raw(line) * line.scale));
     }
 
     /**
@@ -94,6 +96,17 @@ final class TuneBrief {
     static String build(String goal, String about, boolean demo, boolean metric,
             AntBms.Data battery, Fardriver.Live live, Fardriver memory,
             ToIntFunction<Fardriver.Param> ceiling, int packAmps) {
+        return build(goal, about, demo, metric, battery, live, memory, ceiling, packAmps, "");
+    }
+
+    /**
+     * @param lastRide what the bike did on the newest ride it was linked for,
+     *        as {@link BikeLog.Summary#brief} writes it, or empty. An adviser
+     *        with it tunes from what happened rather than from a description
+     */
+    static String build(String goal, String about, boolean demo, boolean metric,
+            AntBms.Data battery, Fardriver.Live live, Fardriver memory,
+            ToIntFunction<Fardriver.Param> ceiling, int packAmps, String lastRide) {
         StringBuilder sb = new StringBuilder();
         if (demo) {
             sb.append("Note: this comes from the app's demo bike. The readings are made up and"
@@ -124,6 +137,9 @@ final class TuneBrief {
             sb.append("- By my own figure the battery is rated for ").append(packAmps)
                     .append(" A continuous. Do not suggest a battery current limit above"
                             + " that.\n");
+        }
+        if (lastRide != null && !lastRide.isEmpty()) {
+            sb.append("\nWHAT THE BIKE DID ON MY LAST RIDE WITH IT LINKED\n").append(lastRide);
         }
         sb.append("\nSETTINGS NOW, AND THE RANGE THE APP ALLOWS ON THIS BIKE\n")
                 .append(settings(memory, ceiling));

@@ -155,6 +155,7 @@ final class Bike {
                 if (!demo && d.legacy != prefs.getBoolean("bike_bms_legacy", false)) {
                     prefs.edit().putBoolean("bike_bms_legacy", d.legacy).apply();
                 }
+                logForRide(false);
                 changed();
             }
 
@@ -200,6 +201,7 @@ final class Bike {
                 controller = l;
                 controllerAtMs = SystemClock.elapsedRealtime();
                 controllerStatus = "Live";
+                logForRide(true);
                 changed();
             }
 
@@ -215,6 +217,16 @@ final class Bike {
                 retryLater();
             }
         });
+    }
+
+    /**
+     * While a ride is recording, every reading goes into its log of what the
+     * bike did. The pretend bike's made-up numbers never do.
+     */
+    private void logForRide(boolean fromController) {
+        RideState ride = RideState.get();
+        if (demo || !ride.isRecording()) return;
+        ride.bikeLog().add(battery(), controller(), fromController, SystemClock.elapsedRealtime());
     }
 
     // ---- Listeners ---------------------------------------------------------

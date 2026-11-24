@@ -66,6 +66,12 @@ final class WhatsNew {
 
     /** Newest first. */
     static final Note[] NOTES = {
+        new Note(5, "November 2026",
+                new Item(Icons.ZAP, "What the bike did on each ride",
+                        "With the bike linked, a ride keeps its peak power, the energy it used,"
+                                + " how far the battery sagged and how hot things ran. It is on"
+                                + " the ride's page, and Tune ideas sends the last ride's"
+                                + " figures along, so the advice is about what happened.")),
         new Note(4, "November 2026",
                 new Item(Icons.ROTATE_CCW, "Arctic Leopard XE Pro R",
                         "The app can now tune a stock XE Pro R. On the Tune screen, Tunes, then"

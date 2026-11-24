@@ -6,7 +6,9 @@ Two halves that find each other:
   speedometer, automatic ride recording with history, Strava upload and
   Health Connect sharing (both a tap to turn on, see below), a Bluetooth link to the bike (ANT BMS battery, Fardriver controller, with
   tuning), an app drawer, Copilot, and over-the-air updates. Each ride records
-  its furthest lean left and right, and an optional crash alert texts your
+  its furthest lean left and right, and with the bike linked, what the bike
+  did: peak power, energy used and given back, the deepest voltage sag and
+  the hottest temperatures. An optional crash alert texts your
   location to a contact if a hard hit is followed by the bike not moving. A
   new rider is offered a tour of the home screen, and after an update that
   brings something new the app says what (both stay in Settings, with a
@@ -21,7 +23,9 @@ Two halves that find each other:
   other change. Currents and top speed never go above what the controller
   held when the app first met it. Tune ideas writes up the
   bike's settings and limits for the rider to send to an AI app or a tuner;
-  it only reads, and nothing leaves the phone until the rider sends it. The
+  it only reads, and nothing leaves the phone until the rider sends it. It
+  carries the last ride's figures for the bike, so the advice is about what
+  happened. The
   reply can be copied and pasted back: the app loads the changes it names,
   each held to what the bike allows, for the rider to look over and try.
 - **MAXAPACITY Deck** (`deck/`): a service on the Mac that drives a desk

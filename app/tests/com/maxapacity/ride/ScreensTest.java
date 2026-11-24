@@ -442,6 +442,93 @@ public class ScreensTest {
     }
   }
 
+  /**
+   * A ride with the bike linked keeps what the bike did: it is saved with the ride, shown on the
+   * ride's page, and goes into the next tune brief and to the Copilot.
+   */
+  @Test public void aRideWithTheBikeLinkedKeepsWhatTheBikeDid() throws Exception {
+    start();
+    Bike bike = Bike.get(c);
+    bike.link(Bike.KIND_BATTERY, "ANT-BLE16ZMUB");
+    bike.link(Bike.KIND_CONTROLLER, "CONTROLCN368");
+    run(3000);
+    org.junit.Assert.assertNotNull(bike.controller());
+    RideState.get().start();
+    double lat = 40.56;
+    try {
+      for (int i = 0; i < 60; i++) {
+        float speed = 12f + i % 5;
+        lat += speed / 111320.0;
+        RideState.get().onLocation(fix(lat, -111.63, speed));
+        // A minute of riding: rest, a hard pull that sags the pack, a roll-off into regen.
+        boolean pull = i >= 10 && i < 40;
+        boolean regen = i >= 45 && i < 50;
+        ctl.ram[0xE8] = pull ? 752 : regen ? 818 : 812;        // volts x 10
+        ctl.ram[0xEA] = (pull ? 120 * 4 : regen ? -24 * 4 : 4) & 0xFFFF;   // amps x 4
+        ctl.ram[0xF4] = 40 + i / 2;                              // motor warming up
+        ctl.ram[0xDB] = 30 + i / 4;
+        run(1000);
+      }
+    } finally {
+      String said = RideStore.finish(c);
+      org.junit.Assert.assertTrue(said, said.startsWith("Ride saved"));
+    }
+    ctl.ram[0xEA] = 0;
+    run(1000);
+
+    JSONObject ride = RideStore.load(c).getJSONObject(RideStore.load(c).length() - 1);
+    BikeLog.Summary s = RideStore.bike(ride);
+    org.junit.Assert.assertNotNull("the bike's figures are saved with the ride", s);
+    org.junit.Assert.assertEquals("120 A at 75.2 V", 9.02f, s.peakKw, 0.02f);
+    org.junit.Assert.assertEquals(120f, s.peakAmps, 0.1f);
+    org.junit.Assert.assertEquals(24f, s.regenAmps, 0.1f);
+    org.junit.Assert.assertEquals(75.2f, s.lowVolts, 0.05f);
+    org.junit.Assert.assertEquals("from 81.2 V at rest", 6.0f, s.sagVolts, 0.05f);
+    org.junit.Assert.assertEquals(69, s.motorC);
+    org.junit.Assert.assertEquals(44, s.controllerC);
+    // Thirty seconds at 9.02 kW is 75 Wh, and the seconds either side add a little.
+    org.junit.Assert.assertEquals(76f, s.usedWh, 2.5f);
+    org.junit.Assert.assertEquals(2.6f, s.regenWh, 0.6f);
+    org.junit.Assert.assertEquals("the battery's own charge reading", 91, s.socStart);
+
+    a.showRide(ride);
+    for (int i = 0; i < 10; i++) {
+      Thread.sleep(30);
+      idle(100);
+    }
+    sweep("ride with the bike linked");
+    View page = a.getWindow().getDecorView();
+    org.junit.Assert.assertNotNull(find(page, android.widget.TextView.class, "THE BIKE"));
+    org.junit.Assert.assertNotNull(find(page, android.widget.TextView.class, "120 A"));
+    org.junit.Assert.assertNotNull(find(page, android.widget.TextView.class, "75.2 V, sag 6.0 V"));
+    org.junit.Assert.assertNotNull(find(page, android.widget.TextView.class, "24 A peak, 3 Wh back"));
+
+    String brief = TuneBrief.build(c, "More range.");
+    org.junit.Assert.assertTrue(brief, brief.contains("WHAT THE BIKE DID ON MY LAST RIDE WITH IT LINKED\n- The ride: "));
+    org.junit.Assert.assertTrue(brief, brief.contains("- Most power drawn: 9.0 kW, at 120 A from the battery.\n"));
+    org.junit.Assert.assertTrue(brief, brief.contains("- Lowest pack voltage: 75.2 V. Its deepest drop under load was 6.0 V.\n"));
+    org.junit.Assert.assertTrue(brief, brief.contains("- Strongest regen: 24 A into the battery."));
+    org.junit.Assert.assertTrue("still short enough to paste anywhere: " + brief.length(), brief.length() < 7000);
+    String persona = Gemini.persona(c);
+    org.junit.Assert.assertTrue(persona, persona.contains("What the bike did on the last ride it was linked for:"));
+    org.junit.Assert.assertTrue(persona, persona.contains("- Most power drawn: 9.0 kW"));
+
+    // A ride with no bike linked has none of it, and says nothing about a bike.
+    Bike.get(c).unlink(Bike.KIND_CONTROLLER);
+    Bike.get(c).unlink(Bike.KIND_BATTERY);
+    run(1000);
+    RideState.get().start();
+    for (int i = 0; i < 5; i++) {
+      lat += 14 / 111320.0;
+      RideState.get().onLocation(fix(lat, -111.63, 14f));
+      run(1000);
+    }
+    RideStore.finish(c);
+    JSONObject plain = RideStore.load(c).getJSONObject(RideStore.load(c).length() - 1);
+    org.junit.Assert.assertNull(RideStore.bike(plain));
+    org.junit.Assert.assertFalse(plain.has(RideStore.BIKE));
+  }
+
   @Test public void everyScreenPopulated() throws Exception {
     seedRides();
     Units.prefs(c).edit().putString("gemini_key", "test-key").apply();

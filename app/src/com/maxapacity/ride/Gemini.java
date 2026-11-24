@@ -192,6 +192,13 @@ final class Gemini {
                 }
             }
         }
+        Fardriver.Param line = Fardriver.param("line");
+        String bikeRide = RideStore.lastBikeRide(c, TuneBrief.ready(bike)
+                ? bike.controllerMemory().raw(line) * line.scale : 0f);
+        if (!bikeRide.isEmpty()) {
+            sb.append(" What the bike did on the last ride it was linked for:\n")
+                    .append(bikeRide);
+        }
         sb.append(" The rider uses ").append(Units.metric(c) ? "metric" : "US").append(" units.");
         return sb.toString();
     }

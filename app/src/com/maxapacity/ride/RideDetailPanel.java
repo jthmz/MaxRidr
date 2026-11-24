@@ -115,6 +115,9 @@ final class RideDetailPanel extends Panel {
         stats.addView(b, Ui.matchWrap());
         content.addView(stats, Ui.top(c, Ui.matchWrap(), 12));
 
+        BikeLog.Summary bike = RideStore.bike(r);
+        if (bike != null) addBike(bike, distance);
+
         LinearLayout meta = Ui.card(c);
         addMeta(meta, "Stops", String.valueOf(r.optInt("stops")), false);
         // Rides saved before lean was measured have none to show.
@@ -166,6 +169,52 @@ final class RideDetailPanel extends Panel {
         });
         content.addView(delete, Ui.top(c, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, dp(48)), 12));
+    }
+
+    /**
+     * What the linked bike did on this ride: the three figures a tune is
+     * judged by on top, the rest underneath.
+     */
+    private void addBike(BikeLog.Summary s, double distanceM) {
+        Context c = getContext();
+        content.addView(Ui.label(c, "THE BIKE"), Ui.top(c, Ui.matchWrap(), 24));
+        LinearLayout card = Ui.card(c);
+        LinearLayout top = Ui.row(c);
+        addStat(top, "PEAK", Ui.withUnit(fmt("%.1f", s.peakKw), "kW"));
+        addStat(top, "USED", Ui.withUnit(fmt("%.0f", s.usedWh), "Wh"));
+        float per = s.whPer(distanceM, Units.metric(c));
+        addStat(top, "PER " + (Units.metric(c) ? "KM" : "MILE"),
+                per > 0 ? Ui.withUnit(fmt("%.0f", per), "Wh") : "\u2013");
+        card.addView(top, Ui.matchWrap());
+
+        addMeta(card, "Most battery current", fmt("%.0f A", s.peakAmps), true);
+        addMeta(card, "Lowest voltage", s.sagVolts >= 0.5f
+                ? fmt("%.1f V, sag %.1f V", s.lowVolts, s.sagVolts)
+                : fmt("%.1f V", s.lowVolts), true);
+        // Two to a row at most: three would not fit a narrow phone.
+        String hot = "";
+        if (s.motorC != BikeLog.Summary.UNKNOWN) hot += "motor " + s.motorC + "\u00B0";
+        if (s.controllerC != BikeLog.Summary.UNKNOWN) {
+            hot += (hot.isEmpty() ? "" : "  ") + "controller " + s.controllerC + "\u00B0";
+        }
+        if (!hot.isEmpty()) addMeta(card, "Hottest, \u00B0C", hot, true);
+        if (s.regenAmps >= 1f) {
+            addMeta(card, "Regen", s.regenWh >= 1f
+                    ? fmt("%.0f A peak, %.0f Wh back", s.regenAmps, s.regenWh)
+                    : fmt("%.0f A peak", s.regenAmps), true);
+        }
+        if (s.socStart >= 0 && s.socEnd >= 0) {
+            addMeta(card, "Battery", s.socStart + "% to " + s.socEnd + "%"
+                    + (s.batteryC != BikeLog.Summary.UNKNOWN
+                    ? ", " + s.batteryC + "\u00B0 at most" : ""), true);
+        } else if (s.batteryC != BikeLog.Summary.UNKNOWN) {
+            addMeta(card, "Battery, hottest", s.batteryC + " \u00B0C", true);
+        }
+        content.addView(card, Ui.top(c, Ui.matchWrap(), 8));
+    }
+
+    private static String fmt(String pattern, Object... values) {
+        return String.format(Locale.US, pattern, values);
     }
 
     private void addStat(LinearLayout row, String name, CharSequence value) {
