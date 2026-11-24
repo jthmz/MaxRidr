@@ -430,7 +430,7 @@ public class ScreensTest {
     String brief = handedOver();
     org.junit.Assert.assertNotNull("another app is offered the brief", brief);
     org.junit.Assert.assertTrue(brief, brief.contains("WHAT I WANT\nMore range."));
-    org.junit.Assert.assertTrue(brief, brief.contains("- Battery: "));
+    org.junit.Assert.assertTrue("the linked battery is in it: " + brief, brief.contains(" cells in series, "));
     org.junit.Assert.assertFalse(brief, brief.contains("demo bike") || brief.contains("ABOUT MY BIKE"));
     for (Fardriver.Param p : Fardriver.PARAMS) {
       String now = p.format(bike.controllerMemory().raw(p));
