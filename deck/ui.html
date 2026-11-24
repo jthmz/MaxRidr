@@ -1,0 +1,923 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=800,height=480,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>MAXAPACITY Deck</title>
+<!--
+  Runs on the Car Thing's Chromium 69: no optional chaining, no flex gap, comma-style colors only.
+  Design ("arc"): one type family (the device's own Circular, with fallbacks elsewhere), four signal colours, ring gauges,
+  brackets and a 3D bolt. The screen is 4 inches and sits at arm's length, so titles are 23px or larger and running text 20px or larger (ISO 15008's 12 arcminute minimum at 50 cm is about 23px here).
+  Whatever moves all the time is a whole element animated with transform or opacity only, so the compositor does the work.
+  Standby pictures and clips are drawn on small canvases and every decoded frame is closed at once: see the notes there.
+-->
+<style>
+:root{--bg:#02060a;--panel:rgba(6,16,24,.84);--line:rgba(34,211,245,.26);--edge:rgba(34,211,245,.6);--fg:#eaf9ff;--dim:#8fb0bc;--y:#ffe81a;--c:#22d3f5;--g:#39ff88;--r:#ff4d6a;
+  --f:"Circular Sp UI v3 T","Avenir Next","Helvetica Neue",Helvetica,Arial,sans-serif;--w9:900}
+body.pv{--w9:700}
+/* in a normal browser (the preview, or a paired phone, tablet or computer) the 800x480 stage is scaled to fit the window by fit() */
+html.pv{width:100%;height:100%;background:#02060a;overscroll-behavior:none}
+html.pv body{position:absolute;left:0;top:0;transform-origin:0 0}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+html,body{width:800px;height:480px;overflow:hidden;color:var(--fg);font-family:var(--f);font-size:20px;line-height:26px}
+body{background-color:#02060a;background-image:radial-gradient(ellipse at 50% -20%,rgba(34,211,245,.17),rgba(2,6,10,0) 62%),radial-gradient(rgba(34,211,245,.14) 1px,rgba(2,6,10,0) 1.5px);background-size:auto,22px 22px}
+body:before{content:"";position:absolute;left:-300px;bottom:-30px;width:1400px;height:330px;opacity:.5;
+  background-image:linear-gradient(to bottom,#02060a 0%,rgba(2,6,10,0) 70%),repeating-linear-gradient(90deg,rgba(34,211,245,.55) 0,rgba(34,211,245,.55) 2px,transparent 2px,transparent 70px),repeating-linear-gradient(0deg,rgba(34,211,245,.55) 0,rgba(34,211,245,.55) 2px,transparent 2px,transparent 44px);
+  transform:perspective(320px) rotateX(64deg);transform-origin:50% 100%}
+body:after{content:"";position:absolute;left:0;top:0;width:800px;height:480px;z-index:60;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(0,0,0,.14) 0,rgba(0,0,0,.14) 1px,transparent 1px,transparent 3px)}
+::-webkit-scrollbar{display:none}
+/* ---------- shared pieces ---------- */
+.one{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.two{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.dim{color:var(--dim)}
+.lab{font-size:16px;line-height:20px;font-weight:700;letter-spacing:2px;color:var(--c);text-transform:uppercase}
+.h{display:grid;grid-template-columns:1fr auto;grid-gap:12px;align-items:center}
+.h>div{min-width:0}
+.tap:active{opacity:.55}
+.card{position:relative;background:var(--panel);border:1px solid var(--line);box-shadow:inset 0 0 24px rgba(34,211,245,.06)}
+.card:before{content:"";position:absolute;left:-1px;top:-1px;width:14px;height:14px;border-left:2px solid var(--c);border-top:2px solid var(--c)}
+.card:after{content:"";position:absolute;right:-1px;bottom:-1px;width:14px;height:14px;border-right:2px solid var(--y);border-bottom:2px solid var(--y)}
+.bar{position:relative;height:16px;background:rgba(34,211,245,.13);overflow:hidden;margin-top:8px}
+.bar i{display:block;height:100%;background:var(--y)}
+.bar i.g{background:var(--g)} .bar i.r{background:var(--r)} .bar i.c{background:var(--c)}
+.bar:after{content:"";position:absolute;left:0;top:0;right:0;bottom:0;background:repeating-linear-gradient(90deg,transparent 0,transparent 9px,#02060a 9px,#02060a 11px)}
+.bar.ind i{width:28%;animation:slide 1.5s linear infinite}
+.cells{display:grid;grid-gap:4px;height:16px;margin-top:8px}
+.cells i{display:block;background:rgba(34,211,245,.15)}
+.cells i.d{background:var(--c)} .cells.w i.d{background:var(--g)}
+.cells i.go{background:var(--y);box-shadow:0 0 8px rgba(255,232,26,.8);animation:pulse 1.1s ease-in-out infinite}
+.chip{display:inline-block;padding:2px 10px;font-size:16px;line-height:22px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;vertical-align:middle;white-space:nowrap;background:rgba(34,211,245,.08);border:1px solid var(--line);color:var(--fg)}
+.chip.y{background:rgba(255,232,26,.12);color:var(--y);border-color:var(--y)} .chip.g{background:rgba(57,255,136,.12);color:var(--g);border-color:var(--g)}
+.chip.r{background:rgba(255,77,106,.12);color:var(--r);border-color:var(--r)} .chip.c{background:rgba(34,211,245,.12);color:var(--c);border-color:var(--c)}
+.n2{font-size:24px;line-height:28px;font-weight:var(--w9);margin-left:8px;vertical-align:middle}
+.hot{color:var(--g);font-weight:700;text-shadow:0 0 8px rgba(57,255,136,.6)}
+.btn{display:inline-block;min-width:160px;height:60px;line-height:58px;padding:0 22px;margin-right:12px;text-align:center;font-weight:700;font-size:20px;letter-spacing:1px;background:rgba(34,211,245,.08);border:1px solid var(--c);color:var(--c)}
+.btn.y{background:var(--y);border-color:var(--y);color:#02060a;box-shadow:0 0 16px rgba(255,232,26,.4)}
+.btn.sm{min-width:0;padding:0 18px;margin-right:10px}
+.btn.xs{min-width:112px;height:52px;line-height:50px;margin-right:10px}
+.btn.on{background:var(--g);border-color:var(--g);color:#02060a}
+.pm{width:64px;min-width:64px;padding:0;margin:0;font-size:34px}
+/* ring gauge: a track, an arc for the value, the number in the middle */
+.rg{position:relative}
+.rg svg{position:absolute;left:0;top:0;width:100%;height:100%}
+.rg circle{fill:none}
+.rg .trk{stroke:rgba(34,211,245,.15)}
+.rg .tks{stroke:rgba(34,211,245,.5)}
+.rg .arc{stroke:var(--y)} .rg .arc.g{stroke:var(--g)} .rg .arc.r{stroke:var(--r)} .rg .arc.c{stroke:var(--c)}
+.rg .ri{position:absolute;left:0;top:0;width:100%;height:100%;text-align:center;font-weight:var(--w9)}
+.rg .ri small{font-size:55%;font-weight:700;color:var(--dim)}
+.spin1,.spin2{position:absolute;border-radius:50%}
+.spin1{border:2px dashed rgba(34,211,245,.4);animation:rot 70s linear infinite}
+.spin2{border:2px solid transparent;border-top-color:rgba(34,211,245,.85);border-right-color:rgba(34,211,245,.22);animation:rot 12s linear infinite reverse}
+/* the bolt: nine stacked layers make a solid 3D shape that turns all the time; .go is a fast one-shot turn */
+.boltw{position:relative;display:inline-block;vertical-align:middle;width:30px;height:46px;-webkit-perspective:260px;perspective:260px}
+.boltw:before{content:"";position:absolute;left:-60%;top:-25%;width:220%;height:150%;border-radius:50%;background:radial-gradient(closest-side,rgba(34,211,245,.5),rgba(34,211,245,0))}
+.bolt{position:absolute;left:0;top:0;width:100%;height:100%;-webkit-transform-style:preserve-3d;transform-style:preserve-3d;animation:spin 5s linear infinite}
+.bolt.go{animation:spin .7s ease-out 1}
+.bolt svg{position:absolute;left:0;top:0;display:block;width:100%;height:100%;overflow:visible}
+.boltw.lg{width:104px;height:160px} .boltw.am{width:84px;height:130px}
+.emb{position:relative;margin:0 auto}
+@keyframes spin{0%{transform:rotateY(0deg)}100%{transform:rotateY(360deg)}}
+@keyframes rot{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+@keyframes pulse{0%{opacity:1}50%{opacity:.3}100%{opacity:1}}
+@keyframes slide{0%{transform:translateX(-110%)}100%{transform:translateX(380%)}}
+@keyframes sweep{0%{transform:translateY(0)}100%{transform:translateY(430px)}}
+/* ---------- top bar ---------- */
+#top{position:absolute;left:0;top:0;width:800px;height:54px;z-index:2;background:rgba(2,7,11,.94);border-bottom:1px solid var(--edge);box-shadow:0 0 18px rgba(34,211,245,.3)}
+#top:after{content:"";position:absolute;left:0;right:0;bottom:-6px;height:5px;background:repeating-linear-gradient(90deg,rgba(34,211,245,.45) 0,rgba(34,211,245,.45) 1px,transparent 1px,transparent 10px)}
+#tb{float:left;width:58px;height:54px;padding:4px 0 0 16px}
+#tb .boltw:before{left:-45%;top:-10%;width:190%;height:120%;opacity:.7}
+.tab{position:relative;float:left;height:54px;line-height:54px;padding:0 17px;white-space:nowrap;text-align:center;font-weight:700;font-size:20px;letter-spacing:1.5px;color:var(--dim)}
+.tab.on{color:var(--y);text-shadow:0 0 12px rgba(255,232,26,.8)}
+.tab.on:after{content:"";position:absolute;left:14px;right:14px;bottom:0;height:3px;background:var(--y);box-shadow:0 0 10px var(--y)}
+.tab b{display:inline-block;min-width:24px;margin-left:6px;padding:0 6px;height:26px;line-height:24px;border:1px solid var(--c);color:var(--c);font-size:16px;letter-spacing:0;vertical-align:middle}
+.tab b:empty{display:none}
+.tab b.live{background:var(--g);border-color:var(--g);color:#02060a}
+#right{float:right;height:54px;line-height:54px;padding-right:16px;font-weight:700;font-size:24px}
+#dot{display:inline-block;width:10px;height:10px;background:var(--g);box-shadow:0 0 8px var(--g);margin-right:10px}
+#dot.off{background:var(--r);box-shadow:0 0 8px var(--r)}
+.view{position:absolute;left:0;top:54px;width:800px;height:426px;overflow-y:auto;padding:16px 14px;display:none}
+.view.on{display:block}
+#scan{position:absolute;left:0;top:54px;width:800px;height:426px;z-index:4;overflow:hidden;pointer-events:none;display:none}
+#scan i{display:block;height:3px;background:linear-gradient(90deg,rgba(34,211,245,0),var(--c),rgba(34,211,245,0));box-shadow:0 0 18px var(--c);animation:sweep .45s ease-out 1}
+/* ---------- home ---------- */
+#hG{position:absolute;left:42px;top:14px;width:244px;height:244px}
+#hG .spin1{left:0;top:0;width:244px;height:244px}
+#hG .spin2{left:9px;top:9px;width:226px;height:226px}
+#hG .in{position:absolute;left:38px;top:38px;width:168px;height:168px;text-align:center}
+#hBolt{position:absolute;left:69px;top:2px}
+#subs{position:absolute;left:0;top:50px;width:168px;font-size:56px;line-height:60px;font-weight:var(--w9);color:var(--y);letter-spacing:-1.5px;text-shadow:0 0 22px rgba(255,232,26,.55)}
+#hGoal{position:absolute;left:0;top:113px;width:168px;font-size:20px;line-height:24px;color:var(--dim)} #hGoal b{color:var(--fg)}
+#hStats{position:absolute;left:14px;top:266px;width:300px;height:146px}
+.stat{display:grid;grid-template-columns:78px 1fr;grid-gap:14px;align-items:center;height:44px;margin-bottom:7px}
+.stat .n{font-size:38px;line-height:44px;font-weight:var(--w9);text-align:right;text-shadow:0 0 14px currentColor}
+.stat .l{font-size:23px;line-height:28px;font-weight:700}
+#hNow{position:absolute;left:326px;top:14px;width:460px;height:150px;padding:12px 16px}
+#hNow .t{font-size:26px;line-height:32px;font-weight:700;margin-top:8px}
+#hNow .m{font-size:21px;line-height:26px;margin-top:8px}
+#hUps{position:absolute;left:326px;top:176px;width:460px;height:234px;padding:12px 16px 0;overflow:hidden}
+.up{padding:6px 0 5px;border-top:1px solid var(--line)}
+.up:first-of-type{border-top:0}
+.up .t{font-size:23px;line-height:28px;font-weight:700}
+.up .m{font-size:20px;line-height:24px}
+/* ---------- lists ---------- */
+.vrow{display:grid;grid-template-columns:72px 1fr auto;grid-gap:16px;align-items:center;height:98px;padding:0 16px;margin-bottom:10px}
+.vrow>div{min-width:0}
+.vrow .t{font-size:25px;line-height:30px;font-weight:700}
+.vrow .s{font-size:21px;line-height:26px;margin-top:4px}
+.sec{margin:0 2px 8px} .sec2{margin:18px 2px 8px}
+.row{padding:12px 16px 14px;margin-bottom:10px}
+.row .t{font-size:24px;line-height:30px;font-weight:700}
+.row .s{font-size:21px;line-height:26px;margin-top:8px}
+.act{padding:10px 16px;margin-bottom:8px;font-size:21px;line-height:28px}
+/* ---------- launch ---------- */
+#launch .tiles{display:grid;grid-template-columns:repeat(5,1fr);grid-gap:10px}
+.tile{height:148px;padding:15px 4px 0;text-align:center}
+.tile .ic{position:relative;width:86px;height:86px;margin:0 auto 9px;border-radius:50%;border:1px solid rgba(34,211,245,.42);box-shadow:inset 0 0 16px rgba(34,211,245,.2),0 0 12px rgba(34,211,245,.12);color:var(--y)}
+.tile .ic:before{content:"";position:absolute;left:-6px;top:-6px;right:-6px;bottom:-6px;border-radius:50%;border:2px solid transparent;border-top-color:var(--y);border-right-color:rgba(255,232,26,.28);transform:rotate(-22deg)}
+.tile .ic svg{position:absolute;left:18px;top:18px;width:50px;height:50px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 5px rgba(255,232,26,.55))}
+.tile .n{font-size:24px;line-height:28px;font-weight:700}
+.tile.muted .ic{color:var(--r);border-color:var(--r)} .tile.muted .ic:before{border-top-color:var(--r);border-right-color:rgba(255,77,106,.28)}
+.tile.muted .ic svg{filter:none}
+#volrow{margin-top:10px;height:88px;padding:0 14px;display:grid;grid-template-columns:auto 1fr auto;grid-gap:18px;align-items:center}
+#volrow .bar{height:18px}
+/* ---------- sheets ---------- */
+#sheet{position:absolute;left:0;top:0;width:800px;height:480px;background:#02060a radial-gradient(rgba(34,211,245,.1) 1px,rgba(2,6,10,0) 1.5px);background-size:22px 22px;padding:14px 26px;display:none;z-index:5}
+#sheet h2{font-size:28px;line-height:36px;font-weight:var(--w9);color:var(--y);text-shadow:0 0 14px rgba(255,232,26,.45);padding-bottom:8px;border-bottom:1px solid var(--edge)}
+#sheet .body{height:328px;overflow-y:auto;font-size:23px;line-height:32px;padding-top:10px}
+#sheet .foot{position:absolute;left:26px;bottom:14px;white-space:nowrap}
+.set{display:grid;grid-template-columns:210px 1fr;grid-gap:14px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line)}
+.gs{display:grid;grid-gap:10px;padding-top:12px;text-align:center}
+.gs .rg{margin:0 auto 6px}
+.gs .gl{font-size:20px;line-height:24px}
+.task{position:relative;padding:5px 0 5px 36px;font-size:23px;line-height:30px}
+.task:before{content:"";position:absolute;left:6px;top:13px;width:12px;height:12px;border:2px solid var(--dim)}
+.task.done{color:var(--dim)} .task.done:before{background:var(--g);border-color:var(--g)}
+.task.go{color:var(--y);font-weight:700} .task.go:before{background:var(--y);border-color:var(--y)}
+.vr{display:grid;grid-template-columns:1fr 112px 98px;grid-gap:10px;padding:8px 0;border-top:1px solid var(--line);font-size:22px;line-height:30px}
+.vr:first-child{border-top:0} .vr span{text-align:right}
+.od{display:grid;grid-template-columns:104px 1fr;grid-gap:20px;align-items:center}
+.od p{margin-top:8px}
+/* pairing another screen: a QR code (dark on white, or phones cannot read it), the address and the code */
+.pr{display:grid;grid-template-columns:222px 1fr;grid-gap:26px;align-items:center}
+.pr>div{min-width:0}
+.qr{width:222px;height:222px;background:#fff}
+.qr svg{display:block}
+.pu{font-size:26px;line-height:34px;font-weight:700;color:var(--c);word-break:break-all}
+.pa{font-size:20px;line-height:24px}
+.pc{font-size:56px;line-height:62px;font-weight:var(--w9);color:var(--y);letter-spacing:3px;text-shadow:0 0 18px rgba(255,232,26,.5)}
+.sc{display:grid;grid-template-columns:1fr auto;grid-gap:12px;align-items:center;padding:4px 0;border-top:1px solid var(--line)}
+.sc>div{min-width:0} .sc .btn{margin-right:0}
+/* ---------- overlays ---------- */
+#pill{position:absolute;left:170px;bottom:22px;width:460px;padding:12px 22px 18px;background:rgba(2,7,11,.96);border:1px solid var(--c);box-shadow:0 0 18px rgba(34,211,245,.35);display:none;z-index:38}
+#pill .lab{font-size:18px;line-height:24px}
+#pill .bar{height:18px}
+#toast{position:absolute;left:30px;right:30px;bottom:22px;text-align:center;display:none;z-index:40}
+#toast span{display:inline-block;max-width:740px;padding:12px 26px;background:var(--y);color:#02060a;font-weight:700;font-size:23px;line-height:30px;box-shadow:0 0 22px rgba(255,232,26,.5)}
+#wait{position:absolute;left:0;top:0;width:800px;height:480px;background:var(--bg);z-index:50;text-align:center;padding-top:34px}
+#wait .emb,#party .emb{width:220px;height:220px}
+#wait .spin1,#party .spin1{left:0;top:0;width:220px;height:220px} #wait .spin2,#party .spin2{left:10px;top:10px;width:200px;height:200px}
+#wait .boltw,#party .boltw{position:absolute;left:58px;top:30px}
+#wait h1{margin-top:24px;font-size:54px;line-height:60px;font-weight:var(--w9);letter-spacing:8px;color:var(--y);text-shadow:0 0 26px rgba(255,232,26,.6)}
+#wait p{margin-top:10px;color:var(--dim);font-size:23px}
+#party{position:absolute;left:0;top:0;width:800px;height:480px;background:#02060a radial-gradient(ellipse at 50% 30%,rgba(34,211,245,.2),rgba(2,6,10,0) 60%);z-index:30;display:none;text-align:center;padding-top:20px}
+#party .big{font-size:112px;line-height:116px;font-weight:var(--w9);color:var(--y);letter-spacing:-3px;text-shadow:0 0 30px rgba(255,232,26,.7);margin-top:12px}
+#party .sm{font-size:24px;color:var(--fg);letter-spacing:4px;text-transform:uppercase;font-weight:700}
+/* ---------- standby: pictures and clips behind the clock, a bar for everything in progress ---------- */
+#rain{position:absolute;left:0;top:0;z-index:16;display:none}
+.scr{position:absolute;left:0;top:0;width:800px;height:480px;z-index:17;display:none;opacity:0;overflow:hidden;background:#02060a;transition:opacity 1.4s linear}
+.scr .in{position:absolute;left:0;top:0;width:800px;height:480px}
+.scr canvas{position:absolute;width:200px;height:240px}
+#amb{position:absolute;left:0;top:0;width:800px;height:480px;z-index:20;display:none;background:rgba(2,6,10,.66)}
+#amb.pic{background:rgba(2,6,10,.44)} #amb.clip{background:rgba(2,6,10,.22)}
+#amb:before{content:"";position:absolute;left:0;top:0;width:800px;height:230px;background:linear-gradient(to bottom,rgba(2,6,10,.72),rgba(2,6,10,0))}
+#amb .ck{position:absolute;left:34px;top:8px;font-size:116px;line-height:116px;font-weight:var(--w9);letter-spacing:-4px;text-shadow:0 0 26px rgba(34,211,245,.55),0 2px 10px #000}
+#amb .dt{position:absolute;left:38px;top:126px;font-size:23px;line-height:28px;opacity:.85;text-shadow:0 1px 6px #000}
+#amb .md{position:absolute;left:38px;top:160px;font-size:23px;line-height:28px;text-shadow:0 1px 6px #000;white-space:nowrap} #amb .md b{font-size:27px;font-weight:var(--w9)}
+#amb .rt{position:absolute;right:34px;top:22px;text-align:right}
+#amb .rt .lab{text-shadow:0 1px 6px #000}
+#amb .sb{font-size:70px;line-height:74px;font-weight:var(--w9);color:var(--y);letter-spacing:-2px;text-shadow:0 0 22px rgba(255,232,26,.55),0 2px 10px #000}
+#amb .rt .dt{position:static;font-size:23px}
+#aBolt{position:absolute;left:374px;top:6px;width:150px;height:150px}
+#aBolt .spin1{left:0;top:0;width:150px;height:150px} #aBolt .spin2{left:8px;top:8px;width:134px;height:134px}
+#aBolt .boltw{position:absolute;left:33px;top:10px}
+#aCap{position:absolute;right:34px;top:150px;width:230px;text-align:right;text-shadow:0 1px 6px #000}
+#aCap .c1{font-size:18px;line-height:22px;font-weight:700;color:var(--c);letter-spacing:1px}
+#aCap .c2{font-size:17px;line-height:20px;opacity:.78}
+#aTasks{position:absolute;left:16px;right:16px;bottom:12px;padding:8px 14px 12px;background:rgba(3,9,14,.76);border:1px solid rgba(34,211,245,.32);box-shadow:0 0 18px rgba(0,0,0,.5)}
+#aTasks:before{content:"";position:absolute;left:-1px;top:-1px;width:14px;height:14px;border-left:2px solid var(--c);border-top:2px solid var(--c)}
+#aTasks:after{content:"";position:absolute;right:-1px;bottom:-1px;width:14px;height:14px;border-right:2px solid var(--y);border-bottom:2px solid var(--y)}
+.tr{margin-top:8px}
+.tr .t{font-size:24px;line-height:28px;font-weight:700}
+.tr .t span{font-weight:400}
+.tr .bar,.tr .cells{margin-top:4px;height:14px}
+.mt{position:relative;height:29px;padding-left:32px;font-size:22px;line-height:29px}
+.tr .bar + .mt,.tr .cells + .mt{margin-top:4px}
+.mt:before{content:"";position:absolute;left:6px;top:8px;width:9px;height:9px;border:2px solid var(--dim)}
+.mt.d{color:var(--dim)} .mt.d:before{background:var(--g);border-color:var(--g)}
+.mt.go{color:var(--y);font-weight:700;padding-right:150px} .mt.go:before{background:var(--y);border-color:var(--y);animation:pulse 1.1s ease-in-out infinite}
+.tr .mt .bar{position:absolute;right:0;top:11px;width:136px;height:8px;margin:0}
+</style></head>
+<body>
+<div id="app">
+  <div id="top">
+    <div id="tb"></div>
+    <div class="tab tap on" data-tab="0">HOME</div>
+    <div class="tab tap" data-tab="1">VIDEOS<b id="nv"></b></div>
+    <div class="tab tap" data-tab="2">CLAUDE<b id="nc"></b></div>
+    <div class="tab tap" data-tab="3">LAUNCH</div>
+    <div id="right" class="tap" data-sheet="settings"><i id="dot"></i><span id="clock"></span></div>
+  </div>
+  <div class="view on" id="home">
+    <div class="rg tap" id="hG" data-sheet="channel">
+      <div class="spin1"></div><div class="spin2"></div>
+      <svg viewBox="0 0 244 244"><circle class="tks" cx="122" cy="122" r="91" stroke-width="7" stroke-dasharray="2 9.43"/><circle class="trk" cx="122" cy="122" r="106" stroke-width="10"/><circle class="arc" id="hArc" cx="122" cy="122" r="106" stroke-width="10" stroke-dasharray="0 667" transform="rotate(-90 122 122)"/></svg>
+      <div class="in"><span id="hBolt"></span><div id="subs"></div><div id="hGoal" class="one"></div></div>
+    </div>
+    <div id="hStats"></div>
+    <div class="card tap" id="hNow" data-tab="2"></div>
+    <div class="card" id="hUps"></div>
+  </div>
+  <div class="view" id="videos"></div>
+  <div class="view" id="claude"></div>
+  <div class="view" id="launch"></div>
+  <div id="scan"><i></i></div>
+  <div id="sheet"><h2 id="sh" class="one"></h2><div class="body" id="sb"></div><div class="foot" id="sf"></div></div>
+</div>
+<canvas id="rain" width="800" height="480"></canvas>
+<div class="scr" id="scrA"></div><div class="scr" id="scrB"></div>
+<div id="amb"><div id="aBolt"><div class="spin1"></div><div class="spin2"></div></div><div id="aTop"></div><div id="aCap"></div><div id="aTasks"></div></div>
+<div id="party"><div class="emb" id="pb2"><div class="spin1"></div><div class="spin2"></div></div><div class="big" id="pbig"></div><div class="sm" id="psm"></div></div>
+<div id="pill"><div class="h"><span class="lab" id="pl">Volume</span><span class="n2" id="pn"></span></div><div class="bar"><i id="pb"></i></div></div>
+<div id="toast"><span id="tt"></span></div>
+<div id="wait"><div class="emb" id="wb"><div class="spin1"></div><div class="spin2"></div></div><h1 id="wh">MAXAPACITY</h1><p id="wm">Waiting for the Mac…</p></div>
+<script>
+(function () {
+  var S = null, cur = 0, lastPush = 0, volAt = 0, cache = {}, pillT = null, toastT = null, zapT = null, partyT = null, scanT = null;
+  var sheetFn = null, ambOn = false, lastInput = Date.now(), lastAlert = null;
+  var INJ = !/^https?:$/.test(location.protocol);           // written into the Car Thing's browser by the Mac, or opened as a normal page
+  if (!INJ) document.body.className = 'pv';                  // a normal browser has no Circular Black: its bold stands in
+  var UI = '';                                               // over HTTP the Mac fills this in with the build of this page, and the page reports it when it asks for state
+  var ROOT = document.documentElement, TOUCH = !INJ && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+  var CANFULL = !INJ && !!(ROOT.requestFullscreen || ROOT.webkitRequestFullscreen), pairAsk = 0;
+  var CID = Math.random().toString(36).slice(2, 10), driving = false, curSheet = null, applying = false, driveN = -1, driveT = null, lastView = '', followAt = 0;
+  // In a normal browser the 800x480 stage is scaled to fill the window. A phone held upright gets the stage turned on its side,
+  // so it reads the right way up once the phone is turned, whether or not the phone's own rotation is locked.
+  function fit() {
+    var w = window.innerWidth, h = window.innerHeight, s;
+    if (!w || !h) return;                                    // a hidden window has no size yet: keep the last fit
+    if (TOUCH && h > w && w < 600) {
+      s = Math.min(h / 800, w / 480);
+      document.body.style.transform = 'translate(' + Math.round((w + 480 * s) / 2) + 'px,' + Math.round((h - 800 * s) / 2) + 'px) rotate(90deg) scale(' + s + ')';
+    } else {
+      s = Math.min(w / 800, h / 480);
+      document.body.style.transform = 'translate(' + Math.round((w - 800 * s) / 2) + 'px,' + Math.round((h - 480 * s) / 2) + 'px) scale(' + s + ')';
+    }
+  }
+  var wakeState = navigator.wakeLock ? 'not asked yet' : 'not offered by this browser here', lastHello = '';
+  function awake() {                                         // keep this screen on; browsers allow it only on a secure address (localhost or https)
+    if (!navigator.wakeLock || document.hidden) return;
+    navigator.wakeLock.request('screen').then(function () { wakeState = 'held'; hello(); }, function (e) { wakeState = 'refused (' + ((e && e.name) || 'error') + ')'; hello(); });
+  }
+  function hello() {                                         // tells the Mac what this screen is, for its log; sent again only when something changed
+    if (INJ || !S) return;
+    var o = { t: 'screen', w: window.innerWidth, h: window.innerHeight, touch: TOUCH, wake: wakeState, full: !!(document.fullscreenElement || document.webkitFullscreenElement) }, k = JSON.stringify(o);
+    if (k !== lastHello) { lastHello = k; send(o); }
+  }
+  function full() {
+    var d = document, p;
+    if (d.fullscreenElement || d.webkitFullscreenElement) return (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+    p = (ROOT.requestFullscreen || ROOT.webkitRequestFullscreen).call(ROOT);
+    if (p && p.then) p.then(function () {
+      var o = window.screen && window.screen.orientation;
+      if (o && o.lock) o.lock('landscape').catch(function () {});
+    }).catch(function () {});
+  }
+  if (!INJ) {
+    ROOT.className = 'pv'; fit();
+    window.addEventListener('resize', fit);
+    window.addEventListener('orientationchange', function () { setTimeout(fit, 300); });
+    document.addEventListener('gesturestart', function (e) { e.preventDefault(); });      // no pinch zoom on a phone
+    document.addEventListener('touchstart', function () {}, { passive: true });             // lets a tap show its pressed state on iOS
+    document.addEventListener('visibilitychange', awake); awake();
+    document.addEventListener('fullscreenchange', function () { setTimeout(hello, 500); });
+    try { driving = localStorage.getItem('deckDrive') === '1'; } catch (e) { /* no storage: off until switched on */ }
+    window.addEventListener('hashchange', hashDo);
+    document.addEventListener('scroll', function () { tellView(); }, true);
+    setInterval(function () { tellView(true); }, 20000);
+  }
+  var VIEWS = ['home', 'videos', 'claude', 'launch'];
+  var ORDER = { ready: 0, editing: 1, built: 2, 'sneak peek done': 2, blocked: 3, 'not started': 4, later: 5, posted: 6 };
+  var CHIP = { ready: 'g', editing: 'y', blocked: 'r', built: 'c', 'sneak peek done': 'c' };
+  var KIND = { claude: 'c', render: 'c', ready: 'g', you: 'r', video: 'y', subs: 'y', screen: 'c', offload: 'g' };
+  var ARC = 2 * Math.PI * 106;                               // length of the home gauge's arc
+  // launch icons: 48x48, drawn with one stroke weight
+  var IC = {
+    film: '<rect x="8" y="20" width="32" height="20" rx="2"/><path d="M8 20v-8h32v8M15 12l-3 8M23 12l-3 8M31 12l-3 8M39 12l-3 8"/>',
+    chart: '<path d="M8 40h32"/><rect x="11" y="26" width="6" height="10"/><rect x="21" y="18" width="6" height="18"/><rect x="31" y="10" width="6" height="26"/>',
+    play: '<rect x="6" y="11" width="36" height="26" rx="7"/><path d="M20 17.5v13l11-6.5z"/>',
+    wheels: '<circle cx="24" cy="15" r="8"/><circle cx="14.5" cy="31" r="8"/><circle cx="33.5" cy="31" r="8"/>',
+    cut: '<circle cx="13" cy="34" r="5"/><circle cx="13" cy="14" r="5"/><path d="M17.3 31L41 12M17.3 17L41 36"/>',
+    drive: '<rect x="7" y="12" width="34" height="24" rx="3"/><path d="M7 27h34M12 31.5h11"/><circle cx="35" cy="31.5" r="1.4"/>',
+    done: '<path d="M6 15a2 2 0 0 1 2-2h10l4 4h18a2 2 0 0 1 2 2v18a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2z"/><path d="M17 28l5 5 9-10"/>',
+    folder: '<path d="M6 15a2 2 0 0 1 2-2h10l4 4h18a2 2 0 0 1 2 2v18a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2z"/>',
+    globe: '<circle cx="24" cy="24" r="16"/><path d="M8 24h32M24 8c6.5 4.5 6.5 27.5 0 32M24 8c-6.5 4.5-6.5 27.5 0 32"/>',
+    spark: '<path d="M24 6v36M6 24h36M11.3 11.3l25.4 25.4M36.7 11.3L11.3 36.7"/>',
+    app: '<rect x="7" y="10" width="34" height="28" rx="3"/><path d="M7 18h34"/><circle cx="12" cy="14" r=".9"/><circle cx="16.5" cy="14" r=".9"/>',
+    speaker: '<path d="M8 19h7l9-7v24l-9-7H8z"/><path d="M30 18c3 3.5 3 8.5 0 12M35 13c6 6.5 6 15.5 0 22"/>',
+    mute: '<path d="M8 19h7l9-7v24l-9-7H8z"/><path d="M31 19l10 10M41 19L31 29"/>'
+  };
+  function $(id) { return document.getElementById(id); }
+  function bolt(size) {
+    var step = size === 'lg' ? 2.2 : size === 'am' ? 1.8 : 0.85, n = 4, k, h = '<span class="boltw ' + size + '"><span class="bolt">';
+    var P = 'points="25,2 5,35 18,35 11,60 36,24 22,24 31,2"';
+    for (k = -n; k <= n; k++) {
+      h += '<svg viewBox="0 0 40 62" style="transform:translateZ(' + (k * step) + 'px)">';
+      if (k === n || k === -n) h += '<defs><linearGradient id="bg' + size + (k > 0 ? 'f' : 'b') + '" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#d8fdff"/><stop offset=".45" stop-color="#4fe0f2"/><stop offset="1" stop-color="#0f9fbd"/></linearGradient></defs>' +
+        '<polygon ' + P + ' fill="url(#bg' + size + (k > 0 ? 'f' : 'b') + ')" stroke="#bff8ff" stroke-width="1.6" stroke-linejoin="round"/><polyline points="24,7 12,31 20,31" fill="none" stroke="#ffffff" stroke-opacity=".8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>';
+      else h += '<polygon ' + P + ' fill="#0b6f88" stroke="#0b6f88" stroke-width="1.6" stroke-linejoin="round"/>';
+      h += '</svg>';
+    }
+    return h + '</span></span>';
+  }
+  function icon(name) { return '<svg viewBox="0 0 48 48">' + (IC[name] || IC.app) + '</svg>'; }
+  function ring(pct, d, sw, cls, inner, fs) {           // a small ring gauge with something in the middle
+    var c = d / 2, r = c - sw / 2 - 1, L = 2 * Math.PI * r, p = Math.max(0, Math.min(100, pct));
+    return '<div class="rg" style="width:' + d + 'px;height:' + d + 'px"><svg viewBox="0 0 ' + d + ' ' + d + '"><circle class="trk" cx="' + c + '" cy="' + c + '" r="' + r + '" stroke-width="' + sw + '"/>' +
+      '<circle class="arc ' + (cls || '') + '" cx="' + c + '" cy="' + c + '" r="' + r + '" stroke-width="' + sw + '" stroke-dasharray="' + (L * p / 100).toFixed(1) + ' ' + L.toFixed(1) + '" transform="rotate(-90 ' + c + ' ' + c + ')"/></svg>' +
+      '<div class="ri" style="line-height:' + d + 'px;font-size:' + fs + 'px">' + inner + '</div></div>';
+  }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function num(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+  function kfmt(n) { return n >= 10000 ? Math.round(n / 1000) + 'K' : n >= 1000 ? (Math.round(n / 100) / 10) + 'K' : String(n); }
+  function send(o) {
+    if (INJ) console.log('__CT__' + JSON.stringify(o));
+    else fetch('/api/action', { method: 'POST', body: JSON.stringify(o) });
+  }
+  function put(id, html) { if (cache[id] !== html) { cache[id] = html; var el = $(id), y = el.scrollTop; el.innerHTML = html; el.scrollTop = y; } }
+  function bar(pct, cls) { return '<div class="bar"><i class="' + (cls || '') + '" style="width:' + Math.max(0, Math.min(100, pct)) + '%"></i></div>'; }
+  function cells(n, done, live, working) {      // one cell per step: finished ones filled, the live one pulsing
+    var h = '<div class="cells' + (working ? ' w' : '') + '" style="grid-template-columns:repeat(' + n + ',1fr)">', i;
+    for (i = 0; i < n; i++) h += '<i class="' + (done(i) ? 'd' : live(i) ? 'go' : '') + '"></i>';
+    return h + '</div>';
+  }
+  function toast(t, ms) { $('tt').textContent = t; $('toast').style.display = 'block'; clearTimeout(toastT); toastT = setTimeout(function () { $('toast').style.display = 'none'; }, ms || 1800); }
+  function zap() {
+    var b = document.querySelectorAll('.bolt'), k;
+    for (k = 0; k < b.length; k++) { b[k].className = 'bolt'; void b[k].offsetWidth; b[k].className = 'bolt go'; }
+    clearTimeout(zapT); zapT = setTimeout(function () { var c = document.querySelectorAll('.bolt'), j; for (j = 0; j < c.length; j++) c[j].className = 'bolt'; }, 900);
+  }
+  function scan() { var s = $('scan'); s.style.display = 'none'; void s.offsetWidth; s.style.display = 'block'; clearTimeout(scanT); scanT = setTimeout(function () { s.style.display = 'none'; }, 520); }
+  function tab(i) {
+    if (i !== cur) { zap(); scan(); }
+    cur = i; closeSheet();
+    var tabs = document.querySelectorAll('.tab');
+    for (var k = 0; k < tabs.length; k++) tabs[k].className = 'tab tap' + (k === i ? ' on' : '');
+    for (k = 0; k < VIEWS.length; k++) $(VIEWS[k]).className = 'view' + (k === i ? ' on' : '');
+    tellView();
+  }
+  // a sheet is a function that returns {title, body, buttons}; it is redrawn on every push so it stays live
+  function openSheet(fn) { curSheet = null; sheetFn = fn; cache.sb = cache.sf = null; drawSheet(); $('sb').scrollTop = 0; $('sheet').style.display = 'block'; scan(); }
+  function drawSheet() {
+    if (!sheetFn) return;
+    var s = sheetFn(); if (!s) return closeSheet();
+    $('sh').textContent = s.title; put('sb', s.body); put('sf', (s.buttons || '') + '<span class="btn sm tap" data-close="1">Close</span>');
+  }
+  function closeSheet() {
+    if (sheetFn === screensSheet && S && S.remote && S.remote.code) send({ t: 'pairStop' });   // the code is no longer on show, so it stops working
+    $('sheet').style.display = 'none'; sheetFn = null; curSheet = null; tellView();
+  }
+  // Controlling other screens. A window on the Mac with "Control screens" on reports what it is showing (tab, sheet, standby and
+  // how far it is scrolled), and every other screen showing the Deck copies it: phones, tablets, other browsers and the Car Thing.
+  function scroller() { return sheetFn ? $('sb') : $(VIEWS[cur]); }
+  function viewNow() {
+    var el = scroller(), room = el.scrollHeight - el.clientHeight;
+    return { tab: cur, sheet: curSheet, amb: ambOn, sc: room > 0 ? Math.round(1000 * el.scrollTop / room) / 1000 : 0 };
+  }
+  function tellView(beat) {                 // after anything changes what is on screen: sends real changes only, plus a heartbeat
+    if (INJ || !driving || applying || !S || !S.remote || S.remote.me) return;
+    clearTimeout(driveT);
+    driveT = setTimeout(function () {
+      var v = viewNow(), k = JSON.stringify(v);
+      if (k !== lastView || beat) { lastView = k; send({ t: 'drive', cid: CID, v: v }); }
+    }, beat ? 0 : 120);
+  }
+  function hashDo() {                        // shortcuts on the Mac: .../#add goes straight to the pairing code, .../#drive switches control on
+    if (INJ || !S || !S.remote || S.remote.me) return;
+    if (location.hash === '#add') { if (S.remote.on && !S.remote.code) { pairAsk = Date.now(); send({ t: 'pair' }); } openSheet(screensSheet);
+      try { history.replaceState(null, '', location.pathname); } catch (e) { /* the shortcut then repeats on a reload, which is harmless */ }
+    }
+    if (location.hash === '#drive' && !driving) { driving = true; lastView = ''; tellView(true); toast('This window now controls your other screens', 3000); }
+  }
+  function blockedSheet(i) { return function () { return { title: 'Waiting on you', body: esc(((S.board && S.board.blocked) || [])[i] || '') }; }; }
+  function showSheet(kind, arg) {           // the sheets that can be named, so another screen can be told to open the same one
+    var fn = kind === 'settings' ? settingsSheet : kind === 'channel' ? channelSheet : kind === 'session' ? sessionSheet(arg) : kind === 'owed' ? owedSheet(arg) : kind === 'blocked' ? blockedSheet(+arg) : null;
+    if (!fn) return;
+    openSheet(fn); curSheet = sheetFn ? { kind: kind, arg: arg == null ? '' : String(arg) } : null; tellView();
+  }
+  function follow() {                        // on a screen that is not the controlling window: copy what that window shows
+    var d = S.drive, v, el, room;
+    if (driving || !d || !d.v || d.cid === CID) return;
+    followAt = Date.now();
+    if (d.n === driveN) return;
+    driveN = d.n; v = d.v; applying = true;
+    try {
+      if (!!v.amb !== ambOn) amb(!!v.amb);
+      if (!v.amb) {
+        if (v.tab >= 0 && v.tab < VIEWS.length && v.tab !== cur) tab(v.tab);
+        if (JSON.stringify(v.sheet || null) !== JSON.stringify(curSheet)) { if (v.sheet) showSheet(String(v.sheet.kind), v.sheet.arg); else if (sheetFn) closeSheet(); }
+        el = scroller(); room = el.scrollHeight - el.clientHeight;
+        if (room > 0) el.scrollTop = Math.round(room * Math.max(0, Math.min(1, Number(v.sc) || 0)));
+      }
+    } catch (e) { /* a view this screen cannot show: stay where it is */ }
+    applying = false;
+  }
+  function showVol() {
+    var v = S && S.vol ? S.vol : { v: null, muted: false };
+    $('pl').textContent = v.v == null ? 'This output has no volume control' : (v.muted ? 'Muted' : 'Mac volume');
+    $('pn').textContent = v.v == null ? '' : v.v;
+    $('pb').style.width = (v.v == null ? 0 : v.v) + '%'; $('pb').className = v.muted ? 'r' : '';
+    $('pill').style.display = 'block'; clearTimeout(pillT); pillT = setTimeout(function () { $('pill').style.display = 'none'; }, 1500);
+  }
+  function knob(d) {
+    if (!S) return;
+    if (S.vol && S.vol.v != null) S.vol.v = Math.max(0, Math.min(100, S.vol.v + d * 4));
+    volAt = Date.now(); send({ t: 'vol', d: d * 4 }); showVol(); drawLaunch();
+  }
+  function owed() { return (S.board && S.board.owed) || []; }
+  function sorted() {
+    return owed().slice().sort(function (a, b) {
+      var x = ORDER[a.status] == null ? 4 : ORDER[a.status], y = ORDER[b.status] == null ? 4 : ORDER[b.status];
+      return x - y || b.pct - a.pct;
+    });
+  }
+  function count(st) { var n = 0, o = owed(); for (var i = 0; i < o.length; i++) if (o[i].status === st) n++; return n; }
+  function find(list, key, val) { for (var i = 0; i < (list || []).length; i++) if (list[i][key] === val) return list[i]; return null; }
+  function sess() {
+    var c = S.claude || [], i;
+    for (i = 0; i < c.length; i++) if (c[i].working && c[i].total) return c[i];
+    for (i = 0; i < c.length; i++) if (c[i].total) return c[i];
+    return c[0] || null;
+  }
+  function sessLine(c) { return c.active ? c.active : c.next ? 'Next: ' + c.next : c.title; }
+  function sessPct(c) { return c.total ? Math.round(100 * c.done / c.total) : 0; }
+  function sessChip(c) { return c.working ? '<span class="chip g">working</span>' : '<span class="chip">idle ' + esc(c.ago) + '</span>'; }
+  function sessBars(c) {                        // few enough tasks: one cell each; otherwise a plain bar
+    var t = c.tasks || [];
+    if (c.total && c.total <= 18 && t.length === c.total) return cells(c.total, function (i) { return t[i].st === 'completed'; }, function (i) { return t[i].st === 'in_progress'; }, c.working);
+    return c.total ? bar(sessPct(c), c.working ? 'g' : 'c') : c.working ? '<div class="bar ind"><i class="g"></i></div>' : '';
+  }
+
+  function drawHome() {
+    var y = S.yt || {}, b = S.board || {}, v = y.videos || [], c = sess(), e = S.encodes || [], h, i, m, da;
+    put('subs', esc(y.subs || '–'));
+    put('hGoal', y.ok ? '<b>' + num(y.toGoal) + '</b> to ' + kfmt(y.goal) : 'loading…');
+    da = (ARC * (y.ok ? y.goalPct : 0) / 100).toFixed(1) + ' ' + ARC.toFixed(1);
+    if (cache.hArc !== da) { cache.hArc = da; $('hArc').setAttribute('stroke-dasharray', da); }
+    put('hStats', '<div class="card stat tap" data-tab="1"><div class="n" style="color:var(--y)">' + count('editing') + '</div><div class="l">Editing</div></div>' +
+      '<div class="card stat tap" data-tab="1"><div class="n" style="color:var(--g)">' + count('ready') + '</div><div class="l">Ready to post</div></div>' +
+      '<div class="card stat tap" data-tab="2"><div class="n" style="color:var(--r)">' + ((b.blocked || []).length) + '</div><div class="l">Waiting on you</div></div>');
+    if (c) {
+      m = c.total ? c.done + ' of ' + c.total + ' tasks · ' + esc(c.title) : (c.working ? 'Working now' : 'Last active ' + esc(c.ago) + ' ago') + ' · no task list';
+      if (e.length) m += ' · encoding ' + esc(e[0].name);
+      h = '<div class="h"><div class="lab">Claude</div><div>' + sessChip(c) + '</div></div><div class="t one">' + esc(sessLine(c)) + '</div>' + (sessBars(c) || '<div style="height:24px"></div>') + '<div class="m dim one">' + m + '</div>';
+    } else h = '<div class="lab">Claude</div><div class="t one dim">No recent sessions</div><div class="m dim">Sessions show here while Claude works.</div>';
+    put('hNow', h);
+    h = '<div class="h" style="margin-bottom:2px"><div class="lab">Latest uploads</div><div class="lab" style="color:var(--g)">' + (y.daySpan >= 0.3 ? '+' + kfmt(y.day) + ' views · ' + (y.daySpan >= 23 ? '24h' : Math.max(1, Math.round(y.daySpan)) + 'h') : '') + '</div></div>';
+    for (i = 0; i < Math.min(3, v.length); i++)
+      h += '<div class="up tap" data-video="' + esc(v[i].id) + '"><div class="t one">' + esc(v[i].title) + '</div><div class="m dim one">' + num(v[i].views) + ' views' + (v[i].perHr ? ' · <span class="hot">+' + v[i].perHr + '/hr</span>' : '') + ' · ' + v[i].likes + ' likes · ' + esc(v[i].age) + (v[i].short ? ' · Short' : '') + '</div></div>';
+    if (!v.length) h += '<div class="dim" style="padding:20px 0">No uploads loaded.</div>';
+    put('hUps', h);
+  }
+  function drawVideos() {
+    var o = sorted(), h = '', i, x, open = 0;
+    for (i = 0; i < o.length; i++) {
+      x = o[i]; if (x.status !== 'posted') open++;
+      h += '<div class="card vrow tap" data-owed="' + esc(x.id) + '">' + ring(x.pct, 72, 7, x.status === 'blocked' ? 'r' : x.pct >= 100 ? 'g' : '', x.pct, 23) +
+        '<div><div class="t one">' + esc(x.title) + '</div><div class="s dim one">' + esc(x.next || x.due) + (x.cut ? ' · <span style="color:var(--c)">' + esc(x.cut.name) + ' · ' + esc(x.cut.age) + '</span>' : '') + '</div></div>' +
+        '<div><span class="chip ' + (CHIP[x.status] || '') + '">' + esc(x.status) + '</span></div></div>';
+    }
+    if (!o.length) h = '<div class="dim">' + esc((S.board && S.board.error) || 'No videos on the board.') + '</div>';
+    $('nv').textContent = open || '';
+    put('videos', h);
+  }
+  function drawClaude() {
+    var st = S.studio || {}, r = st.renders || [], e = S.encodes || [], b = S.board || {}, inf = b.inflight || [], bl = b.blocked || [], cl = S.claude || [], al = S.alerts || [], of = S.offload || [], h, i, x, live = 0;
+    h = '<div class="lab sec">Claude sessions</div>';
+    if (!cl.length) h += '<div class="card row dim">No Claude sessions in the last few days.</div>';
+    for (i = 0; i < cl.length; i++) {
+      x = cl[i]; if (x.working) live++;
+      h += '<div class="card row tap" data-session="' + esc(x.key) + '"><div class="h"><div class="t one">' + esc(x.title) + '</div><div>' + sessChip(x) + (x.total ? '<span class="n2">' + x.done + '/' + x.total + '</span>' : '') + '</div></div>' +
+        sessBars(x) + '<div class="s dim one">' + esc(x.total || x.active ? sessLine(x) : 'No task list in this session') + '</div></div>';
+    }
+    for (i = 0; i < of.length; i++) {              // files coming off a phone on USB
+      x = of[i];
+      h += (i ? '' : '<div class="lab sec2">Offloading</div>') + '<div class="card row"><div class="h"><div class="t one">' + esc(x.name) + '</div><div class="n2">' + x.pct + '%</div></div>' +
+        bar(x.pct, x.state === 'done' ? 'g' : x.state === 'waiting' ? 'r' : 'c') + '<div class="s dim one">' + esc(x.line) + '</div></div>';
+    }
+    h += '<div class="lab sec2">Rendering</div>';
+    if (!r.length && !e.length) h += '<div class="card row dim">Nothing rendering right now.' + (st.up ? '' : ' (The Studio is not running, so its render queue is not tracked.)') + '</div>';
+    for (i = 0; i < r.length; i++) {
+      x = r[i];
+      h += '<div class="card row"><div class="h"><div class="t one">' + esc(x.name) + '</div><div class="n2">' + x.pct + '%</div></div>' + bar(x.pct, x.state === 'done' ? 'g' : x.state === 'stalled' ? 'r' : 'c') +
+        '<div class="s dim one">' + esc(x.state) + ' · ' + x.done + ' of ' + x.total + ' parts' + (x.eta != null ? ' · about ' + x.eta + ' min left' : '') + (x.current ? ' · ' + esc(x.current) : '') + '</div></div>';
+    }
+    for (i = 0; i < e.length; i++)
+      h += '<div class="card row"><div class="h"><div class="t one">' + esc(e[i].name) + '</div><div><span class="chip c">encoding</span></div></div><div class="bar ind"><i class="c"></i></div><div class="s dim one">running ' + (e[i].secs >= 60 ? Math.round(e[i].secs / 60) + ' min' : e[i].secs + ' s') + ' · ' + e[i].cpu + '% CPU</div></div>';
+    if (al.length) {
+      h += '<div class="lab sec2">Just happened</div>';
+      for (i = 0; i < Math.min(6, al.length); i++) h += '<div class="card act"><span class="chip ' + (KIND[al[i].kind] || '') + '">' + esc(al[i].ago) + '</span> ' + esc(al[i].text) + '</div>';
+    }
+    h += '<div class="lab sec2">Ready for you · ' + inf.length + '</div>';
+    for (i = 0; i < inf.length; i++) {
+      x = inf[i];
+      h += '<div class="card row tap" data-inflight="' + i + '" data-ok="' + (x.exists ? 1 : 0) + '"><div class="t one">' + esc(x.title) + '</div>' + (x.pct != null ? bar(x.pct, x.pct >= 100 ? 'g' : 'c') : '') + '<div class="s dim one">' + esc(x.detail) + '</div></div>';
+    }
+    h += '<div class="lab sec2">Waiting on you · ' + bl.length + '</div>';
+    for (i = 0; i < bl.length; i++) h += '<div class="card row tap" data-blocked="' + i + '"><div class="s two" style="margin:0;font-size:22px;line-height:29px">' + esc(bl[i]) + '</div></div>';
+    h += '<div class="dim" style="font-size:17px;margin-top:6px">Board updated ' + esc(b.updated || '?') + (b.by ? ' by ' + esc(b.by) : '') + '</div>';
+    $('nc').textContent = live ? 'live' : (bl.length || ''); $('nc').className = live ? 'live' : '';
+    put('claude', h);
+  }
+  function drawLaunch() {
+    var a = S.apps || [], v = S.vol || {}, h = '<div class="tiles">', i;
+    for (i = 0; i < a.length; i++) h += '<div class="card tile tap" data-app="' + esc(a[i].key) + '"><div class="ic">' + icon(a[i].icon) + '</div><div class="n one">' + esc(a[i].label) + '</div></div>';
+    h += '<div class="card tile tap' + (v.muted ? ' muted' : '') + '" data-mute="1"><div class="ic">' + icon(v.muted ? 'mute' : 'speaker') + '</div><div class="n">' + (v.muted ? 'Unmute' : 'Mute') + '</div></div></div>' +
+      '<div class="card" id="volrow"><span class="btn pm tap" data-vol="-1">−</span><div><div class="h"><div class="lab">' + (v.v == null ? 'This sound output has no volume control' : v.muted ? 'Muted' : 'Mac volume') + '</div><div class="n2">' + (v.v == null ? '' : v.v) + '</div></div>' +
+      '<div class="bar"><i class="' + (v.muted ? 'r' : '') + '" style="width:' + (v.v == null ? 0 : v.v) + '%"></i></div></div><span class="btn pm tap" data-vol="1">+</span></div>';
+    put('launch', h);
+  }
+
+  // standby: the clock and channel on top; below, a large row with a bar for everything in progress (Claude sessions, renders,
+  // encodes, then the videos being edited), and under the first one the small steps around the step it is on
+  function row(label, right, bars, extra) { return '<div class="tr"><div class="h"><div class="t one">' + label + '</div><div>' + right + '</div></div>' + bars + (extra || '') + '</div>'; }
+  function micro(c, max) {                      // the tasks around the one in progress, as small lines
+    var t = c.tasks || [], at = -1, a, b, i, h = '';
+    for (i = 0; i < t.length && at < 0; i++) if (t[i].st === 'in_progress') at = i;
+    for (i = 0; i < t.length && at < 0; i++) if (t[i].st === 'pending') at = i;
+    if (at < 0) at = t.length - 1;
+    a = Math.max(0, Math.min(max >= 3 ? at - 1 : at, t.length - max)); b = Math.min(t.length, a + max);
+    for (i = a; i < b; i++) h += '<div class="mt' + (t[i].st === 'completed' ? ' d' : t[i].st === 'in_progress' ? ' go' : '') + '"><div class="one">' + esc(t[i].s) + '</div>' + (t[i].st === 'in_progress' && c.working ? '<div class="bar ind"><i></i></div>' : '') + '</div>';
+    return h;
+  }
+  function sessRow(c, lines) {
+    var what = lines ? '' : c.active ? c.active : c.next ? 'Next: ' + c.next : c.total ? (c.done >= c.total ? 'All tasks done' : '') : 'Working';
+    return row(what ? '<span class="dim">' + esc(c.title.length > 24 ? c.title.slice(0, 23) + '…' : c.title) + ' › </span>' + esc(what) : esc(c.title),
+      sessChip(c) + (c.total ? '<span class="n2">' + c.done + '/' + c.total + '</span>' : ''), sessBars(c) || '<div class="bar"></div>', lines ? micro(c, lines) : '');
+  }
+  function renderRow(x, line) {
+    var stalled = x.state === 'stalled';
+    return row(esc(x.name), '<span class="chip ' + (stalled ? 'r">stalled' : 'c">rendering') + '</span><span class="n2">' + x.pct + '%</span>',
+      x.total > 1 && x.total <= 24 ? cells(x.total, function (i) { return i < x.done; }, function (i) { return !stalled && i === x.done; }, false) : bar(x.pct, stalled ? 'r' : 'c'),
+      line ? '<div class="mt' + (stalled ? '' : ' go') + '"><div class="one">Part ' + Math.min(x.total, x.done + 1) + ' of ' + x.total + (x.current ? ' · ' + esc(x.current) : '') + (x.eta != null ? ' · about ' + x.eta + ' min left' : '') + '</div></div>' : '');
+  }
+  function drawAmb() {
+    var y = S.yt || {}, cl = S.claude || [], r = (S.studio && S.studio.renders) || [], e = S.encodes || [], o = sorted(), of = S.offload || [], it = [], live = 0, i, h, n, x, lines, rows, first;
+    put('aTop', '<div class="ck">' + esc(String(S.clock || '').replace(/\s*[AP]M$/, '')) + '</div><div class="dt">' + esc(S.date) + '</div>' +
+      '<div class="md"><b style="color:var(--y)">' + count('editing') + '</b> editing &nbsp;·&nbsp; <b style="color:var(--g)">' + count('ready') + '</b> ready &nbsp;·&nbsp; <b style="color:var(--r)">' + ((S.board && S.board.blocked) || []).length + '</b> need you</div>' +
+      '<div class="rt"><div class="lab">Subscribers</div><div class="sb">' + esc(y.subs || '–') + '</div><div class="dt">' + (y.daySpan >= 0.3 ? '+' + kfmt(y.day) + ' views' : '') + '</div></div>');
+    for (i = 0; i < cl.length; i++) if (cl[i].working) { live++; it.push({ s: cl[i] }); }
+    for (i = 0; i < of.length; i++) if (of[i].state === 'copying') it.push({ f: of[i] });
+    for (i = 0; i < r.length; i++) if (r[i].state !== 'done') it.push({ r: r[i] });
+    for (i = 0; i < e.length; i++) it.push({ e: e[i] });
+    for (i = 0; i < cl.length; i++) if (!cl[i].working && cl[i].total && cl[i].done < cl[i].total) it.push({ s: cl[i] });
+    for (i = 0; i < cl.length; i++) if (!cl[i].working && cl[i].total && cl[i].done >= cl[i].total) it.push({ s: cl[i] });
+    n = it.length;                                 // what is in progress; the videos being edited fill any room left
+    for (i = 0; i < o.length; i++) if (o[i].status === 'editing') it.push({ v: o[i] });
+    for (i = 0; i < o.length; i++) if (o[i].status === 'ready') it.push({ v: o[i] });
+    // room for 228px: a row is 54, a small line 29. The first row gets at least two small lines when it has steps to show.
+    first = it[0] || {};
+    lines = first.s ? (first.s.tasks || []).length : first.r ? 1 : 0;
+    lines = Math.min(lines, Math.max(2, Math.floor((228 - 54 * Math.min(it.length, 3)) / 29)));
+    rows = Math.min(it.length, lines ? 1 + Math.floor((228 - 58 - 29 * lines) / 54) : 4);
+    h = '<div class="h"><div class="lab">' + (n ? 'In progress' : 'Videos in the works') + '</div><div class="lab">' + (live ? live + ' working now' : '') + (n > rows ? (live ? ' · ' : '') + '+' + (n - rows) + ' more' : '') + '</div></div>';
+    for (i = 0; i < rows; i++) {
+      x = it[i];
+      if (x.s) h += sessRow(x.s, i ? 0 : lines);
+      else if (x.r) h += renderRow(x.r, !i && lines);
+      else if (x.f) h += row(esc(x.f.name), '<span class="chip c">offloading</span><span class="n2">' + x.f.pct + '%</span>', bar(x.f.pct, 'c'));
+      else if (x.e) h += row(esc(x.e.name), '<span class="chip c">encoding</span><span class="n2">' + (x.e.secs >= 60 ? Math.round(x.e.secs / 60) + ' min' : x.e.secs + ' s') + '</span>', '<div class="bar ind"><i class="c"></i></div>');
+      else h += row(esc(x.v.title), '<span class="chip ' + (CHIP[x.v.status] || '') + '">' + esc(x.v.status) + '</span><span class="n2">' + x.v.pct + '%</span>', bar(x.v.pct, x.v.pct >= 100 ? 'g' : ''));
+    }
+    if (!rows) h += '<div class="tr dim">Nothing in progress.</div>';
+    put('aTasks', h);
+  }
+  // code rain behind the standby screen: each column spells the brand as it falls; runs only while it is the scene
+  var rainT = null, drops = [], RAINW = 20;
+  function rainTick() {
+    var cv = $('rain'), g = cv.getContext('2d'), w = (S && S.brand) || 'MAXAPACITY', i, d, ch, y;
+    g.fillStyle = 'rgba(2,6,10,0.16)'; g.fillRect(0, 0, 800, 480);
+    g.font = 'bold 18px monospace'; g.textAlign = 'center';
+    for (i = 0; i < drops.length; i++) {
+      d = drops[i]; y = d.y * RAINW;
+      if (y > 0 && y < 500) {
+        ch = Math.random() < 0.25 ? String(Math.floor(Math.random() * 10)) : w.charAt(d.n % w.length);
+        g.fillStyle = d.hot ? 'rgba(255,232,26,0.95)' : 'rgba(57,255,136,0.8)';
+        g.fillText(ch, i * RAINW + RAINW / 2, y);
+      }
+      d.y++; d.n++;
+      if (y > 480 && Math.random() < 0.08) { d.y = -Math.floor(Math.random() * 12); d.n = 0; d.hot = Math.random() < 0.18; }
+    }
+  }
+  function rain(on) {
+    var cv = $('rain'), i;
+    clearInterval(rainT); rainT = null; cv.style.display = on ? 'block' : 'none';
+    if (!on) return;
+    cv.getContext('2d').fillStyle = '#02060a'; cv.getContext('2d').fillRect(0, 0, 800, 480);
+    drops = []; for (i = 0; i < 800 / RAINW; i++) drops.push({ y: -Math.floor(Math.random() * 30), n: 0, hot: Math.random() < 0.18 });
+    rainT = setInterval(rainTick, 110);
+  }
+  // ---------- standby backgrounds: pictures and short clips from the Mac ----------
+  // This device has very little memory and its graphics side keeps every image it is handed, so: frames are drawn on
+  // small canvases (under 257x256 pixels a canvas is drawn in software), and every decoded frame is closed right after it is drawn.
+  var scrs = [], front = -1, scene = 'rain', sceneT = null, wantT = null, pendingKind = null, sceneN = 0, lastClipAt = Date.now(), clip = null;
+  function mkScr(id) {
+    var el = $(id), inn = document.createElement('div'), ctx = [], k, c;
+    inn.className = 'in'; el.appendChild(inn);
+    for (k = 0; k < 8; k++) { c = document.createElement('canvas'); c.width = 200; c.height = 240; c.style.left = (k % 4) * 200 + 'px'; c.style.top = (k >> 2) * 240 + 'px'; inn.appendChild(c); ctx.push(c.getContext('2d')); }
+    return { el: el, inn: inn, ctx: ctx, w: 200, h: 240 };
+  }
+  function sizeScr(s, w, h) { var k; if (s.w === w && s.h === h) return; s.w = w; s.h = h; for (k = 0; k < 8; k++) { s.ctx[k].canvas.width = w; s.ctx[k].canvas.height = h; } }
+  function blit(s, bm) { var k, sw = bm.width / 4, sh = bm.height / 2; for (k = 0; k < 8; k++) s.ctx[k].drawImage(bm, (k % 4) * sw, (k >> 2) * sh, sw, sh, 0, 0, s.w, s.h); }
+  function blobOf(b64) { var s = atob(b64), u = new Uint8Array(s.length), j; for (j = 0; j < s.length; j++) u[j] = s.charCodeAt(j); return new Blob([u], { type: 'image/jpeg' }); }
+  function back() { return front === 0 ? 1 : 0; }
+  function show(i, zoomSec) {                // fade screen i in over whatever is showing, then put the old one away
+    var s = scrs[i], o = front >= 0 && front !== i ? scrs[front] : null;
+    s.inn.style.transition = 'none'; s.inn.style.transform = 'scale(1)';
+    s.el.style.zIndex = 18; s.el.style.display = 'block'; void s.el.offsetWidth; s.el.style.opacity = 1;
+    if (zoomSec) { s.inn.style.transition = 'transform ' + zoomSec + 's linear'; s.inn.style.transform = 'scale(1.07)'; }
+    front = i;
+    if (o) { o.el.style.zIndex = 17; setTimeout(function () { if (scrs[front] !== o) { o.el.style.opacity = 0; o.el.style.display = 'none'; } }, 1500); }
+    setTimeout(function () { if (scene !== 'rain') rain(false); }, 1500);
+  }
+  function setScene(name) { scene = name; $('amb').className = name === 'rain' ? '' : name; }
+  function cap(icon, txt, sub) { put('aCap', txt || sub ? '<div class="c1 one">' + icon + ' ' + esc(txt || sub) + '</div>' + (txt && sub ? '<div class="c2 one">' + esc(sub) + '</div>' : '') : ''); }
+  function toRain(sec) {
+    var o = front >= 0 ? scrs[front] : null;
+    clearTimeout(sceneT); setScene('rain'); cap(''); if (!rainT) rain(true);
+    if (o) { front = -1; o.el.style.opacity = 0; setTimeout(function () { if (scrs[front] !== o) o.el.style.display = 'none'; }, 1500); }
+    sceneT = setTimeout(nextScene, sec * 1000);
+  }
+  function nextScene() {
+    var m = (S && S.media) || {};
+    clearTimeout(sceneT); clearTimeout(wantT);
+    if (!ambOn) return;
+    sceneN++;
+    if (!m.pics && !m.clips) return toRain(60);                                    // nothing to show yet: the code rain stays
+    if (m.clips && Date.now() - lastClipAt > m.clipMin * 60000) return want('clip');
+    if (!m.pics || sceneN % 7 === 0) return toRain(30);                             // a rain interlude now and then
+    want('pic');
+  }
+  function want(kind) {
+    pendingKind = kind;
+    wantT = setTimeout(function () { pendingKind = null; dropClip(); toRain(45); }, kind === 'clip' ? 30000 : 12000);   // nothing came: rain for now
+    if (INJ) return send({ t: 'media', kind: kind });
+    fetch('/api/media?kind=' + kind).then(function (r) { return r.json(); }).then(function (o) {
+      if (o.kind === 'pic') return fetch(o.src).then(function (r) { return r.blob(); }).then(function (b) { o.blob = b; onPic(o); });
+      if (o.kind !== 'clip') return noMedia();
+      onClip(o);
+      (function more(i) {
+        if (!clip || clip.id !== o.id) return;
+        if (i >= o.frames.length) return onClipEnd(o.id);
+        fetch(o.frames[i]).then(function (r) { return r.blob(); }).then(function (b) { if (clip && clip.id === o.id) { clip.blobs.push(b); more(i + 1); } });
+      })(0);
+    }).catch(noMedia);
+  }
+  function noMedia() { if (!pendingKind) return; clearTimeout(wantT); pendingKind = null; dropClip(); if (ambOn) toRain(45); }
+  function onPic(o) {
+    if (!ambOn || !pendingKind) return;
+    clearTimeout(wantT); pendingKind = null;
+    var i = back(), s = scrs[i];
+    createImageBitmap(o.blob || blobOf(o.b64)).then(function (bm) {
+      if (!ambOn) return bm.close();
+      sizeScr(s, 200, 240); blit(s, bm); bm.close();
+      setScene('pic'); cap('◆', o.cap, o.sub); show(i, S.media.picSec + 4);
+      clearTimeout(sceneT); sceneT = setTimeout(nextScene, S.media.picSec * 1000);
+    }, function () { if (ambOn) toRain(20); });
+  }
+  function onClip(o) { if (!ambOn || pendingKind !== 'clip') return; dropClip(); clip = { id: o.id, cap: o.cap, fps: o.fps, blobs: [], q: {}, shown: -1, count: 0, t0: 0, tm: null }; }
+  function onFrames(id, arr) { var k; if (!clip || clip.id !== id) return; for (k = 0; k < arr.length; k++) clip.blobs.push(blobOf(arr[k])); }
+  function onClipEnd(id) {
+    if (!clip || clip.id !== id || !ambOn || pendingKind !== 'clip') return;
+    clearTimeout(wantT); pendingKind = null; lastClipAt = Date.now();
+    var c = clip, i = back(), s = scrs[i], N = c.blobs.length, flying = 0, started = false, born = Date.now();
+    function ask(k) {                        // decode a few frames ahead of the one being shown
+      if (c.q[k] !== undefined) return;
+      c.q[k] = null; flying++;
+      createImageBitmap(c.blobs[k]).then(function (bm) { flying--; if (clip !== c || k <= c.shown) { bm.close(); delete c.q[k]; } else c.q[k] = bm; }, function () { flying--; delete c.q[k]; });
+    }
+    sizeScr(s, 160, 192);
+    c.tm = setInterval(function () {
+      var n, k;
+      if (clip !== c) return;
+      if (!c.t0 && c.q[0] && c.q[1] && c.q[2] && c.q[3]) c.t0 = Date.now();          // start once the first frames are ready
+      if (!c.t0 && Date.now() - born > 6000) return endClip(c);                       // they never were: give up on this clip
+      n = c.t0 ? Math.floor((Date.now() - c.t0) * c.fps / 1000) : -1;
+      if (n >= N) return endClip(c);
+      for (k in c.q) if (+k < n && c.q[k]) { c.q[k].close(); delete c.q[k]; }       // decoded too late: skipped
+      if (n >= 0 && c.q[n] && n !== c.shown) {
+        blit(s, c.q[n]); c.q[n].close(); delete c.q[n]; c.shown = n; c.count++;
+        if (!started) { started = true; setScene('clip'); cap('▶', c.cap, 'from your footage'); show(i, 0); zap(); }
+      }
+      for (k = Math.max(n, c.shown + 1, 0); k < Math.max(n, 0) + 6 && k < N && flying < 3; k++) ask(k);
+    }, 20);
+  }
+  function endClip(c) { if (clip !== c) return; window.__ct.last = { frames: c.blobs.length, shown: c.count, ms: c.t0 ? Date.now() - c.t0 : 0 }; dropClip(); if (INJ) send({ t: 'mediaDone' }); nextScene(); }
+  function dropClip() { var c = clip, k; if (!c) return; clip = null; clearInterval(c.tm); for (k in c.q) if (c.q[k]) c.q[k].close(); c.q = {}; c.blobs = []; }
+  function amb(on) {
+    var k, busy;
+    if (on === ambOn) return; ambOn = on; tellView();
+    $('amb').style.display = on ? 'block' : 'none';
+    $('app').style.display = on ? 'none' : 'block';                                  // nothing underneath needs drawing while standby is up
+    if (on) {
+      closeSheet(); drawAmb(); sceneN = 0;
+      lastClipAt = Math.max(lastClipAt, Date.now() - Math.max(0, ((S.media && S.media.clipMin) || 5) * 60000 - 80000));   // the first clip comes a little over a minute in
+      return toRain(18);
+    }
+    busy = !!clip || pendingKind === 'clip';
+    clearTimeout(sceneT); clearTimeout(wantT); pendingKind = null; dropClip(); rain(false);
+    for (k = 0; k < scrs.length; k++) { scrs[k].el.style.display = 'none'; scrs[k].el.style.opacity = 0; }
+    front = -1; setScene('rain'); cap('');
+    if (busy && INJ) send({ t: 'mediaStop' });
+  }
+  function party(big, sm) {
+    $('pbig').textContent = big; $('psm').textContent = sm; $('party').style.display = 'block'; zap();
+    clearTimeout(partyT); partyT = setTimeout(function () { $('party').style.display = 'none'; }, 7000);
+  }
+  function alertsIn() {
+    var al = S.alerts || [], i, top = al.length ? al[0].id : 0, fresh = [];
+    if (lastAlert == null) { lastAlert = top; return; }
+    for (i = al.length - 1; i >= 0; i--) if (al[i].id > lastAlert) fresh.push(al[i]);
+    lastAlert = Math.max(lastAlert, top);
+    if (!fresh.length) return;
+    var a = fresh[fresh.length - 1];
+    if (a.celebrate) party(a.big, 'subscribers'); else { toast(a.text, 5000); zap(); }
+  }
+  function draw() {
+    drawHome(); drawVideos(); drawClaude(); drawLaunch(); drawSheet(); if (ambOn) drawAmb();
+    $('clock').textContent = S.clock || '';
+  }
+
+  // sheets
+  function settingsSheet() {
+    var d = S.disks || [], st = S.settings || {}, h, g = '', i, ld = S.load || 0;
+    h = '<div class="set"><div class="lab">Screen</div><div><span class="btn xs tap' + (st.night ? '' : ' on') + '" data-night="0">Day</span><span class="btn xs tap' + (st.night ? ' on' : '') + '" data-night="1">Night</span></div></div>' +
+      '<div class="set"><div class="lab">Alert sound</div><div><span class="btn xs tap' + (st.sound ? ' on' : '') + '" data-sound="1">On</span><span class="btn xs tap' + (st.sound ? '' : ' on') + '" data-sound="0">Off</span></div></div>';
+    for (i = 0; i < d.length; i++)
+      g += '<div>' + ring(d[i].ok ? d[i].pct : 0, 96, 9, d[i].pct >= 92 ? 'r' : d[i].pct >= 80 ? '' : 'g', d[i].ok ? d[i].pct + '<small>%</small>' : '–', 28) + '<div class="lab">' + esc(d[i].label) + '</div><div class="gl dim">' + (d[i].ok ? num(d[i].freeGB) + ' GB free' : 'not connected') + '</div></div>';
+    g += '<div>' + ring(ld, 96, 9, ld >= 80 ? 'r' : 'c', ld + '<small>%</small>', 28) + '<div class="lab">Mac load</div><div class="gl dim">right now</div></div>';
+    var me = S.remote && S.remote.me;
+    return { title: (S.brand || '') + ' Deck ' + (S.v || ''), body: h + '<div class="gs" style="grid-template-columns:repeat(' + (d.length + 1) + ',1fr)">' + g + '</div>',
+      buttons: (S.remote ? '<span class="btn sm tap' + (me ? '' : ' y') + '" data-sheet="screens">' + (me ? 'This screen' : 'Add a screen') + '</span>' : '') +
+        (CANFULL ? '<span class="btn sm tap" data-full="1">Full screen</span>' : '') + (me ? '' : '<span class="btn sm tap" data-reload="1">Reload</span>') };
+  }
+  // Other screens. On the Deck itself (the Car Thing, or the preview on the Mac) this shows the pairing code and who is paired;
+  // on a paired phone, tablet or computer it only says what that screen is.
+  function mmss(sec) { var s = sec % 60; return Math.floor(sec / 60) + ':' + (s < 10 ? '0' : '') + s; }
+  function qrSvg(q) {
+    var t = q.n + 8, px = Math.floor(222 / t) * t;       // a whole number of pixels per module, with the 4-module quiet border a QR code needs
+    return '<svg viewBox="-4 -4 ' + t + ' ' + t + '" width="' + px + '" height="' + px + '" style="margin:' + Math.floor((222 - px) / 2) + 'px" shape-rendering="crispEdges"><path d="' + q.d + '" fill="#000"/></svg>';
+  }
+  function screensSheet() {
+    var r = S.remote || {}, sc = r.screens || [], usb = r.usb || [], h, i, fresh = null, list = '', wired = '', say;
+    var ctl = INJ || r.me ? '' : '<span class="btn sm tap' + (driving ? ' on' : '') + '" data-drive="1">' + (driving ? 'Controlling screens' : 'Control screens') + '</span>';
+    if (r.me) return { title: 'This screen', body: '<p>This screen is paired with the Deck as <b>' + esc(r.me) + '</b>. It shows what the Deck shows and can open things on the Mac.</p>' +
+      '<p class="dim" style="margin-top:12px">To remove it, open Settings on the Deck itself or on the Mac, tap Add a screen, then Forget.</p>' };
+    for (i = 0; i < usb.length; i++)                      // Android phones on a USB cable: the Mac can open the Deck on them directly
+      wired += '<div class="sc"><div class="one">' + esc(usb[i].name) + ' <span class="dim">· on USB</span></div><span class="btn xs tap" data-usbopen="' + esc(usb[i].id) + '">Open</span></div>';
+    if (wired) wired = '<div class="lab" style="margin-top:8px;margin-bottom:4px">On a USB cable</div>' + wired;
+    if (!r.on) return { title: 'Add a screen', body: '<p>A phone, tablet or another computer on this network can show the Deck too. That is switched off.</p>' +
+      '<p class="dim" style="margin-top:12px">To switch it on, set "remote" to true in config.json on the Mac, then restart the Deck.</p>' + wired, buttons: ctl };
+    for (i = 0; i < sc.length; i++) {
+      if (sc[i].fresh) fresh = sc[i];
+      list += '<div class="sc"><div class="one">' + esc(sc[i].name) + ' <span class="dim">· seen ' + (sc[i].seen === 'now' ? 'just now' : esc(sc[i].seen) + ' ago') + '</span></div><span class="btn xs tap" data-forget="' + esc(sc[i].id) + '">Forget</span></div>';
+    }
+    if (!r.url) h = '<p>This Mac is not on a network right now, so there is no address for another screen to open.</p>';
+    else if (r.code) {
+      say = '<div class="lab">Phone, tablet or computer on this network</div><div>' + (r.qr ? 'Scan this with its camera, or open' : 'In its browser, open') + '</div><div class="pu">' + esc(r.url) + '</div>' + (r.alt ? '<div class="pa dim">on a cable: ' + esc(r.alt.replace('http://', '')) + '</div>' : '') +
+        '<div>and type this code</div><div class="pc">' + esc(r.code.slice(0, 3) + ' ' + r.code.slice(3)) + '</div>';
+      h = r.qr ? '<div class="pr"><div class="qr">' + qrSvg(r.qr) + '</div><div>' + say + '</div></div>' : say;
+    }
+    else if (Date.now() - pairAsk < 4000) h = '<p class="dim">Getting a code…</p>';
+    else if (fresh) h = '<div class="od">' + ring(100, 104, 10, 'g', '✓', 44) + '<div><b>' + esc(fresh.name) + '</b> is paired and showing the Deck.<p class="dim">It stays paired until you forget it here.</p></div></div>';
+    else h = '<p>That code is no longer good. Tap New code for another one.</p>';
+    return { title: 'Add a screen' + (r.code ? ' · code good for ' + mmss(r.left || 0) : ''),
+      body: h + wired + (sc.length ? '<div class="lab" style="margin-top:8px;margin-bottom:4px">Paired screens</div>' + list : ''),
+      buttons: (r.url && !r.code ? '<span class="btn sm y tap" data-pair="1">New code</span>' : '') + ctl };
+  }
+  function channelSheet() {
+    var y = S.yt || {}, v = y.videos || [], h = '<div class="vr lab"><div>Latest uploads</div><span>Views</span><span>/ hour</span></div>', i;
+    for (i = 0; i < v.length; i++) h += '<div class="vr tap" data-video="' + esc(v[i].id) + '"><div class="one">' + (v[i].short ? '<span class="dim">Short · </span>' : '') + esc(v[i].title) + '</div><span>' + num(v[i].views) + '</span><span class="' + (v[i].perHr ? 'hot' : 'dim') + '">' + (v[i].perHr == null ? '–' : '+' + v[i].perHr) + '</span></div>';
+    return { title: (y.subs || '') + ' subscribers · ' + (y.toGoal != null ? num(y.toGoal) + ' to ' + kfmt(y.goal) : ''), body: h, buttons: '<span class="btn sm y tap" data-app="ytstudio">YT Studio</span>' };
+  }
+  function sessionSheet(key) {
+    return function () {
+      var c = find(S.claude, 'key', key), h = '', i, t;
+      if (!c) return null;
+      if (!c.tasks.length) h = '<div class="dim">This session has no task list. Last activity ' + (c.ago === 'now' ? 'just now' : esc(c.ago) + ' ago') + '.</div>';
+      for (i = 0; i < c.tasks.length; i++) { t = c.tasks[i]; h += '<div class="task' + (t.st === 'completed' ? ' done' : t.st === 'in_progress' ? ' go' : '') + '">' + esc(t.s) + '</div>'; }
+      return { title: c.title + (c.total ? ' · ' + c.done + ' of ' + c.total : ''), body: (c.total ? sessBars(c) + '<div style="height:10px"></div>' : '') + h, buttons: '<span class="btn sm y tap" data-app="claude">Open Claude</span>' };
+    };
+  }
+  function owedSheet(id) {
+    return function () {
+      var o = find(owed(), 'id', id); if (!o) return null;
+      return { title: o.title,
+        body: '<div class="od">' + ring(o.pct, 104, 10, o.status === 'blocked' ? 'r' : o.pct >= 100 ? 'g' : '', o.pct + '<small>%</small>', 30) + '<div><span class="chip ' + (CHIP[o.status] || '') + '">' + esc(o.status) + '</span> <span class="dim">· ' + esc(o.owner) + '</span>' +
+          (o.cut ? '<p><span class="lab">Latest cut</span><br><span style="color:var(--c)">' + esc(o.cut.name) + '</span> <span class="dim">· ' + esc(o.cut.age) + ' ago</span></p>' : '') + '</div></div>' +
+          '<p style="margin-top:12px"><span class="lab">Next</span><br>' + esc(o.next || '–') + '</p><p style="margin-top:12px"><span class="lab">Due</span><br>' + esc(o.due || '–') + '</p>',
+        buttons: (o.cut ? '<span class="btn sm y tap" data-cut="' + esc(o.id) + '">Watch cut</span>' : '') + (o.folder ? '<span class="btn sm tap" data-folder="' + esc(o.id) + '">Folder</span>' : '') +
+          '<span class="btn sm tap" data-app="studio">Studio</span>' + (o.url ? '<span class="btn sm tap" data-openowed="' + esc(o.id) + '">YouTube</span>' : '') };
+    };
+  }
+
+  $('tb').innerHTML = bolt('sm'); $('hBolt').innerHTML = bolt('md');
+  $('wb').insertAdjacentHTML('beforeend', bolt('lg')); $('pb2').insertAdjacentHTML('beforeend', bolt('lg')); $('aBolt').insertAdjacentHTML('beforeend', bolt('am'));
+  scrs = [mkScr('scrA'), mkScr('scrB')];
+  window.__ct = { push: function (s) {
+    if (S && S.vol && s.vol && Date.now() - volAt < 1500) s.vol.v = S.vol.v;
+    var first = !S; S = s; lastPush = Date.now();
+    if (first) { $('wait').style.display = 'none'; zap(); hello(); }
+    if (first) hashDo();
+    $('dot').className = ''; draw(); alertsIn(); follow();
+    if (first) tellView(true);
+  }, pic: onPic, clip: onClip, frames: onFrames, clipEnd: onClipEnd, nomedia: noMedia,
+    test: { amb: function () { amb(true); }, wake: function () { amb(false); }, tab: tab, party: function () { party('24K', 'subscribers'); }, toast: function (t) { toast(t || 'Claude finished: Check it on the device', 5000); },
+      sheet: function (k) { openSheet(k === 'screens' ? screensSheet : k === 'channel' ? channelSheet : k === 'session' ? sessionSheet((S.claude[0] || {}).key) : k === 'owed' ? owedSheet((sorted()[0] || {}).id) : settingsSheet); },
+      scene: function (kind) { if (!ambOn) amb(true); clearTimeout(sceneT); clearTimeout(wantT); dropClip(); if (kind === 'rain') toRain(30); else want(kind); } } };
+  setInterval(function () {
+    if (lastPush && Date.now() - lastPush > 9000) { $('dot').className = 'off'; $('clock').textContent = 'Mac offline'; }
+    // a screen that is being controlled stays awake for as long as the controlling window is awake
+    var led = S && S.drive && S.drive.v && !S.drive.v.amb && !driving && Date.now() - followAt < 5000;
+    if (S && S.ambientAfter > 0 && !ambOn && !led && Date.now() - lastInput > S.ambientAfter * 1000) amb(true);
+  }, 2000);
+
+  function woke(e) {                        // any input wakes the standby screen; the waking tap does nothing else
+    lastInput = Date.now();
+    if ($('party').style.display === 'block') { $('party').style.display = 'none'; if (e) { e.stopPropagation(); e.preventDefault(); } return true; }
+    if (!ambOn) return false;
+    amb(false); if (e) { e.stopPropagation(); e.preventDefault(); } return true;
+  }
+  document.addEventListener('click', function (e) {
+    if (woke(e)) return;
+    var el = e.target, d, i;
+    while (el && el !== document.body && !(el.dataset && Object.keys(el.dataset).length)) el = el.parentNode;
+    if (!el || !el.dataset || !S) return;
+    d = el.dataset;
+    if (d.close) return closeSheet();
+    if (d.tab != null) return tab(+d.tab);
+    if (d.sheet === 'settings') return showSheet('settings');
+    if (d.sheet === 'channel') return showSheet('channel');
+    if (d.sheet === 'screens') { if (S.remote && S.remote.on && !S.remote.code) { pairAsk = Date.now(); send({ t: 'pair' }); } return openSheet(screensSheet); }
+    if (d.pair) { pairAsk = Date.now(); send({ t: 'pair' }); return drawSheet(); }
+    if (d.forget) {
+      send({ t: 'forget', id: d.forget });
+      S.remote.screens = (S.remote.screens || []).filter(function (k) { return k.id !== d.forget; });
+      drawSheet(); return toast('That screen is no longer paired');
+    }
+    if (d.full) return full();
+    if (d.usbopen) { send({ t: 'usbOpen', id: d.usbopen }); return toast('Opening the Deck on that phone'); }
+    if (d.session) return showSheet('session', d.session);
+    if (d.owed) return showSheet('owed', d.owed);
+    if (d.blocked != null) return showSheet('blocked', d.blocked);
+    if (d.drive) {
+      driving = !driving;
+      try { localStorage.setItem('deckDrive', driving ? '1' : '0'); } catch (e) { /* stays on until this window closes */ }
+      if (driving) { lastView = ''; tellView(true); } else send({ t: 'driveStop' });
+      drawSheet(); return toast(driving ? 'This window now controls your other screens' : 'This window no longer controls other screens', 3000);
+    }
+    if (d.video) { send({ t: 'video', id: d.video }); return toast('Opening on your Mac'); }
+    if (d.app) { send({ t: 'app', key: d.app }); return toast('Opening on your Mac'); }
+    if (d.cut) { send({ t: 'cut', id: d.cut }); return toast('Playing the latest cut on your Mac'); }
+    if (d.folder) { send({ t: 'folder', id: d.folder }); return toast('Opening the folder on your Mac'); }
+    if (d.openowed) { send({ t: 'owed', id: d.openowed }); return toast('Opening on YouTube'); }
+    if (d.mute) { send({ t: 'mute' }); S.vol.muted = !S.vol.muted; return drawLaunch(); }
+    if (d.vol) return knob(+d.vol);
+    if (d.night != null) { S.settings.night = d.night === '1'; send({ t: 'night', on: S.settings.night }); return drawSheet(); }
+    if (d.sound != null) { S.settings.sound = d.sound === '1'; send({ t: 'sound', on: S.settings.sound }); return drawSheet(); }
+    if (d.reload) { send({ t: 'reload' }); return toast('Reloading'); }
+    if (d.inflight != null) {
+      if (d.ok !== '1') return toast('File not found. Is the drive plugged in?');
+      send({ t: 'inflight', i: +d.inflight }); return toast('Opening on your Mac');
+    }
+  }, true);
+  document.addEventListener('keydown', function (e) {
+    var k = e.key;
+    if (woke()) return;
+    if (k >= '1' && k <= '4') tab(+k - 1);
+    else if (k === 'Escape' || k === 'Backspace') { if (sheetFn) closeSheet(); else tab(0); }
+    else if (k === 'Enter') { if (S) { send({ t: 'mute' }); S.vol.muted = !S.vol.muted; showVol(); drawLaunch(); } }
+    else if (k === 'm' || k === 'M') { if (S) { if (sheetFn === settingsSheet) closeSheet(); else showSheet('settings'); } }
+    else if (INJ || !S) return;                               // the rest are for a real keyboard
+    else if (k === 'ArrowRight' || k === 'ArrowLeft') tab((cur + (k === 'ArrowRight' ? 1 : VIEWS.length - 1)) % VIEWS.length);
+    else if (k === 'ArrowDown' || k === 'ArrowUp') { scroller().scrollTop += k === 'ArrowDown' ? 90 : -90; e.preventDefault(); }
+    else if (k === 's' || k === 'S') amb(true);
+  });
+  if (INJ) document.addEventListener('wheel', function (e) { woke(); knob((e.deltaX || e.deltaY) > 0 ? 1 : -1); e.preventDefault(); }, { passive: false });
+  else (function poll() {
+    fetch('/api/state?ui=' + UI).then(function (r) {
+      if (r.status === 401) { location.reload(); throw 0; }   // this screen was forgotten on the Deck (back to the pairing page), or the Deck has a newer page
+      return r.json();
+    }).then(function (s) { window.__ct.push(s); }).catch(function () {}).then(function () { setTimeout(poll, 1200); });
+  })();
+})();
+</script>
+</body></html>

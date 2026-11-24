@@ -1,0 +1,4 @@
+config.json
+data/
+*.bak-*
+.DS_Store

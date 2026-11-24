@@ -1,0 +1,60 @@
+{
+  "brand": "MAXAPACITY",
+  "channel": "https://www.youtube.com/@MAXAPACITY",
+  "subGoal": 25000,
+
+  "boardFile": "~/Library/Mobile Documents/com~apple~CloudDocs/MAXAPACITY/Dash/state.json",
+  "roots": {
+    "OWC 4TB": "/Volumes/OWC 4TB",
+    "MAXAPACITY": "~/Library/Mobile Documents/com~apple~CloudDocs/MAXAPACITY"
+  },
+  "footage": "/Volumes/OWC 4TB",
+  "studio": "http://127.0.0.1:8777",
+  "studioApp": "~/Library/Mobile Documents/com~apple~CloudDocs/MAXAPACITY/Apps/MAXAPACITY Studio.app",
+
+  "claudeSessions": true,
+  "claudeTitleFilter": "",
+  "claudeMaxAgeHours": 72,
+
+  "fullBrightness": true,
+  "nightBrightness": 60,
+  "ambientAfterSec": 240,
+
+  "standbyPictures": true,
+  "standbyClips": true,
+  "standbyPictureSec": 40,
+  "standbyClipEveryMin": 5,
+  "website": "https://example.com",
+  "pictureFolders": [],
+  "clipFolders": [],
+
+  "remote": false,
+  "remoteName": "",
+  "phoneToken": "",
+  "usbScreens": false,
+  "usbOffload": false,
+  "offloadTo": "",
+  "offloadFolders": ["DCIM"],
+  "offloadSinceDays": 3,
+  "uploads": false,
+  "uploadMaxGB": 8,
+
+  "soundFile": "/System/Library/Sounds/Glass.aiff",
+
+  "disks": [
+    { "label": "Mac", "path": "/System/Volumes/Data" },
+    { "label": "OWC 4TB", "path": "/Volumes/OWC 4TB" }
+  ],
+
+  "apps": [
+    { "key": "studio", "label": "Studio", "sub": "editor + dash" },
+    { "key": "ytstudio", "label": "YT Studio", "sub": "analytics", "url": "https://studio.youtube.com" },
+    { "key": "channel", "label": "Channel", "sub": "@MAXAPACITY", "url": "https://www.youtube.com/@MAXAPACITY" },
+    { "key": "resolve", "label": "Resolve", "sub": "DaVinci", "app": "DaVinci Resolve" },
+    { "key": "capcut", "label": "CapCut", "sub": "editor", "app": "CapCut" },
+    { "key": "drive", "label": "Footage", "sub": "OWC 4TB", "path": "/Volumes/OWC 4TB" },
+    { "key": "finished", "label": "Finished", "sub": "videos", "path": "/Volumes/OWC 4TB/_FINISHED VIDEOS" },
+    { "key": "site", "label": "Website", "sub": "maxapacitybikes.com", "url": "https://maxapacitybikes.com" },
+    { "key": "claude", "label": "Claude", "sub": "desktop", "app": "Claude" }
+  ]
+}
