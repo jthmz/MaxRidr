@@ -131,6 +131,7 @@ final class RidesPanel extends Panel {
         if (RideStore.STRAVA_UPLOADED.equals(strava)) return "On Strava";
         if (RideStore.STRAVA_PENDING.equals(strava)) return "Uploading";
         if (RideStore.STRAVA_FAILED.equals(strava)) return "Strava refused it";
+        if (RideStore.ON_MAC.equals(r.optString("deck"))) return "On your Mac";
         return "On this phone";
     }
 

@@ -520,6 +520,15 @@ public final class RideActivity extends Activity
     private void onDeckChanged() {
         settings.refresh();
         deck.linkChanged();
+        Deck found = Deck.get(this);
+        // The first time a Deck turns up, say so: nobody should have to go looking for it.
+        if (found.state() == Deck.FOUND
+                && !found.address().equals(prefs.getString("deck_offered", ""))) {
+            prefs.edit().putString("deck_offered", found.address()).apply();
+            if (Sheet.current() == null) {
+                say("Your Deck is on this network", "PAIR", this::editDeckConnection);
+            }
+        }
         // Someone waiting on the "looking" sheet is taken straight to the next step.
         if (deckLooking == null || Sheet.current() != deckLooking) return;
         deckLooking = null;
