@@ -66,6 +66,16 @@ final class WhatsNew {
 
     /** Newest first. */
     static final Note[] NOTES = {
+        new Note(6, "November 2026",
+                new Item(Icons.REFRESH_CW, "Regen when you roll off",
+                        "Regen mode can now be set to On throttle release, so the motor slows"
+                                + " the bike when the throttle closes. The app warns before it"
+                                + " is tried. Tunes has it for the Drax Bee build and the XE"
+                                + " Pro R."),
+                new Item(Icons.ROCKET, "Apex 140 A",
+                        "For the DRAX Apex on its own controller only: the owner-tested step"
+                                + " above stock, all four currents together. Tunes, MAXAPACITY"
+                                + " bikes.")),
         new Note(5, "November 2026",
                 new Item(Icons.ZAP, "What the bike did on each ride",
                         "With the bike linked, a ride keeps its peak power, the energy it used,"

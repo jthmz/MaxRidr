@@ -477,7 +477,6 @@ public class BikeSimTest {
         {"low gear above mid", change("low_rpm", 3000)},
         {"high gear below mid", change("high_rpm", 2000)},
         {"regen above its own maximum", change("regen", 10)},
-        {"regen on throttle release", change("regen_mode", 3)},
         {"the undocumented regen mode", change("regen_mode", 0)},
         {"acceleration below the official app's floor", change("accel", 0)},
         {"deceleration below the official app's floor", change("decel", 2)},
@@ -498,6 +497,108 @@ public class BikeSimTest {
       assertEquals("the top speed it came with is the ceiling for every gear", 4200,
           bike.ceiling(Fardriver.param(gear)));
     }
+  }
+
+  @Test public void regenOnThrottleReleaseCanBeSetAndPutBack() {
+    linkController();
+    Fardriver.Param mode = Fardriver.param("regen_mode");
+    int word = ctl.ram[0x1A];
+    assertEquals("regen is off on this bike", 1, mode.extract(word));
+    Result r = new Result();
+    bike.tryValues(change("regen_mode", 3, "regen", 8, "regen_max", 12), r);
+    run(15000);
+    assertEquals(r.calls.toString(), Boolean.TRUE, r.ok);
+    assertEquals(3, mode.extract(ctl.ram[0x1A]));
+    assertEquals("only its own two bits changed", word & ~mode.mask(), ctl.ram[0x1A] & ~mode.mask());
+    assertEquals(8, ctl.ram[0x30]);
+    assertEquals(12, ctl.ram[0x31]);
+    Result u = new Result();
+    bike.revert(u);
+    run(12000);
+    assertEquals(u.calls.toString(), Boolean.TRUE, u.ok);
+    assertArrayEquals("undone: exactly as it was", ctl.flash, ctl.ram);
+  }
+
+  /**
+   * The one tune above what a controller came with: all four currents, on the controller it
+   * was proven on (this simulated one is a capture of it), together or not at all.
+   */
+  @Test public void theApexOwnerTuneGoesInWholeOrNotAtAll() {
+    linkController();
+    assertTrue(TunePlan.apexController(bike.controllerMemory()));
+    Fardriver.Param line = Fardriver.param("line");
+    Fardriver.Param phase = Fardriver.param("phase");
+    Map<String, Integer> tune = change("boost_line", 560, "line", 560, "boost_phase", 1520, "phase", 1520);
+
+    // Without leave it is what it always was: above what the controller came with, refused.
+    Result plain = new Result();
+    bike.tryValues(tune, plain);
+    run(1000);
+    assertEquals(Boolean.FALSE, plain.ok);
+    // With leave for the whole tune, half of it is refused, and so is anything else.
+    Object[][] refused = {
+        {"half of it", change("boost_line", 560, "line", 560)},
+        {"more than it", change("boost_line", 580, "line", 580, "boost_phase", 1600, "phase", 1600)},
+        {"one value more", change("boost_line", 560, "line", 560, "boost_phase", 1520, "phase", 1540)},
+    };
+    for (Object[] c : refused) {
+      Result no = new Result();
+      bike.allowWhole(tune);
+      @SuppressWarnings("unchecked") Map<String, Integer> asked = (Map<String, Integer>) c[1];
+      bike.tryValues(asked, no);
+      run(1000);
+      assertEquals((String) c[0], Boolean.FALSE, no.ok);
+      assertTrue((String) c[0] + ": " + no.message, no.message.contains("Nothing was changed"));
+    }
+    assertTrue("nothing was sent for any of that", ctl.settingWrites().isEmpty());
+    assertEquals(Bike.TUNE_IDLE, bike.tuneState());
+
+    // Whole, it goes in: each burst allowance before its limit, so a limit is never above it.
+    Result whole = new Result();
+    bike.allowWhole(tune);
+    bike.tryValues(tune, whole);
+    run(20000);
+    assertEquals(whole.calls.toString(), Boolean.TRUE, whole.ok);
+    assertEquals(Arrays.asList("26=560", "19=560", "27=1520", "2D=1520"), ctl.settingWrites());
+    assertEquals("on trial, the ceiling has not moved", 520, bike.ceiling(line));
+    assertEquals(1400, bike.ceiling(phase));
+
+    // Undone, the bike is as it came and so are its ceilings.
+    Result undo = new Result();
+    bike.revert(undo);
+    run(15000);
+    assertEquals(undo.calls.toString(), Boolean.TRUE, undo.ok);
+    assertArrayEquals(ctl.flash, ctl.ram);
+    assertEquals(520, bike.ceiling(line));
+    ctl.written.clear();
+    // Leave is for one attempt: the next one needs it given again.
+    Result again = new Result();
+    bike.tryValues(tune, again);
+    run(1000);
+    assertEquals(Boolean.FALSE, again.ok);
+    assertTrue(ctl.settingWrites().isEmpty());
+
+    // Tried again and saved, that is where the controller now stands.
+    Result kept = new Result();
+    bike.allowWhole(tune);
+    bike.tryValues(tune, kept);
+    run(20000);
+    assertEquals(kept.calls.toString(), Boolean.TRUE, kept.ok);
+    Result saved = new Result();
+    bike.save(saved);
+    run(6000);
+    assertEquals(saved.calls.toString(), Boolean.TRUE, saved.ok);
+    assertEquals(560, ctl.flash[0x19]);
+    assertEquals(1520, ctl.flash[0x2D]);
+    assertEquals(560, ctl.flash[0x26]);
+    assertEquals(1520, ctl.flash[0x27]);
+    assertEquals(560, bike.ceiling(line));
+    assertEquals(1520, bike.ceiling(phase));
+    // And nothing above it is on offer.
+    Result more = new Result();
+    bike.tryValues(change("line", 580), more);
+    run(1000);
+    assertEquals(Boolean.FALSE, more.ok);
   }
 
   @Test public void gearSpeedsNeverPassThroughAForbiddenOrderOnTheWay() {

@@ -21,7 +21,10 @@ Two halves that find each other:
   Arctic Leopard XE Pro R as it was delivered, to put a changed bike back. A
   tune loads as changes to look over and goes through the same trial as any
   other change. Currents and top speed never go above what the controller
-  held when the app first met it. Tune ideas writes up the
+  held when the app first met it, with one exception: the owner-tested DRAX
+  Apex tune, which loads only on the Apex's own controller and only whole.
+  Regen can be set to come on with the brake or when the throttle closes;
+  the app warns before the second is tried. Tune ideas writes up the
   bike's settings and limits for the rider to send to an AI app or a tuner;
   it only reads, and nothing leaves the phone until the rider sends it. It
   carries the last ride's figures for the bike, so the advice is about what

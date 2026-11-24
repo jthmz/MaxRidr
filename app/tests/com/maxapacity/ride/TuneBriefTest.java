@@ -134,7 +134,8 @@ public class TuneBriefTest {
     ram[0x31] = 60;
     Fardriver fd = controller(ram);
     String brief = brief(fd, battery());
-    assertTrue(brief, brief.contains("- Regen mode: Follow. The app can set: Off, On brake. "));
+    assertTrue(brief, brief.contains("- Regen mode: Follow. The app can set: Off, On brake, On throttle release. "));
+    assertTrue(brief, brief.contains("- Regen on throttle release brakes the rear wheel every time the throttle closes."));
     assertTrue(brief, brief.contains("- Regen strength: 50 A. Range 0 A to 50 A, "));
     assertTrue(brief, brief.contains("- Max regen strength: 60 A. Range 0 A to 60 A, "));
   }

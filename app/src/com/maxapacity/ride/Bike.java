@@ -567,16 +567,19 @@ final class Bike {
      */
     private int firstSeen(Fardriver.Param p) {
         int now = controllerMemory.raw(p);
+        // A value on trial is not yet how the controller stands: it may be undone.
+        boolean settled = tuneState == TUNE_IDLE;
         if (demo) {
             Integer cap = demoCaps.get(p.key);
-            if (cap == null || now > cap) demoCaps.put(p.key, cap = now);
+            if (cap == null || (now > cap && settled)) demoCaps.put(p.key, cap = now);
             return cap;
         }
         String serial = controllerMemory.serial();
         String key = "bike_cap_" + (serial.isEmpty() ? controllerName() : serial) + "_" + p.key;
         int cap = prefs.getInt(key, -1);
-        if (cap < 0 || now > cap) {
-            // First sight of this controller (or it was raised elsewhere).
+        if (cap < 0 || (now > cap && settled)) {
+            // First sight of this controller, or it now stands higher: raised elsewhere, or
+            // by the one whole tune this app allows above what a controller came with.
             cap = now;
             prefs.edit().putInt(key, cap).apply();
         }
@@ -683,6 +686,19 @@ final class Bike {
         return out;
     }
 
+    /** A whole tune allowed above this controller's ceilings on the next attempt, or null. */
+    private Map<String, Integer> allowance;
+
+    /**
+     * Lets the next {@link #tryValues} take these exact values even where they
+     * are above what this controller came with, provided they all go in
+     * together. For the one tune proven on its own controller; the caller has
+     * checked that this is that controller. Good for one attempt.
+     */
+    void allowWhole(Map<String, Integer> exact) {
+        allowance = new LinkedHashMap<>(exact);
+    }
+
     /**
      * Step 1: write the changed settings to RAM, verifying each by reading it
      * back, then watch for a fault.
@@ -694,6 +710,8 @@ final class Bike {
      * job later.
      */
     void tryValues(final Map<String, Integer> asked, final TuneCallback cb) {
+        final Map<String, Integer> whole = allowance;
+        allowance = null;
         String blocked = writeBlocker();
         if (blocked != null) {
             cb.done(false, blocked);
@@ -718,9 +736,22 @@ final class Bike {
                 cb.done(false, "That setting is not one this app can change");
                 return;
             }
-            if (e.getValue() < p.min || e.getValue() > ceiling(p)) {
+            boolean allowed = whole != null && e.getValue().equals(whole.get(e.getKey()));
+            if (e.getValue() < p.min || (e.getValue() > ceiling(p) && !allowed)) {
                 cb.done(false, p.name + " is outside its safe range. Nothing was changed");
                 return;
+            }
+        }
+        if (whole != null) {
+            // Above what the controller came with only as the whole tune: every one of its
+            // values must be on the bike once this is done.
+            for (Map.Entry<String, Integer> e : whole.entrySet()) {
+                Fardriver.Param p = Fardriver.param(e.getKey());
+                Integer to = changes.get(e.getKey());
+                if (p == null || (to != null ? to : controllerMemory.raw(p)) != e.getValue()) {
+                    cb.done(false, "That tune only goes in whole. Nothing was changed");
+                    return;
+                }
             }
         }
         String order = orderProblem(changes);
@@ -760,7 +791,9 @@ final class Bike {
         final int epoch = linkEpoch;
         tuneState = APPLYING;
         changed();
-        writeSequence(new Steps(keys, changes, epoch).watching(faultsBefore), 0, (ok, message) -> {
+        Steps steps = new Steps(keys, changes, epoch).watching(faultsBefore);
+        steps.whole = whole;
+        writeSequence(steps, 0, (ok, message) -> {
             if (ok) {
                 tried.putAll(changes);
                 tuneState = TRYING;
@@ -826,6 +859,8 @@ final class Bike {
         boolean restoring;
         /** Fault bits that were already set; any new one stops the run. -1: not watched. */
         int faultsBefore = -1;
+        /** Values that may go above the controller's ceilings, as {@link #allowWhole} gave them. */
+        Map<String, Integer> whole;
 
         Steps(List<String> order, Map<String, Integer> values, int epoch) {
             this.order = order;
@@ -882,7 +917,11 @@ final class Bike {
         final byte[] frame;
         final int expected;
         try {
-            frame = controllerMemory.writeFrame(p, target, ceiling(p), steps.restoring);
+            int top = ceiling(p);
+            if (steps.whole != null && target.equals(steps.whole.get(p.key))) {
+                top = Math.max(top, target);
+            }
+            frame = controllerMemory.writeFrame(p, target, top, steps.restoring);
             expected = controllerMemory.expectedWord(p, target);
         } catch (IllegalArgumentException e) {
             cb.done(false, p.name + " is outside its safe range");

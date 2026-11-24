@@ -144,7 +144,10 @@ public class TunePlanTest {
     assertTrue(build("drax-chill").note.contains("not as a tested starting tune"));
     assertTrue(build("drax-daily").note.contains("above that pack's listed 220 A continuous rating"));
     assertTrue(build("drax-daily").note.contains("no test log"));
-    assertTrue(build("drax-regen").note.contains("This app sets the two currents only"));
+    assertEquals("as on the bike it was tested on", "On throttle release",
+        Fardriver.param("regen_mode").format(build("drax-regen").values.get("regen_mode")));
+    assertTrue(build("drax-regen").note.contains("FreeThrottle and the RPM regen map from our guide are set in the"
+        + " Fardriver app"));
     assertTrue(build("drax-regen").note.contains("try it at 70 to 80% charge"));
   }
 
@@ -171,23 +174,49 @@ public class TunePlanTest {
     assertTrue(daily.changes.isEmpty());
   }
 
-  @Test public void theRegenTuneStaysInsideTheAppsLimitsAndSaysWhenRegenIsOff() {
-    int[] ram = DemoBike.memory();
-    Fardriver off = TuneBriefTest.controller(ram);
+  @Test public void theRegenTuneSetsTheModeItWasTestedInAndStaysInsideTheAppsLimits() {
+    Fardriver off = TuneBriefTest.controller(DemoBike.memory());
     ToIntFunction<Fardriver.Param> top = TuneBriefTest.ceilings(off);
     assertEquals("Off", Fardriver.param("regen_mode").format(off.raw(Fardriver.param("regen_mode"))));
     TunePlan.Loaded loaded = TunePlan.load(build("drax-regen"), off, top);
     assertNull(loaded.refused);
-    assertEquals("{regen=8, regen_max=12}", loaded.changes.toString());
-    assertNotNull("a rider is told the amps do nothing while regen is off", loaded.note);
-    assertTrue(loaded.note, loaded.note.contains("Regen mode is Off"));
+    assertEquals("{regen_mode=3, regen=8, regen_max=12}", loaded.changes.toString());
+    assertNull("it switches regen on itself, so there is nothing to warn of", loaded.note);
     for (Map.Entry<String, Integer> e : loaded.changes.entrySet()) {
       Fardriver.Param p = Fardriver.param(e.getKey());
-      off.writeFrame(p, e.getValue(), top.applyAsInt(p));
+      off.writeFrame(p, e.getValue(), top.applyAsInt(p));     // throws if the app would refuse it
     }
+  }
 
-    ram[0x1A] = (ram[0x1A] & ~0x3) | 2;             // regen on the brake
-    Fardriver on = TuneBriefTest.controller(ram);
-    assertNull(TunePlan.load(build("drax-regen"), on, TuneBriefTest.ceilings(on)).note);
+  @Test public void theOneTuneAboveStockLoadsOnlyOnTheControllerItWasProvenOn() {
+    TunePlan.Tune apex = build("apex-140");
+    assertTrue(apex.whole);
+    assertEquals("{boost_line=560, line=560, boost_phase=1520, phase=1520}", apex.values.toString());
+    assertEquals("140 A", LINE.format(apex.values.get("line")));
+    assertEquals("380 A", PHASE.format(apex.values.get("phase")));
+    for (TunePlan.Tune t : TunePlan.ourBikes()) assertEquals(t.id, t.id.equals("apex-140"), t.whole);
+    assertTrue(apex.note.contains("145 A and 400 A failed"));
+    assertTrue(apex.note.contains("MAXAPACITY has not tested it"));
+
+    // The demo bike's memory is a capture of that very controller: WC, 72 V, 150 A / 405 A, HA80.
+    Fardriver real = stock();
+    assertTrue(TunePlan.apexController(real));
+    TunePlan.Loaded loaded = TunePlan.load(apex, real, TuneBriefTest.ceilings(real));
+    assertNull(loaded.refused);
+    assertEquals(apex.values, loaded.changes);
+    assertEquals("the bike link is told the whole of it", apex.values, loaded.whole);
+
+    // Anything else about the controller different, and it is not that controller.
+    int[][] others = {{0x20, 'B' | ('J' << 8)}, {0x67, 600}, {0x63, 520}, {0x64, 1400}, {0x87, 'A' | (86 << 8)}};
+    for (int[] change : others) {
+      int[] ram = DemoBike.memory();
+      ram[change[0]] = change[1];
+      Fardriver other = TuneBriefTest.controller(ram);
+      assertFalse("word " + Integer.toHexString(change[0]), TunePlan.apexController(other));
+      TunePlan.Loaded no = TunePlan.load(apex, other, TuneBriefTest.ceilings(other));
+      assertTrue(no.refused, no.refused.contains("This is not that controller"));
+      assertTrue(no.changes.isEmpty());
+      assertNull(no.whole);
+    }
   }
 }

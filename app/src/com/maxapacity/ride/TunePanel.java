@@ -40,6 +40,15 @@ final class TunePanel extends Panel {
     private String shown = "";
     /** Room for the widest value, "12500 rpm", and for a choice such as "On brake". */
     private static final int VALUE_DP = 88;
+    /**
+     * The values of a loaded tune that goes above what the controller came
+     * with, or null. They are sent together or not at all, so their rows
+     * cannot be stepped while it is loaded.
+     */
+    private Map<String, Integer> whole;
+    private String wholeName = "";
+    /** The rider has just read what regen on throttle release does, and chose to go on. */
+    private boolean releaseWarned;
 
     TunePanel(Context context, Host host) {
         super(context, "Tune");
@@ -84,6 +93,7 @@ final class TunePanel extends Panel {
             return;
         }
         draft.clear();
+        whole = null;
         super.close();
     }
 
@@ -176,10 +186,13 @@ final class TunePanel extends Panel {
             LinearLayout discard = Ui.button(c, "DISCARD", null, Ui.SECONDARY);
             discard.setOnClickListener(v -> {
                 final Map<String, Integer> was = new LinkedHashMap<>(draft);
+                final Map<String, Integer> wasWhole = whole;
                 draft.clear();
+                whole = null;
                 refresh();
                 host.say("Changes discarded", "UNDO", () -> {
                     draft.putAll(was);
+                    whole = wasWhole;
                     refresh();
                 });
             });
@@ -215,9 +228,31 @@ final class TunePanel extends Panel {
                     .show();
             return;
         }
+        Integer regenMode = draft.get("regen_mode");
+        if (regenMode != null && regenMode == 3 && !releaseWarned) {
+            new Sheet(host.frame(), "Regen when you roll off",
+                    "With regen on throttle release, the motor brakes the rear wheel every time"
+                            + " you close the throttle, as hard as Regen strength is set. On"
+                            + " loose ground or a steep descent that can slide the rear tyre."
+                            + " Start with a low strength and try it slowly, somewhere open.")
+                    .action("Cancel", Ui.SECONDARY, true, null)
+                    .action("Try it", Ui.PRIMARY, true, () -> {
+                        releaseWarned = true;
+                        tryOnBike();
+                    })
+                    .show();
+            return;
+        }
+        releaseWarned = false;
         final Map<String, Integer> sending = new LinkedHashMap<>(draft);
+        // A tune that goes above what the controller came with is let through as itself
+        // only: the bike link takes these values together or refuses them all.
+        if (whole != null) bike.allowWhole(whole);
         bike.tryValues(sending, (ok, message) -> {
-            if (ok) draft.clear();
+            if (ok) {
+                draft.clear();
+                whole = null;
+            }
             shown = "";
             refresh();
             host.say(message);
@@ -345,14 +380,18 @@ final class TunePanel extends Panel {
             return;
         }
         final Map<String, Integer> was = new LinkedHashMap<>(draft);
+        final Map<String, Integer> wasWhole = whole;
         draft.clear();
         draft.putAll(loaded.changes);
+        whole = loaded.whole;
+        wholeName = t.name;
         refresh();
         int n = loaded.changes.size();
         host.say(t.name + " loaded: " + (n == 1 ? "1 change" : n + " changes") + " to look over"
                 + (loaded.note == null ? "" : ". " + loaded.note), "UNDO", () -> {
                     draft.clear();
                     draft.putAll(was);
+                    whole = wasWhole;
                     refresh();
                 });
     }
@@ -449,6 +488,7 @@ final class TunePanel extends Panel {
         final Map<String, Integer> was = new LinkedHashMap<>(draft);
         draft.clear();
         draft.putAll(read.changes);
+        whole = null;
         refresh();
         int n = read.changes.size();
         host.say((n == 1 ? "1 change" : n + " changes") + " loaded to look over" + leftOut,
@@ -546,6 +586,9 @@ final class TunePanel extends Panel {
         }
         final boolean edited = draft.containsKey(p.key);
         final int value = edited ? draft.get(p.key) : onBike;
+        // Part of a tune that only goes in whole: shown, but not stepped on its own.
+        final boolean held = whole != null && whole.containsKey(p.key);
+        if (held) enabled = false;
         // What is on the bike can always be shown and gone back to, even where
         // it lies outside what this app would choose.
         final int max = Math.max(onBike, Math.min(p.top(ceiling), above(p)));
@@ -593,7 +636,8 @@ final class TunePanel extends Panel {
         } else if (p.key.equals("high_rpm") && value >= max) {
             help += ". That is " + p.format(max);
         }
-        TextView h = Ui.small(c, edited ? "On the bike now: " + p.format(onBike) : help,
+        TextView h = Ui.small(c, !edited ? help : "On the bike now: " + p.format(onBike)
+                + (held ? ". Part of " + wholeName + ", which only goes in whole" : ""),
                 edited ? Ui.ACCENT : Ui.TEXT_3);
         LinearLayout.LayoutParams hlp = Ui.matchWrap();
         hlp.rightMargin = dp(8);

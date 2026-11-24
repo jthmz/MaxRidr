@@ -265,6 +265,8 @@ final class TuneBrief {
                 + " controller stood when the app first met it, ")
                 .append(high.format(ceiling.applyAsInt(high))).append(".\n");
         sb.append("- Regen strength stays at or below Max regen strength.\n"
+                + "- Regen on throttle release brakes the rear wheel every time the throttle"
+                + " closes. Suggest it only with a low Regen strength to start from.\n"
                 + "- The two current limits can come down, but never go above where this"
                 + " controller stood when the app first met it.\n"
                 + "- The controller's short burst (boost) currents move with the two limits by"
