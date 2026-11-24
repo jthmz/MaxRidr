@@ -1,7 +1,9 @@
 package com.maxapacity.ride;
 
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -181,6 +183,11 @@ final class SettingsPanel extends Panel {
             LinearLayout row = (LinearLayout) app.getChildAt(2);
             ((TextView) ((LinearLayout) row.getChildAt(1)).getChildAt(1)).setTextColor(Ui.DANGER);
         }
+        // Last in the group, so the Version row above keeps its place. Opens
+        // the app's own page on the site in the phone's browser.
+        link(app, Icons.INFO, "About and help", "What it does, setup and questions",
+                "Open", false,
+                v -> host.launch(new Intent(Intent.ACTION_VIEW, Uri.parse(Site.RIDE))));
 
         TextView foot = Ui.label(c, "MAXAPACITY RIDE  \u00B7  BUILD " + Updater.versionCode(c));
         foot.setGravity(Gravity.CENTER);

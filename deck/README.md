@@ -6,7 +6,9 @@ one-tap "play the latest cut". Left alone, it becomes a standby screen with the 
 everything in progress, and your own pictures and footage behind it.
 
 This folder is the Mac half of MaxRidr. The phone app is in `app/`, and `APP-LINK.md` here is the
-contract between the two. `install.sh` copies this folder to where the Deck runs on the Mac;
+contract between the two. The Deck's page on the web, for someone arriving cold, is
+<https://maxapacitybikes.com/apps/deck>; how the Deck, the phone app and the Studio reach each
+other is at <https://maxapacitybikes.com/apps#connect>. `install.sh` copies this folder to where the Deck runs on the Mac;
 `sync-from-mac.sh` copies the running Deck back here so changes can be committed.
 
 Nothing is installed on the Car Thing. The Mac drives the device's own browser over USB, so
