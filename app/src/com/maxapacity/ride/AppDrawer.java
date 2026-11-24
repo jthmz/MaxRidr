@@ -51,7 +51,7 @@ final class AppDrawer extends Panel {
         }
     }
 
-    private static final String SITE = "https://maxapacitybikes.com";
+    static final String SITE = "https://maxapacitybikes.com";
 
     private final Host host;
     private final EditText search;
