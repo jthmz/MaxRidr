@@ -559,6 +559,9 @@ final class TunePanel extends Panel {
         TextView n = Ui.body(c, p.name, Ui.TEXT);
         n.setMaxLines(2);
         n.setEllipsize(TextUtils.TruncateAt.END);
+        // Room of its own, which only shows when the name takes two lines: the row then
+        // grows, and the explanation underneath does not crowd the second line.
+        n.setPadding(0, dp(6), 0, dp(10));
         row.addView(n, Ui.weighted());
 
         ImageView minus = stepper(Icons.CHEVRON_LEFT, "Lower " + p.name, enabled && value > min);
