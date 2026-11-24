@@ -22,7 +22,20 @@ name: Build app
 #   secrets RIDE_KEYSTORE_B64 (base64 of a keystore whose key alias is
 #   "ride") and RIDE_KEYSTORE_PASSWORD; they take precedence.
 #
-# Needs no secrets beyond the token GitHub gives every workflow run.
+# ONE-TAP STRAVA
+#   Strava only signs riders in through a registered API application. Give
+#   the build this app's own and connecting Strava is one tap for every
+#   rider, with nothing to type:
+#     1. At strava.com/settings/api create an application. Set
+#        Authorization Callback Domain to: localhost
+#     2. In this repository's Settings, Secrets and variables, Actions, add
+#        two repository secrets from that page: STRAVA_CLIENT_ID and
+#        STRAVA_CLIENT_SECRET.
+#   The next build carries them. Without them a build still works, and asks
+#   each rider for an application of their own instead. The README says what
+#   putting the secret in a downloadable app does and does not risk.
+#
+# Needs no other secrets beyond the token GitHub gives every workflow run.
 
 on:
   push:
@@ -74,7 +87,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.m2/repository/org/robolectric
-          key: robolectric-runtime-sdk35-v1
+          key: robolectric-runtime-sdk33-sdk35-v1
 
       - name: Signing key
         env:
@@ -136,7 +149,16 @@ jobs:
       # The tests run first: a build whose controller write frames are wrong,
       # or whose screens crash when laid out, must never reach a phone.
       - name: Test and build APK
-        run: gradle --no-daemon testReleaseUnitTest assembleRelease -PrideVersionCode="$VERSION_CODE"
+        env:
+          STRAVA_CLIENT_ID: ${{ secrets.STRAVA_CLIENT_ID }}
+          STRAVA_CLIENT_SECRET: ${{ secrets.STRAVA_CLIENT_SECRET }}
+        run: |
+          if [ -n "$STRAVA_CLIENT_ID" ] && [ -n "$STRAVA_CLIENT_SECRET" ]; then
+            echo "::notice::This build carries the app's Strava application: connecting Strava is one tap."
+          else
+            echo "::notice::No STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET repo secrets, so this build asks each rider for a Strava application of their own. See the top of build.yml."
+          fi
+          gradle --no-daemon testReleaseUnitTest assembleRelease -PrideVersionCode="$VERSION_CODE"
 
       - name: Rename APK
         run: cp build/outputs/apk/release/*.apk maxapacity-ride.apk

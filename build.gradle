@@ -23,6 +23,23 @@ def rideVersionCode = (project.findProperty('rideVersionCode') ?: '1') as int
 def keystorePath = System.getenv('RIDE_KEYSTORE')
 def hasReleaseKey = keystorePath != null && file(keystorePath).isFile()
 
+// Strava only signs riders in through a registered API application. When
+// the build is given this app's own (STRAVA_CLIENT_ID and
+// STRAVA_CLIENT_SECRET in the environment; CI takes them from repo secrets)
+// they go into the build as an asset, and connecting Strava is one tap. A
+// build without them asks each rider for an application of their own.
+// Anyone with the APK can read the secret back out of it; see the README.
+def stravaDir = layout.buildDirectory.dir('generated/strava').get().asFile
+stravaDir.mkdirs()
+def stravaKeys = new File(stravaDir, 'strava.properties')
+def stravaId = (System.getenv('STRAVA_CLIENT_ID') ?: '').trim()
+def stravaSecret = (System.getenv('STRAVA_CLIENT_SECRET') ?: '').trim()
+if (stravaId && stravaSecret) {
+    stravaKeys.text = "client_id=${stravaId}\nclient_secret=${stravaSecret}\n"
+} else {
+    stravaKeys.delete()
+}
+
 android {
     namespace 'com.maxapacity.ride'
     compileSdk 35
@@ -40,7 +57,7 @@ android {
             manifest.srcFile manifestCopy
             java.srcDirs = [new File(appDir, 'src')]
             res.srcDirs = [new File(appDir, 'res')]
-            assets.srcDirs = [new File(appDir, 'assets')]
+            assets.srcDirs = [new File(appDir, 'assets'), stravaDir]
         }
         // Tests run on the build machine, no phone needed:
         // `gradle testReleaseUnitTest`.

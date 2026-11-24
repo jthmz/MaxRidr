@@ -52,7 +52,7 @@ import java.util.List;
  * that interrupts is a {@link Sheet}.
  */
 public final class RideActivity extends Activity
-        implements RideState.Listener, LocationListener, Host {
+        implements RideState.Listener, LocationListener, Host, Strava.Screen {
 
     private static final String DEFAULT_MAPS_PACKAGE = "app.organicmaps";
     private static final int SLOT_COUNT = 4;
@@ -61,6 +61,7 @@ public final class RideActivity extends Activity
     private static final int REQ_SPEECH = 3;
     private static final int REQ_BLUETOOTH = 4;
     private static final int REQ_SMS = 5;
+    static final int REQ_HEALTH = 6;
 
     /** Sustained speed that starts a ride on its own (about 11 km/h, 7 mph). */
     private static final float AUTO_START_MPS = 3f;
@@ -146,6 +147,7 @@ public final class RideActivity extends Activity
         getWindow().setNavigationBarColor(Ui.BG);
         RideStore.purgeRemoved(this);
         setContentView(buildUi());
+        Strava.setScreen(this);
         if (CrashLog.read(this) != null) {
             // Posted so the message bar is laid out over a finished screen.
             handler.post(() -> say("The app closed unexpectedly last time", "DETAILS",
@@ -195,6 +197,7 @@ public final class RideActivity extends Activity
         // Screens that were open are listening to the bike link, the updater
         // or the network; let each of them let go before this one is discarded.
         for (Panel p : panels) if (p.isOpen()) p.onClose();
+        Strava.clearScreen(this);
         copilot.shutdown();
         super.onDestroy();
     }
@@ -258,6 +261,7 @@ public final class RideActivity extends Activity
         startPassiveGps();
         // Rides recorded without signal go up once the phone is back online.
         Strava.uploadPending(this);
+        Health.sync(this);
         // Restart the gesture service if the system stopped it.
         if (ChopService.isEnabled(this)) startChopService();
         renderSlots();
@@ -575,8 +579,18 @@ public final class RideActivity extends Activity
                 .show();
     }
 
+    /**
+     * One tap when the build carries its own Strava application: straight to
+     * Strava's Authorize button, in the Strava app if it is installed. A
+     * build without one asks for the rider's own application first.
+     */
     @Override
-    public void connectStrava() {
+    public void connectStrava(String thenSend) {
+        Strava.sendOnceConnected(this, thenSend);
+        if (Strava.hasBuiltInApp(this)) {
+            launch(new Intent(Intent.ACTION_VIEW, Strava.begin(this, false)));
+            return;
+        }
         final EditText id = Ui.input(this, "Client ID", false);
         id.setInputType(InputType.TYPE_CLASS_NUMBER);
         id.setText(prefs.getString("strava_client_id", ""));
@@ -601,9 +615,45 @@ public final class RideActivity extends Activity
                     }
                     Sheet.dismissCurrent();
                     Strava.saveApp(this, clientId, clientSecret);
-                    launch(new Intent(Intent.ACTION_VIEW, Strava.authorizeUri(this)));
+                    launch(new Intent(Intent.ACTION_VIEW, Strava.begin(this, true)));
                 })
                 .show();
+    }
+
+    @Override
+    public void stravaChanged() {
+        settings.refresh();
+        ridesChanged();
+    }
+
+    @Override
+    public void stravaSignIn(boolean ok, String message) {
+        stravaChanged();
+        final int earlier = ok ? Strava.unsentCount(this) : 0;
+        if (earlier == 0) {
+            say(message);
+            return;
+        }
+        // Rides from before the rider connected: theirs to send or not.
+        new Sheet(frame, "Strava connected",
+                "New rides upload on their own from now on. You also have " + earlier
+                        + (earlier == 1 ? " earlier ride" : " earlier rides")
+                        + " on this phone. Send " + (earlier == 1 ? "it" : "them")
+                        + " to Strava too?")
+                .action("Not now", Ui.SECONDARY, true, null)
+                .action(earlier == 1 ? "Send it" : "Send them", Ui.PRIMARY, true, () -> {
+                    Strava.queueUnsent(this);
+                    ridesChanged();
+                    say("Sending " + earlier + (earlier == 1 ? " ride" : " rides")
+                            + " to Strava");
+                })
+                .show();
+    }
+
+    /** The phone shows its own Health Connect screen; nothing is typed. */
+    @Override
+    public void connectHealth() {
+        requestPermissions(Health.PERMISSIONS, REQ_HEALTH);
     }
 
     /** Pin from the drawer: first free ride-app slot, or ask which to replace. */
@@ -695,6 +745,19 @@ public final class RideActivity extends Activity
                 settings.refresh();
                 say("Crash alert is off: allow SMS so it can text your contact");
             }
+            return;
+        }
+        if (requestCode == REQ_HEALTH) {
+            if (Health.allowed(this)) {
+                Health.setOn(this, true);
+                say(RideStore.load(this).length() > 0
+                        ? "Health Connect is on. Your rides are being added"
+                        : "Health Connect is on. Rides are added as you save them");
+            } else {
+                say("Health Connect was not allowed", "OPEN",
+                        () -> launch(Health.manageIntent(this)));
+            }
+            settings.refresh();
             return;
         }
         if (requestCode != REQ_LOCATION) return;

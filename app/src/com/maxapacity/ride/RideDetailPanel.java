@@ -123,6 +123,11 @@ final class RideDetailPanel extends Panel {
                     + r.optInt("leanRight") + "\u00B0", true);
         }
         addMeta(meta, "Strava", RidesPanel.stravaLine(r), true);
+        if (Health.isOn(c) || Health.SENT.equals(r.optString("health"))) {
+            String health = r.optString("health");
+            addMeta(meta, "Health Connect", Health.SENT.equals(health) ? "Added"
+                    : Health.REFUSED.equals(health) ? "Not accepted" : "Waiting", true);
+        }
         boolean onMac = RideStore.ON_MAC.equals(r.optString("deck"));
         if (onMac || Deck.get(c).everLinked()) {
             addMeta(meta, "Mac", onMac ? "Sent" : "Waiting to send", true);
@@ -130,10 +135,17 @@ final class RideDetailPanel extends Panel {
         addMeta(meta, "File", file, true);
         content.addView(meta, Ui.top(c, Ui.matchWrap(), 12));
 
-        if (Strava.isConnected(c) && !RideStore.STRAVA_UPLOADED.equals(strava)
+        if (!RideStore.STRAVA_UPLOADED.equals(strava)
                 && !RideStore.STRAVA_PENDING.equals(strava)) {
-            LinearLayout send = Ui.button(c, "SEND TO STRAVA", Icons.CLOUD_UPLOAD, Ui.PRIMARY);
+            final boolean connected = Strava.isConnected(c);
+            LinearLayout send = Ui.button(c, "SEND TO STRAVA", Icons.CLOUD_UPLOAD,
+                    connected ? Ui.PRIMARY : Ui.SECONDARY);
             send.setOnClickListener(v -> {
+                if (!connected) {
+                    // Connect first; this ride goes up as soon as that is done.
+                    host.connectStrava(file);
+                    return;
+                }
                 Strava.queue(c, file);
                 host.say("Sending to Strava");
                 host.ridesChanged();
