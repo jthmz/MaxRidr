@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MAXAPACITY</string>
+    <string name="ride_channel">Ride recording</string>
+    <string name="ride_recording">Recording ride</string>
+    <string name="chop_channel">Flashlight gesture</string>
+    <string name="chop_active">Chop twice for flashlight is on</string>
+</resources>

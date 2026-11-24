@@ -1,0 +1,101 @@
+// Builds the MAXAPACITY Ride app from app/: `gradle assembleRelease`. The
+// same sources can also be built into a LineageOS image (app/Android.bp).
+plugins {
+    id 'com.android.application' version '8.7.3'
+}
+
+def appDir = file('app')
+
+// The ROM build needs package= in the manifest; the Gradle plugin rejects it
+// in favour of `namespace`, so build from a copy without it.
+def manifestCopy = layout.buildDirectory.file('manifest/AndroidManifest.xml').get().asFile
+manifestCopy.parentFile.mkdirs()
+manifestCopy.text = new File(appDir, 'AndroidManifest.xml').text
+        .replaceFirst(/\s+package="[^"]+"/, '')
+
+// CI passes a number that rises with each run, so every build is newer than the last and the
+// in-app updater can tell which is which. Local builds are version 1.
+def rideVersionCode = (project.findProperty('rideVersionCode') ?: '1') as int
+
+// Updates only install over an app signed with the same key, so release
+// builds use one long-lived key (CI supplies it through the environment).
+// Without it the build falls back to the throwaway debug key.
+def keystorePath = System.getenv('RIDE_KEYSTORE')
+def hasReleaseKey = keystorePath != null && file(keystorePath).isFile()
+
+android {
+    namespace 'com.maxapacity.ride'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.maxapacity.ride'
+        minSdk 31
+        targetSdk 35
+        versionCode rideVersionCode
+        versionName "1.0.${rideVersionCode}"
+    }
+
+    sourceSets {
+        main {
+            manifest.srcFile manifestCopy
+            java.srcDirs = [new File(appDir, 'src')]
+            res.srcDirs = [new File(appDir, 'res')]
+            assets.srcDirs = [new File(appDir, 'assets')]
+        }
+        // Tests run on the build machine, no phone needed:
+        // `gradle testReleaseUnitTest`.
+        test {
+            java.srcDirs = [new File(appDir, 'tests')]
+        }
+    }
+
+    testOptions {
+        unitTests {
+            // Lets the screen tests start the real activity with the app's
+            // own theme, fonts and manifest.
+            includeAndroidResources = true
+            all {
+                it.maxHeapSize = '2g'
+                it.testLogging {
+                    events 'passed', 'failed', 'skipped'
+                    exceptionFormat 'full'
+                }
+            }
+        }
+    }
+
+    signingConfigs {
+        release {
+            if (hasReleaseKey) {
+                storeFile file(keystorePath)
+                storePassword System.getenv('RIDE_KEYSTORE_PASSWORD')
+                keyAlias 'ride'
+                keyPassword System.getenv('RIDE_KEYSTORE_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig hasReleaseKey ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    // Runs Android code on the JVM, with real drawing, for the screen and
+    // bike-link tests.
+    testImplementation 'org.robolectric:robolectric:4.14.1'
+}

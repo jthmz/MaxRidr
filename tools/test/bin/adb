@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# A pretend phone for dry-running ride-test.sh: answers the handful of adb
+# commands the script uses, and keeps a log of every call so the tests can
+# check what the script did to it. Behaviour is set by FAKE_* variables:
+#
+#   FAKE_DEVICES=one|none|unauthorized|two
+#   FAKE_SDK, FAKE_RELEASE        the phone's Android version
+#   FAKE_INSTALL=ok|incompatible|downgrade|refused|weird
+#   FAKE_NO_RIDES, FAKE_PULL_FAILS
+#   FAKE_CRASH_AT=<screen>        the app dies when that screen is opened
+#   FAKE_CRASH_ON_TAP             the app dies when the screen is tapped
+#   FAKE_LOCKED_FOR=<n>           the lock screen is in front for n checks
+#   FAKE_NO_UIAUTOMATOR, FAKE_HOME
+ST="${FAKE_STATE_DIR:?}"
+PKG=com.maxapacity.ride
+log() { echo "$*" >> "$ST/calls.log"; }
+log "adb $*"
+case "$1" in
+  devices)
+    echo "List of devices attached"
+    case "${FAKE_DEVICES:-one}" in
+      one) printf 'ZY22FAKE01\tdevice\n' ;;
+      none) ;;
+      unauthorized) printf 'ZY22FAKE01\tunauthorized\n' ;;
+      two) printf 'ZY22FAKE01\tdevice\nemulator-5554\tdevice\n' ;;
+    esac
+    echo ""
+    ;;
+  install)
+    for apk in "$@"; do :; done # the last argument
+    [ -f "$apk" ] || { echo "adb: failed to stat $apk: No such file or directory"; exit 1; }
+    mode="${FAKE_INSTALL:-ok}"
+    if [ "$mode" = incompatible ] && [ -f "$ST/installed" ] && [ "$(cat "$ST/installed")" = "1.0-debug" ]; then
+      printf 'Performing Streamed Install\nadb: failed to install %s: Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: Existing package %s signatures do not match newer version; ignoring!]\n' "$apk" "$PKG"
+      exit 1
+    fi
+    case "$mode" in
+      downgrade) printf 'adb: failed to install %s: Failure [INSTALL_FAILED_VERSION_DOWNGRADE: Downgrade detected]\n' "$apk"; exit 1 ;;
+      refused) printf 'adb: failed to install %s: Failure [INSTALL_FAILED_VERIFICATION_FAILURE]\n' "$apk"; exit 1 ;;
+      weird) printf 'adb: failed to install %s: Failure [INSTALL_FAILED_INSUFFICIENT_STORAGE]\n' "$apk"; exit 1 ;;
+    esac
+    echo "1.0.15" > "$ST/installed"
+    printf 'Performing Streamed Install\nSuccess\n'
+    ;;
+  uninstall)
+    rm -f "$ST/installed"; echo "Success" ;;
+  pull)
+    if [ -n "${FAKE_NO_RIDES:-}" ] || [ -n "${FAKE_PULL_FAILS:-}" ]; then echo "adb: error: failed to stat remote object"; exit 1; fi
+    mkdir -p "$3" && echo "<gpx/>" > "$3/ride_2026-11-20_1810.gpx" && echo "1 file pulled" ;;
+  logcat)
+    case "$*" in
+      *"-b crash -c"*) : > "$ST/crash" ;;
+      *"-d -b crash"*) cat "$ST/crash" 2>/dev/null ;;
+      *"--pid="*) printf '11-23 20:41:02.113 12345 12345 W ViewRootImpl: sample warning line\r\n' ;;
+    esac
+    ;;
+  exec-out)
+    shift
+    case "$*" in
+      "screencap -p") printf '\x89PNG\r\n\x1a\n-fake-picture-of-%s' "$(cat "$ST/screen" 2>/dev/null)" ;;
+      uiautomator*)
+        if [ -n "${FAKE_NO_UIAUTOMATOR:-}" ]; then echo "ERROR: could not get idle state."; else
+        printf '<?xml version="1.0"?><hierarchy rotation="0"><node index="0" text="" class="android.widget.FrameLayout" bounds="[0,0][1220,2712]"><node index="1" text="Apps" class="android.widget.TextView" bounds="[110,150][260,210]" /><node index="2" text="" class="android.widget.EditText" bounds="[150,250][1040,370]" /></node></hierarchy>UI hierchary dumped to: /dev/tty\n'
+        fi ;;
+    esac
+    ;;
+  shell)
+    shift
+    case "$*" in
+      ls\ *) if [ -z "${FAKE_NO_RIDES:-}" ]; then printf 'index.json\r\nride_2026-11-20_1810.gpx\r\n'; else echo "ls: $2: No such file or directory" >&2; fi ;;
+      "getprop ro.product.model") printf 'moto g stylus - 2025\r\n' ;;
+      "getprop ro.build.version.release") printf '%s\r\n' "${FAKE_RELEASE:-15}" ;;
+      "getprop ro.build.version.sdk") printf '%s\r\n' "${FAKE_SDK:-35}" ;;
+      "dumpsys package $PKG")
+        if [ -f "$ST/installed" ]; then printf 'Packages:\r\n  Package [%s] (abc):\r\n    versionCode=15 minSdk=31 targetSdk=35\r\n    versionName=%s\r\n' "$PKG" "$(cat "$ST/installed")"; fi ;;
+      "wm size") printf 'Physical size: 1220x2712\r\n' ;;
+      "wm density") printf 'Physical density: 400\r\n' ;;
+      "dumpsys window")
+        n=$(cat "$ST/focus_calls" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$ST/focus_calls"
+        if [ "$n" -le "${FAKE_LOCKED_FOR:-0}" ]; then printf '  mCurrentFocus=Window{a1 u0 NotificationShade}\r\n  mFocusedApp=null\r\n'
+        else printf '  mCurrentFocus=Window{b2 u0 %s/%s.RideActivity}\r\n  mFocusedApp=ActivityRecord{c3 u0 %s/.RideActivity t12}\r\n' "$PKG" "$PKG" "$PKG"; fi ;;
+      am\ start*)
+        for screen in "$@"; do :; done # the last argument
+        echo "$screen" > "$ST/screen"
+        if [ "${FAKE_CRASH_AT:-}" = "$screen" ]; then
+          printf -- '--------- beginning of crash\n11-23 20:41:07.201 12345 12345 E AndroidRuntime: FATAL EXCEPTION: main\n11-23 20:41:07.201 12345 12345 E AndroidRuntime: Process: %s, PID: 12345\n11-23 20:41:07.201 12345 12345 E AndroidRuntime: java.lang.IllegalStateException: boom\n' "$PKG" > "$ST/crash"
+        fi
+        echo "Starting: Intent { cmp=$PKG/.RideActivity (has extras) }" ;;
+      "dumpsys gfxinfo $PKG reset") ;;
+      "dumpsys gfxinfo $PKG") printf 'Applications Graphics Acceleration Info:\r\nStats since: 123ns\r\nTotal frames rendered: 412\r\nJanky frames: 9 (2.18%%)\r\n50th percentile: 7ms\r\n90th percentile: 11ms\r\n95th percentile: 13ms\r\n99th percentile: 24ms\r\n' ;;
+      "pidof $PKG") [ -f "$ST/installed" ] && printf '12345\r\n' ;;
+      cmd\ package\ resolve-activity*) printf 'priority=0 preferredOrder=0 match=0x108000 specificIndex=-1 isDefault=true\r\n%s\r\n' "${FAKE_HOME:-com.motorola.launcher3/com.android.launcher3.CustomizationPanelLauncher}" ;;
+      input\ tap*)
+        if [ -n "${FAKE_CRASH_ON_TAP:-}" ]; then
+          printf -- '--------- beginning of crash\n11-23 20:41:09.000 12345 12345 E AndroidRuntime: Process: %s, PID: 12345\n' "$PKG" > "$ST/crash"
+        fi ;;
+      input*) ;;
+      *) echo "fake adb: unhandled shell $*" >&2 ;;
+    esac
+    ;;
+  *) echo "fake adb: unhandled $*" >&2; exit 1 ;;
+esac

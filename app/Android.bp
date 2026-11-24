@@ -1,0 +1,13 @@
+// MAXAPACITY ride launcher: home screen with GPS speedometer, trip recorder
+// and bike-app shortcuts. Plain platform SDK, no external dependencies.
+android_app {
+    name: "MaxapacityRide",
+    srcs: ["src/**/*.java"],
+    resource_dirs: ["res"],
+    asset_dirs: ["assets"],
+    sdk_version: "current",
+    product_specific: true,
+    optimize: {
+        enabled: false,
+    },
+}

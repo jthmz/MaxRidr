@@ -1,0 +1,205 @@
+name: Build app
+
+# Builds the phone app on every push that touches it, attaches the APK to a
+# draft release, and (from main, or when run by hand) publishes it as the
+# over-the-air update that installed phones pick up on their own.
+#
+# HOW UPDATES REACH PHONES
+#   1. Every build is signed with one long-lived key. Android only installs
+#      an update over an app signed with the same key.
+#   2. A publishing run puts the APK on the release tagged `ride-ota` and
+#      writes a small JSON manifest (version, SHA-256) as that release's notes.
+#   3. The app reads the manifest, downloads a newer APK, checks its SHA-256
+#      and installs it (see Updater.java). The repository is public, so
+#      phones need nothing to read it.
+#
+# THE SIGNING KEY
+#   Kept as an asset on a draft release named "MAXAPACITY Ride signing key (do
+#   not delete)", created the first time this runs. Draft releases are only
+#   visible to people with write access to the repository. Deleting it makes
+#   the next run create a new key, and phones would then need the app
+#   reinstalled once over USB. To manage the key yourself instead, add repo
+#   secrets RIDE_KEYSTORE_B64 (base64 of a keystore whose key alias is
+#   "ride") and RIDE_KEYSTORE_PASSWORD; they take precedence.
+#
+# Needs no secrets beyond the token GitHub gives every workflow run.
+
+on:
+  push:
+    paths:
+      - 'app/**'
+      - 'tools/ride-test.sh'
+      - '*.gradle'
+      - 'gradle.properties'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish this build to phones as an over-the-air update'
+        type: boolean
+        default: true
+
+# contents: write is needed to create releases and attach files to them.
+permissions:
+  contents: write
+
+# One at a time: two first runs must not both create a signing key, and the
+# published manifest must end up describing the newest build.
+concurrency:
+  group: build-app
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  KEY_RELEASE: MAXAPACITY Ride signing key (do not delete)
+  BUILD_TAG: ride-app-latest
+  OTA_TAG: ride-ota
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      # The screen tests run Android's own code on the build machine, which
+      # needs a ~200 MB runtime download; keep it between runs.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-runtime-sdk35-v1
+
+      - name: Signing key
+        env:
+          RIDE_KEYSTORE_B64: ${{ secrets.RIDE_KEYSTORE_B64 }}
+          RIDE_KEYSTORE_PASSWORD_SECRET: ${{ secrets.RIDE_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          store="$RUNNER_TEMP/ride.jks"
+          api="repos/$GITHUB_REPOSITORY"
+          if [ -n "${RIDE_KEYSTORE_B64:-}" ]; then
+            echo "$RIDE_KEYSTORE_B64" | base64 -d > "$store"
+            pass="$RIDE_KEYSTORE_PASSWORD_SECRET"
+            echo "Using the signing key from repo secrets."
+          else
+            # List every release and look for the key by name. A key is only
+            # ever created when this listing succeeded and found none, because
+            # a second key would lock every installed phone out of updates.
+            gh api "$api/releases" --paginate --jq '.[]' | jq -s '.' > "$RUNNER_TEMP/releases.json"
+            release=$(jq --arg n "$KEY_RELEASE" '[.[] | select(.draft and .name == $n)][0] // empty' \
+              "$RUNNER_TEMP/releases.json")
+            if [ -n "$release" ]; then
+              jks=$(echo "$release" | jq -r '[.assets[] | select(.name == "ride.jks.b64")][0].id')
+              pw=$(echo "$release" | jq -r '[.assets[] | select(.name == "ride.jks.pass")][0].id')
+              if [ "$jks" = "null" ] || [ "$pw" = "null" ]; then
+                echo "::error::The signing-key release exists but its files are missing. Not creating a new key, since that would break updates on installed phones. Restore the files or delete the release deliberately."
+                exit 1
+              fi
+              gh api -H 'Accept: application/octet-stream' "$api/releases/assets/$jks" | base64 -d > "$store"
+              pass=$(gh api -H 'Accept: application/octet-stream' "$api/releases/assets/$pw")
+              echo "Using the signing key from the draft release."
+            else
+              pass=$(openssl rand -hex 24)
+              keytool -genkeypair -keystore "$store" -storetype JKS -alias ride \
+                -keyalg RSA -keysize 2048 -validity 10950 \
+                -storepass "$pass" -keypass "$pass" -dname "CN=MAXAPACITY Ride"
+              base64 -w0 "$store" > "$RUNNER_TEMP/ride.jks.b64"
+              printf '%s' "$pass" > "$RUNNER_TEMP/ride.jks.pass"
+              gh release create ride-signing-key \
+                "$RUNNER_TEMP/ride.jks.b64" "$RUNNER_TEMP/ride.jks.pass" \
+                --repo "$GITHUB_REPOSITORY" --draft --title "$KEY_RELEASE" \
+                --notes "The key every MAXAPACITY Ride build is signed with. Created automatically by the Build app workflow. Do not delete or publish this release: installed phones only accept updates signed with this key."
+              echo "::notice::Created the app's signing key and stored it on a draft release."
+            fi
+          fi
+          echo "::add-mask::$pass"
+          keytool -list -keystore "$store" -storepass "$pass" -alias ride > /dev/null
+          echo "RIDE_KEYSTORE=$store" >> "$GITHUB_ENV"
+          echo "RIDE_KEYSTORE_PASSWORD=$pass" >> "$GITHUB_ENV"
+
+      # Numbering carries on above the builds made before the app had its own
+      # repository (the last of those was 1.0.19), so a phone never sees a
+      # new build as older than the one it has.
+      - name: Version
+        run: |
+          code=$((100 + ${{ github.run_number }}))
+          echo "VERSION_CODE=$code" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=1.0.$code" >> "$GITHUB_ENV"
+
+      # The tests run first: a build whose controller write frames are wrong,
+      # or whose screens crash when laid out, must never reach a phone.
+      - name: Test and build APK
+        run: gradle --no-daemon testReleaseUnitTest assembleRelease -PrideVersionCode="$VERSION_CODE"
+
+      - name: Rename APK
+        run: cp build/outputs/apk/release/*.apk maxapacity-ride.apk
+
+      # Delivered as a draft release (visible to collaborators only) rather
+      # than a workflow artifact, which counts against the Actions storage quota.
+      # The title carries the version, so it is plain which build is on offer.
+      - name: Attach APK to draft release
+        run: |
+          set -euo pipefail
+          # Upload the new build first and remove older ones only once it is
+          # safely up, so a refused upload never leaves nothing to download.
+          # No --target: a draft has no tag to pin, and the one upload that
+          # was refused (run 11) named a commit the branch had moved past.
+          # ride-test.sh goes up beside the APK: it installs the app on the
+          # phone plugged in and photographs every screen.
+          title="MAXAPACITY Ride $VERSION_NAME"
+          gh release create "$BUILD_TAG" maxapacity-ride.apk tools/ride-test.sh \
+            --repo "$GITHUB_REPOSITORY" --draft --title "$title" \
+            --notes "MAXAPACITY Ride $VERSION_NAME from $GITHUB_SHA. Download both files, plug the phone in and run: bash ~/Downloads/ride-test.sh. That installs the app and saves a picture of every screen to the Desktop. After the first install the app updates itself."
+          # Older builds are told apart by title, not by which is newest in
+          # the listing: a release just created can be missing from it for a
+          # moment, and "keep the newest listed" then kept the old one too.
+          gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.draft and .tag_name == \"$BUILD_TAG\" and .name != \"$title\") | .id" \
+            | while read -r id; do
+                gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+              done
+
+      # Phones follow whatever this step publishes, so it only runs for main
+      # and for runs started by hand, never for work-in-progress pushes.
+      - name: Publish over-the-air update
+        if: >-
+          (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+          (github.event_name == 'workflow_dispatch' && inputs.publish)
+        run: |
+          set -euo pipefail
+          code=$VERSION_CODE
+          jq -n \
+            --argjson versionCode "$code" \
+            --arg versionName "$VERSION_NAME" \
+            --arg asset "maxapacity-ride.apk" \
+            --arg sha256 "$(sha256sum maxapacity-ride.apk | cut -d' ' -f1)" \
+            --argjson size "$(stat -c %s maxapacity-ride.apk)" \
+            --arg commit "$GITHUB_SHA" \
+            '{versionCode: $versionCode, versionName: $versionName, asset: $asset,
+              sha256: $sha256, size: $size, commit: $commit}' > latest.json
+          if gh release view "$OTA_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            # Update in place so the release never disappears from under a
+            # phone that is checking. The APK goes up first and the manifest
+            # last; a phone that catches the moment in between sees a
+            # checksum mismatch and simply tries again later.
+            gh release upload "$OTA_TAG" maxapacity-ride.apk --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$OTA_TAG" --repo "$GITHUB_REPOSITORY" --notes-file latest.json
+          else
+            # The tag is only an anchor for the release; the manifest names the
+            # commit. If pinning it to this commit is refused, let it default.
+            gh release create "$OTA_TAG" maxapacity-ride.apk \
+              --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false \
+              --title "MAXAPACITY Ride over-the-air update" --notes-file latest.json \
+            || gh release create "$OTA_TAG" maxapacity-ride.apk \
+              --repo "$GITHUB_REPOSITORY" --latest=false \
+              --title "MAXAPACITY Ride over-the-air update" --notes-file latest.json
+          fi
+          echo "::notice::Published $VERSION_NAME over the air."
+          cat latest.json
