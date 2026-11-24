@@ -117,6 +117,11 @@ final class RideDetailPanel extends Panel {
 
         LinearLayout meta = Ui.card(c);
         addMeta(meta, "Stops", String.valueOf(r.optInt("stops")), false);
+        // Rides saved before lean was measured have none to show.
+        if (r.has("leanLeft")) {
+            addMeta(meta, "Max lean", "L " + r.optInt("leanLeft") + "\u00B0   R "
+                    + r.optInt("leanRight") + "\u00B0", true);
+        }
         addMeta(meta, "Strava", RidesPanel.stravaLine(r), true);
         addMeta(meta, "File", file, true);
         content.addView(meta, Ui.top(c, Ui.matchWrap(), 12));

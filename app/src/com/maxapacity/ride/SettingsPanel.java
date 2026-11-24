@@ -54,6 +54,11 @@ final class SettingsPanel extends Panel {
                 "Records once you are moving", "auto_start", true, null);
         toggle(riding, Icons.CIRCLE_STOP, "End rides automatically",
                 "After 10 minutes stopped", "auto_end", true, null);
+        final String contact = prefs.getString(RideService.CRASH_CONTACT, "");
+        link(riding, Icons.TRIANGLE_ALERT, "Crash alert", contact.isEmpty()
+                ? "Texts your location if you go down" : "Texts " + contact,
+                contact.isEmpty() ? "Set up" : "On", !contact.isEmpty(),
+                v -> host.editCrashAlert());
         choice(riding, Icons.RULER, "Units", "MPH", "KM/H", Units.metric(c) ? 1 : 0, picked -> {
             prefs.edit().putBoolean("metric", picked == 1).apply();
             host.settingsChanged();

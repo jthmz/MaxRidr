@@ -37,6 +37,9 @@ interface Host {
     /** Ask for the read-only GitHub token updates need if the repository is private. */
     void editUpdateToken();
 
+    /** Choose who is texted after a crash, or turn the alert off. */
+    void editCrashAlert();
+
     void setChopEnabled(boolean enabled);
 
     /** A setting changed that the dashboard shows (units, effects). */

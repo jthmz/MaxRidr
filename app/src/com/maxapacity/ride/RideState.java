@@ -70,6 +70,8 @@ final class RideState {
     private float speedMps;
     private long lastFixElapsedMs;
     private Location lastTrackFix;
+    private Location lastFix;
+    private final Lean lean = new Lean();
 
     private RideState() {
     }
@@ -102,6 +104,7 @@ final class RideState {
         altSeeded = false;
         topSpeedMps = 0;
         lastTrackFix = null;
+        lean.reset();
         track.clear();
         notifyListeners();
     }
@@ -136,8 +139,12 @@ final class RideState {
         }
 
         boolean accurate = !l.hasAccuracy() || l.getAccuracy() <= MAX_ACCURACY_M;
+        if (accurate) lastFix = l;
         if (recording && accurate) {
             if (speedMps > topSpeedMps) topSpeedMps = speedMps;
+            if (l.hasBearing()) {
+                lean.add(speedMps, l.getBearing(), l.getElapsedRealtimeNanos() / 1000000L);
+            }
             if (l.hasAltitude()) addAltitude(l.getAltitude());
             if (lastTrackFix == null) {
                 lastTrackFix = l;
@@ -229,6 +236,20 @@ final class RideState {
     /** Average over moving time, the way ride apps report it. */
     float avgSpeedMps() {
         return movingMs < 1000 ? 0f : (float) (distanceM / (movingMs / 1000.0));
+    }
+
+    /** Furthest lean to the left this ride, in degrees. */
+    float maxLeanLeftDeg() {
+        return lean.maxLeftDeg();
+    }
+
+    float maxLeanRightDeg() {
+        return lean.maxRightDeg();
+    }
+
+    /** The last trustworthy position, or null before the first fix. */
+    Location lastLocation() {
+        return lastFix;
     }
 
     long startWallMs() {

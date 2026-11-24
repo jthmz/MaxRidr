@@ -17,6 +17,12 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Crash alert: texts the rider's location to their chosen contact. Off
+         until the rider sets a contact; never sends anything else. -->
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-feature
+        android:name="android.hardware.telephony"
+        android:required="false" />
     <!-- Bike link: ANT BMS battery and Fardriver controller over Bluetooth LE.
          Scan results are only used to find those two devices, never to
          work out where the phone is. -->
