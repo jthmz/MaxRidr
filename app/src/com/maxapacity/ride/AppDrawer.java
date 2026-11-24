@@ -51,8 +51,6 @@ final class AppDrawer extends Panel {
         }
     }
 
-    private static final String SITE = "https://maxapacitybikes.com";
-
     private final Host host;
     private final EditText search;
     private final GridView grid;
@@ -203,7 +201,7 @@ final class AppDrawer extends Panel {
         l.setIncludeFontPadding(false);
         tile.addView(l, Ui.left(c, Ui.wrap(), 6));
         tile.setOnClickListener(v -> {
-            host.launch(new Intent(Intent.ACTION_VIEW, Uri.parse(SITE + path)));
+            host.launch(new Intent(Intent.ACTION_VIEW, Uri.parse(Site.HOME + path)));
             close();
         });
         Ui.press(tile);

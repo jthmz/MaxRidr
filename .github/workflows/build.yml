@@ -12,6 +12,12 @@ name: Build app
 #   3. The app reads the manifest, downloads a newer APK, checks its SHA-256
 #      and installs it (see Updater.java). The repository is public, so
 #      phones need nothing to read it.
+#   4. The app's page on the website (maxapacitybikes.com/apps/ride) reads the
+#      same release in the visitor's browser, to show the version, size and
+#      checksum beside the download. The manifest's fields, the file's name
+#      and the tag are therefore a contract with the site as well as with
+#      installed phones: see "On the website" in the README before changing
+#      any of them.
 #
 # THE SIGNING KEY
 #   Kept as an asset on a draft release named "MAXAPACITY Ride signing key (do
