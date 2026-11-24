@@ -702,6 +702,111 @@ public class ScreensTest {
     org.junit.Assert.assertArrayEquals("and nothing was saved", saved, ctl.flash);
   }
 
+  /** The view a screen reader would call this, such as a stepper's arrow. */
+  static View described(View root, String description) {
+    if (description.contentEquals(String.valueOf(root.getContentDescription()))) return root;
+    if (root instanceof ViewGroup) {
+      ViewGroup g = (ViewGroup) root;
+      for (int i = 0; i < g.getChildCount(); i++) {
+        View hit = described(g.getChildAt(i), description);
+        if (hit != null) return hit;
+      }
+    }
+    return null;
+  }
+
+  /** Regen on throttle release is explained, and asked about, before anything is sent. */
+  @Test public void regenOnThrottleReleaseIsWarnedAboutBeforeItIsTried() throws Exception {
+    start();
+    Bike bike = Bike.get(c);
+    bike.link(Bike.KIND_CONTROLLER, "CONTROLCN368");
+    run(3000);
+    a.showTune();
+    run(600);
+    tap("Tunes");
+    tap("MAXAPACITY bikes");
+    tap("Drax Bee Trail regen");
+    sweep("regen tune, which bike it is for");
+    tap("Load");
+    run(400);
+
+    tap("Try on bike");
+    run(400);
+    org.junit.Assert.assertNotNull("it stops to say what this does", Sheet.current());
+    org.junit.Assert.assertNotNull(find(Sheet.current(), android.widget.TextView.class, "Regen when you roll off"));
+    sweep("regen on throttle release, the warning");
+    org.junit.Assert.assertEquals("nothing has been sent", 0, ctl.settingWriteCount);
+    tap("Cancel");
+    run(400);
+    org.junit.Assert.assertNull(Sheet.current());
+    org.junit.Assert.assertEquals("turned down, nothing is sent", 0, ctl.settingWriteCount);
+    org.junit.Assert.assertEquals(Bike.TUNE_IDLE, bike.tuneState());
+
+    // Asked again, and this time taken.
+    tap("Try on bike");
+    run(400);
+    tap("Try it");
+    run(15000);
+    org.junit.Assert.assertEquals(Bike.TRYING, bike.tuneState());
+    org.junit.Assert.assertEquals("regen on throttle release", 3, ctl.ram[0x1A] & 3);
+    org.junit.Assert.assertEquals(8, ctl.ram[0x30]);
+    org.junit.Assert.assertEquals(12, ctl.ram[0x31]);
+    sweep("tune, regen on throttle release on trial");
+    bike.revert((ok, m) -> { });
+    run(12000);
+    org.junit.Assert.assertArrayEquals("undone: exactly as it came", ctl.flash, ctl.ram);
+  }
+
+  /**
+   * The one tune above what a controller came with loads on the controller it was proven on
+   * (the simulated one is a capture of it), and its rows cannot be stepped apart.
+   */
+  @Test public void theApexTuneLoadsWholeAndItsRowsAreHeldTogether() throws Exception {
+    start();
+    Bike bike = Bike.get(c);
+    bike.link(Bike.KIND_CONTROLLER, "CONTROLCN368");
+    run(3000);
+    a.showTune();
+    run(600);
+    View page = a.getWindow().getDecorView();
+    org.junit.Assert.assertTrue("before: the limit can be lowered",
+        described(page, "Lower Battery current limit").isEnabled());
+
+    tap("Tunes");
+    tap("MAXAPACITY bikes");
+    sweep("our bikes sheet");
+    tap("Apex 140 A");
+    sweep("apex tune, what it is and who tested it");
+    tap("Load");
+    run(400);
+    org.junit.Assert.assertNull(Sheet.current());
+    org.junit.Assert.assertNotNull(find(page, android.widget.TextView.class,
+        "On the bike now: 130 A. Part of Apex 140 A, which only goes in whole"));
+    org.junit.Assert.assertNotNull(find(page, android.widget.TextView.class,
+        "On the bike now: 350 A. Part of Apex 140 A, which only goes in whole"));
+    for (String arrow : new String[] {"Lower Battery current limit", "Raise Battery current limit",
+        "Lower Motor current limit", "Raise Motor current limit"}) {
+      org.junit.Assert.assertFalse(arrow + " is held", described(page, arrow).isEnabled());
+    }
+    org.junit.Assert.assertTrue("the other rows still step",
+        described(page, "Raise Acceleration").isEnabled());
+    sweep("tune, apex loaded");
+
+    tap("Try on bike");
+    run(20000);
+    org.junit.Assert.assertEquals(Bike.TRYING, bike.tuneState());
+    org.junit.Assert.assertEquals(560, ctl.ram[0x19]);
+    org.junit.Assert.assertEquals(560, ctl.ram[0x26]);
+    org.junit.Assert.assertEquals(1520, ctl.ram[0x2D]);
+    org.junit.Assert.assertEquals(1520, ctl.ram[0x27]);
+    sweep("tune, apex on trial");
+    bike.revert((ok, m) -> { });
+    run(15000);
+    org.junit.Assert.assertArrayEquals("undone: exactly as it came", ctl.flash, ctl.ram);
+    org.junit.Assert.assertTrue("and the rows step again",
+        described(page, "Lower Battery current limit").isEnabled());
+  }
+
   /** A whole tune loads as changes to look over, is tried like any other change, and can be undone. */
   @Test public void aWholeTuneLoadsAsChangesAndGoesThroughTheSameTrial() throws Exception {
     start();
