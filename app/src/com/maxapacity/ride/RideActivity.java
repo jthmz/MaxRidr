@@ -105,6 +105,8 @@ public final class RideActivity extends Activity
     private LinearLayout bikeStrip;
     private String bikeStripKey = "";
     private LinearLayout slotRow;
+    /** The row along the dashboard's foot that leads to the other screens. */
+    private LinearLayout dock;
     private GestureDetector gestures;
 
     private AppDrawer drawer;
@@ -334,12 +336,15 @@ public final class RideActivity extends Activity
 
     @Override
     public void say(String message) {
-        Snack.show(frame, message);
+        say(message, null, null);
     }
 
     @Override
     public void say(String message, String action, Runnable run) {
-        Snack.show(frame, message, action, run);
+        // On the dashboard a message sits above the dock, so the way to the other
+        // screens stays in reach while it shows. A screen has nothing along its foot.
+        Snack.show(frame, message, action, run,
+                topPanel() == null && dock != null ? dock.getHeight() : 0);
     }
 
     @Override
@@ -500,7 +505,7 @@ public final class RideActivity extends Activity
                         say("This phone has forgotten the Deck", "UNDO", () -> d.remember(key));
                     });
         }
-        sheet.action("Done", Ui.PRIMARY, true, null).show();
+        sheet.action("Done", Ui.SECONDARY, true, null).show();
     }
 
     private void deckLookingSheet() {
@@ -519,8 +524,8 @@ public final class RideActivity extends Activity
                 .item(Icons.INFO, "Link report",
                         "What this phone tried, to share if you need help", false,
                         this::deckReportSheet)
-                .action("Search again", Ui.SECONDARY, false, () -> Deck.get(this).search(true))
-                .action("Close", Ui.PRIMARY, true, null)
+                .action("Close", Ui.SECONDARY, true, null)
+                .action("Search again", Ui.PRIMARY, false, () -> Deck.get(this).search(true))
                 .show();
     }
 
@@ -589,7 +594,7 @@ public final class RideActivity extends Activity
                         + " with the camera pairs the phone's browser instead, and that uses the"
                         + " code up. On the Deck, open Add a screen again, or tap New code, and"
                         + " type the new one here.")
-                .action("Back", Ui.PRIMARY, true, this::editDeckConnection)
+                .action("Back", Ui.SECONDARY, true, this::editDeckConnection)
                 .show();
     }
 
@@ -658,7 +663,7 @@ public final class RideActivity extends Activity
                         + " Plug the phone into the Mac and allow the Mac when the phone asks."
                         + "\n\nThe Deck then links by itself within a few seconds. No code is"
                         + " needed, and rides go home down the cable.")
-                .action("Back", Ui.PRIMARY, true, this::editDeckConnection)
+                .action("Back", Ui.SECONDARY, true, this::editDeckConnection)
                 .show();
     }
 
@@ -673,7 +678,7 @@ public final class RideActivity extends Activity
                         + " The Deck shows its own address under Add a screen, and the first"
                         + " three numbers should match.\n4. Guest Wi-Fi and some mesh systems"
                         + " keep devices apart. Use the main Wi-Fi, or a USB cable.")
-                .action("Back", Ui.PRIMARY, true, this::editDeckConnection)
+                .action("Back", Ui.SECONDARY, true, this::editDeckConnection)
                 .show();
     }
 
@@ -1363,7 +1368,7 @@ public final class RideActivity extends Activity
         root.addView(slotRow, Ui.top(this, Ui.matchWrap(), 12));
 
         // Dock: the other destinations.
-        LinearLayout dock = Ui.row(this);
+        dock = Ui.row(this);
         addDock(dock, Icons.LAYOUT_GRID, "Apps", v -> drawer.open());
         addDock(dock, Icons.ROUTE, "Rides", v -> rides.open());
         addDock(dock, Icons.SPARKLES, "Copilot", v -> copilot.open());

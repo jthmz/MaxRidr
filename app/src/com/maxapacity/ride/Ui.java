@@ -190,14 +190,32 @@ final class Ui {
         return t;
     }
 
+    /**
+     * Breaks a short text into lines of about the same length, so a second
+     * line is never one stray word. For a line or two of text, not a paragraph.
+     */
+    static TextView even(TextView t) {
+        t.setBreakStrategy(android.graphics.text.LineBreaker.BREAK_STRATEGY_BALANCED);
+        return t;
+    }
+
     /** "12.4 mi": the number at full size, its unit small and dim after it. */
     static CharSequence withUnit(String number, String unit) {
+        return withUnit(number, unit, 0.6f);
+    }
+
+    /**
+     * @param unitSize the unit's size as a share of the number's. A big figure
+     *        takes a much smaller unit; beside a number at reading size the
+     *        unit has to stay large enough to read.
+     */
+    static CharSequence withUnit(String number, String unit, float unitSize) {
         if (unit == null || unit.isEmpty()) return number;
         // A percent sign hugs its number; other units stand off by a space.
         String gap = "%".equals(unit) ? "" : " ";
         android.text.SpannableString s = new android.text.SpannableString(number + gap + unit);
         int from = number.length();
-        s.setSpan(new android.text.style.RelativeSizeSpan(0.6f), from, s.length(), 0);
+        s.setSpan(new android.text.style.RelativeSizeSpan(unitSize), from, s.length(), 0);
         s.setSpan(new android.text.style.ForegroundColorSpan(TEXT_3), from, s.length(), 0);
         if (mono != null) {
             s.setSpan(new android.text.style.TypefaceSpan(mono), from, s.length(), 0);
@@ -487,6 +505,10 @@ final class Ui {
         // After the input type: choosing a password type resets the typeface.
         e.setTypeface(secret ? mono : sans);
         e.setPadding(dp(c, 16), 0, dp(c, 16), 0);
+        // Its own height, so it stays a full field wherever it is put: a sheet lays its
+        // content out to wrap, and a field with no height of its own shrank to one line.
+        e.setMinHeight(dp(c, 48));
+        e.setGravity(Gravity.CENTER_VERTICAL);
         e.setBackground(panel(c, BG, HAIRLINE_HI, 10));
         e.setOnFocusChangeListener((v, focused) -> v.setBackground(
                 panel(c, BG, focused ? ACCENT : HAIRLINE_HI, 10)));
@@ -540,10 +562,12 @@ final class Ui {
         TextView h = title(c, headline);
         h.setGravity(Gravity.CENTER);
         h.setSingleLine(false);
+        even(h);
         box.addView(h, top(c, matchWrap(), 16));
         if (detail != null) {
             TextView d = body(c, detail, TEXT_2);
             d.setGravity(Gravity.CENTER);
+            even(d);
             box.addView(d, top(c, matchWrap(), 8));
         }
         if (action != null) {

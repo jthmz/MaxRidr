@@ -121,7 +121,7 @@ final class Sheet extends FrameLayout {
         n.setSingleLine(true);
         n.setEllipsize(android.text.TextUtils.TruncateAt.END);
         text.addView(n);
-        if (detail != null) text.addView(Ui.small(c, detail, Ui.TEXT_3));
+        if (detail != null) text.addView(Ui.even(Ui.small(c, detail, Ui.TEXT_3)));
         row.addView(text, Ui.left(c, Ui.weighted(), iconData == null && image == null ? 0 : 16));
         row.setOnClickListener(v -> {
             dismiss();

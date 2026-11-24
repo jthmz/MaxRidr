@@ -38,6 +38,8 @@ final class TunePanel extends Panel {
     private final Map<String, Integer> draft = new LinkedHashMap<>();
     private final Runnable bikeChanged = this::refresh;
     private String shown = "";
+    /** Room for the widest value, "12500 rpm", and for a choice such as "On brake". */
+    private static final int VALUE_DP = 88;
 
     TunePanel(Context context, Host host) {
         super(context, "Tune");
@@ -137,16 +139,15 @@ final class TunePanel extends Panel {
             note(Icons.TRIANGLE_ALERT, Ui.WARN, "These values are live on the bike but not"
                     + " saved. Ride it, then Save to keep them or Undo to go back. Switching"
                     + " the bike off also discards them.");
-        } else if (!Fardriver.verifiedFirmware(memory.firmware())) {
-            note(Icons.INFO, Ui.TEXT_2, "Firmware " + memory.firmware() + " has not been"
-                    + " tested with this app. Changes are checked by reading them back, and"
-                    + " nothing is saved until you say so.");
         } else {
-            note(Icons.INFO, Ui.TEXT_2, "Changes are tried on the bike first and only kept"
-                    + " when you save. A backup of the current settings is stored on this"
-                    + " phone before anything is changed. Work with the driven wheel off the"
-                    + " ground: on some bikes neutral does not stop the motor while a phone"
-                    + " is connected.");
+            // Said on every firmware: it is about the bike, not about this app.
+            String wheel = " Keep the driven wheel off the ground: on some bikes neutral does"
+                    + " not stop the motor while a phone is connected.";
+            note(Icons.INFO, Ui.TEXT_2, Fardriver.verifiedFirmware(memory.firmware())
+                    ? "Changes are tried on the bike first and kept only when you save." + wheel
+                    : "Firmware " + memory.firmware() + " has not been tested with this app."
+                    + " Each change is read back to confirm it, and nothing is kept until you"
+                    + " save." + wheel);
         }
 
         content.addView(shortcuts(), Ui.top(c, Ui.matchWrap(), 12));
@@ -254,8 +255,7 @@ final class TunePanel extends Panel {
         line.leftMargin = dp(16);
         card.addView(Ui.divider(c), line);
         card.addView(shortcut(Icons.SPARKLES, "Tune ideas",
-                "Not sure what to change? Get suggestions for this bike", v -> showIdeas()),
-                Ui.matchWrap());
+                "Get suggestions written for this bike", v -> showIdeas()), Ui.matchWrap());
         return card;
     }
 
@@ -267,7 +267,7 @@ final class TunePanel extends Panel {
         row.addView(Ui.icon(c, icon, 18, Ui.TEXT_2));
         LinearLayout text = Ui.column(c);
         text.addView(Ui.body(c, name, Ui.TEXT));
-        text.addView(Ui.small(c, detail, Ui.TEXT_3));
+        text.addView(Ui.even(Ui.small(c, detail, Ui.TEXT_3)));
         row.addView(text, Ui.left(c, Ui.weighted(), 12));
         ImageView go = Ui.icon(c, Icons.CHEVRON_RIGHT, 18, Ui.TEXT_3);
         ((LinearLayout.LayoutParams) go.getLayoutParams()).leftMargin = dp(8);
@@ -306,10 +306,10 @@ final class TunePanel extends Panel {
         }
         sheet.item(Icons.BATTERY, "Battery rating", pack > 0
                 ? pack + " A. These tunes stay at or under it"
-                : "Add what your pack is rated for and these tunes stay under it", false,
+                : "Not set. Add it and these tunes stay under it", false,
                 this::editPackRating);
-        sheet.item(Icons.WAREHOUSE, "MAXAPACITY bikes",
-                "Our build tunes, and the XE Pro R as delivered", false, this::showOurBikes);
+        sheet.item(Icons.WAREHOUSE, "MAXAPACITY bikes", "Our build tunes and stock settings",
+                false, this::showOurBikes);
         sheet.show();
     }
 
@@ -321,12 +321,12 @@ final class TunePanel extends Panel {
         for (final TunePlan.Tune t : TunePlan.ourBikes()) {
             sheet.item(t.icon, t.name, t.detail, false, () -> confirmOurs(t));
         }
-        sheet.action("Back", Ui.PRIMARY, true, this::showTunes).show();
+        sheet.action("Back", Ui.SECONDARY, true, this::showTunes).show();
     }
 
     /** A tune from one of our bikes says which bike it is for before it is loaded. */
     private void confirmOurs(final TunePlan.Tune t) {
-        new Sheet(host.frame(), t.name, t.detail + ". " + t.note)
+        new Sheet(host.frame(), t.name, t.detail.replace("\n", ", ") + ". " + t.note)
                 .action("Back", Ui.SECONDARY, true, this::showOurBikes)
                 .action("Load", Ui.PRIMARY, true, () -> load(t))
                 .show();
@@ -404,8 +404,7 @@ final class TunePanel extends Panel {
         sheet.item(Icons.ELLIPSIS, "Something else", "Say it in your own words", false,
                 this::ownWords);
         sheet.item(Icons.DOWNLOAD, "Paste the answer",
-                "Copy the reply you got, then tap here to load its changes", false,
-                this::pasteAnswer);
+                "Copy the reply, then tap here to load its changes", false, this::pasteAnswer);
         String about = Units.prefs(c).getString(TuneBrief.ABOUT, "");
         sheet.item(Icons.LIST, "About my bike", about.isEmpty()
                 ? "Add your bike, gearing and weight for better answers" : shorten(about),
@@ -556,21 +555,31 @@ final class TunePanel extends Panel {
         LinearLayout block = Ui.column(c);
         block.setPadding(dp(16), dp(8), dp(8), dp(14));
         LinearLayout row = Ui.row(c);
+        // A long name on a narrow phone takes a second line rather than losing its end.
         TextView n = Ui.body(c, p.name, Ui.TEXT);
-        n.setSingleLine(true);
+        n.setMaxLines(2);
         n.setEllipsize(TextUtils.TruncateAt.END);
         row.addView(n, Ui.weighted());
 
         ImageView minus = stepper(Icons.CHEVRON_LEFT, "Lower " + p.name, enabled && value > min);
-        TextView v = Ui.value(c, p.format(value), Ui.T_BODY);
+        TextView v = Ui.value(c, "", Ui.T_BODY);
+        v.setText(p.options != null ? p.format(value)
+                : Ui.withUnit(p.number(value), p.unit, (float) Ui.T_LABEL / Ui.T_BODY));
+        v.setContentDescription(p.format(value));
         v.setGravity(android.view.Gravity.CENTER);
         v.setTextColor(edited ? Ui.ACCENT : Ui.TEXT);
-        if (p.options != null) v.setTypeface(Ui.sansBold);
+        if (p.options != null) {
+            // A choice is a word or three: it may take two lines, a number never does.
+            v.setTypeface(Ui.sansBold);
+            v.setSingleLine(false);
+            v.setMaxLines(2);
+        }
         ImageView plus = stepper(Icons.CHEVRON_RIGHT, "Raise " + p.name, enabled && value < max);
         minus.setOnClickListener(x -> set(p, Math.max(min, value - p.step), onBike));
         plus.setOnClickListener(x -> set(p, Math.min(max, value + p.step), onBike));
         row.addView(minus, Ui.left(c, new LinearLayout.LayoutParams(dp(40), dp(48)), 8));
-        row.addView(v, new LinearLayout.LayoutParams(dp(p.options != null ? 112 : 76),
+        // One width for every row, so the arrows line up down the screen.
+        row.addView(v, new LinearLayout.LayoutParams(dp(VALUE_DP),
                 ViewGroup.LayoutParams.WRAP_CONTENT));
         row.addView(plus, new LinearLayout.LayoutParams(dp(40), dp(48)));
         block.addView(row, Ui.matchWrap());

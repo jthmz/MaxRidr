@@ -115,9 +115,9 @@ public class XeProRTest {
   @Test public void theThreeLevelsComeOutOfItsOwnLimits() {
     Fardriver fd = delivered();
     List<TunePlan.Tune> t = TunePlan.measured(TuneBriefTest.ceilings(fd), 0f, 0);
-    assertEquals("195 A battery, 410 A motor, Eco throttle", t.get(TunePlan.CALM).detail);
-    assertEquals("260 A battery, 550 A motor, Linear throttle", t.get(TunePlan.BALANCED).detail);
-    assertEquals("330 A battery, 699 A motor, Sport throttle", t.get(TunePlan.AGGRESSIVE).detail);
+    assertEquals("195 A battery, 410 A motor\nEco throttle", t.get(TunePlan.CALM).detail);
+    assertEquals("260 A battery, 550 A motor\nLinear throttle", t.get(TunePlan.BALANCED).detail);
+    assertEquals("330 A battery, 699 A motor\nSport throttle", t.get(TunePlan.AGGRESSIVE).detail);
     // Aggressive is everything it came with, so on a stock bike only the throttle changes.
     TunePlan.Loaded all = TunePlan.load(t.get(TunePlan.AGGRESSIVE), fd, TuneBriefTest.ceilings(fd));
     assertEquals("{response=1}", all.changes.toString());

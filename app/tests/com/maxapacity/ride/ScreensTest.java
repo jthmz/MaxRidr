@@ -5,6 +5,7 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.location.Location;
 import android.view.View;
+import android.view.ViewGroup;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -142,8 +143,26 @@ public class ScreensTest {
   }
 
   void sweep(String what) {
-    for (int w : WIDTHS) for (int h : HEIGHTS) drawAt(w, h, what);
+    // The picture first: a message bar only stays a few seconds, and the sizes below take time.
     drawAt(393, 851, what, true);
+    wellFormed(a.getWindow().getDecorView(), what);
+    for (int w : WIDTHS) for (int h : HEIGHTS) drawAt(w, h, what);
+    drawAt(393, 851, what);
+  }
+
+  /** Rules every screen keeps, checked on each one as it is drawn. */
+  void wellFormed(View v, String what) {
+    if (v.getVisibility() != View.VISIBLE) return;
+    if (v instanceof android.widget.EditText) {
+      float d = a.getResources().getDisplayMetrics().density;
+      org.junit.Assert.assertTrue(what + ": the field \"" + ((android.widget.EditText) v).getHint()
+          + "\" is " + Math.round(v.getHeight() / d) + "dp tall, too short to tap or read",
+          v.getHeight() >= Math.round(48 * d) - 1);
+    }
+    if (v instanceof ViewGroup) {
+      ViewGroup g = (ViewGroup) v;
+      for (int i = 0; i < g.getChildCount(); i++) wellFormed(g.getChildAt(i), what);
+    }
   }
 
   /** build/screens/<test>/<nn>-<what>.png. A convenience: failing to write one fails nothing. */
@@ -266,6 +285,19 @@ public class ScreensTest {
     idle(400);
     a.say("A message long enough to wrap onto a second line on a small phone", "UNDO", () -> { });
     idle(400);
+    // On the dashboard it sits above the dock, so the other screens stay one tap away.
+    drawAt(393, 851, "message bar");
+    View words = find(a.getWindow().getDecorView(), android.widget.TextView.class,
+        "A message long enough to wrap onto a second line on a small phone");
+    org.junit.Assert.assertNotNull("still showing", words);
+    Field dockField = RideActivity.class.getDeclaredField("dock");
+    dockField.setAccessible(true);
+    int[] bar = new int[2];
+    int[] dock = new int[2];
+    ((View) words.getParent()).getLocationInWindow(bar);
+    ((View) dockField.get(a)).getLocationInWindow(dock);
+    org.junit.Assert.assertTrue("the message bar ends at " + (bar[1] + ((View) words.getParent()).getHeight())
+        + ", the dock starts at " + dock[1], bar[1] + ((View) words.getParent()).getHeight() <= dock[1]);
     sweep("message bar");
   }
 
@@ -393,8 +425,11 @@ public class ScreensTest {
     org.junit.Assert.assertNotNull(Bike.get(c).controller());
     RideState.get().start();
     try {
+      double lat = 40.56;
       for (int i = 0; i < 40; i++) {
-        RideState.get().onLocation(fix(40.56 + i * 0.0003, -111.63, 12f + i % 5));
+        float speed = 12f + i % 5;              // 27 to 36 mph
+        lat += speed / 111320.0;                // a second's travel north at that speed
+        RideState.get().onLocation(fix(lat, -111.63, speed));
         run(1000);
       }
       sweep("dashboard, riding");

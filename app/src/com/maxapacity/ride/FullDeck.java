@@ -124,7 +124,7 @@ final class FullDeck extends Panel {
             drop();
             boolean found = d.state() == Deck.FOUND;
             status.set(found ? "FOUND" : "NOT LINKED", found ? Ui.WARN : Ui.TEXT_3);
-            slot.addView(Ui.emptyState(getContext(), Icons.MONITOR, "The whole Deck, on this phone",
+            say(Ui.emptyState(getContext(), Icons.MONITOR, "The whole Deck, on this phone",
                     found ? "Your Deck is in reach. Enter the 6-digit code it shows under Add a"
                             + " screen, and it opens here."
                             : "Everything the Car Thing shows, with all its controls. Link this"
@@ -142,7 +142,7 @@ final class FullDeck extends Panel {
             // A phone whose system web view is missing, or in the middle of updating itself.
             web = null;
             status.set("UNAVAILABLE", Ui.DANGER);
-            slot.addView(Ui.emptyState(getContext(), Icons.CIRCLE_ALERT,
+            say(Ui.emptyState(getContext(), Icons.CIRCLE_ALERT,
                     "The Deck cannot be shown here",
                     "This phone's web view is missing or updating itself. Try again in a minute.",
                     "Try again", Ui.SECONDARY, v -> show()));
@@ -158,6 +158,18 @@ final class FullDeck extends Panel {
         web.loadUrl("http://" + address + "/", headers);
     }
 
+    /**
+     * Something to say in place of the Deck. The page runs edge to edge; words
+     * keep the margin every other screen has.
+     */
+    private void say(View message) {
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.leftMargin = dp(16);
+        lp.rightMargin = dp(16);
+        slot.addView(message, lp);
+    }
+
     private void drop() {
         slot.removeAllViews();
         if (web != null) {
@@ -171,7 +183,7 @@ final class FullDeck extends Panel {
     private void failed() {
         drop();
         status.set("OFFLINE", Ui.DANGER);
-        slot.addView(Ui.emptyState(getContext(), Icons.UNLINK, "Deck is out of reach",
+        say(Ui.emptyState(getContext(), Icons.UNLINK, "Deck is out of reach",
                 "The Deck stopped answering. Is the Mac awake and on this network?",
                 "Try again", Ui.SECONDARY, v -> {
                     Deck.get(getContext()).refresh();

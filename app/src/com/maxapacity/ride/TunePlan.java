@@ -111,7 +111,8 @@ final class TunePlan {
             values.put("line", l);
             values.put("phase", p);
             values.put("response", RESPONSE[level]);
-            String detail = line.format(l) + " battery, " + phase.format(p) + " motor, "
+            // Two lines by design, so no row ends in a stray unit on a narrow phone.
+            String detail = line.format(l) + " battery, " + phase.format(p) + " motor\n"
                     + response.format(RESPONSE[level]) + " throttle";
             if (volts > 0) {
                 detail += String.format(Locale.US, ", about %.1f kW",
@@ -166,7 +167,7 @@ final class TunePlan {
         // controller as BJ72V330AB_27_1KMA88. Mode power is stored in 128ths and the
         // official app rounds, so its 40% is 51 and its 70% is 90.
         out.add(build("xe-pro-r-factory", Icons.ROTATE_CCW, "XE Pro R Factory",
-                "330 A battery, 699 A motor, regen on the brake at 30 A",
+                "330 A battery, 699 A motor\n30 A regen on the brake",
                 "For the Arctic Leopard XE Pro R on its stock Fardriver controller"
                         + " (BJ72V330AB). These are the settings MAXAPACITY read from one of its"
                         + " own bikes on the day it was delivered. Loading it puts back every"

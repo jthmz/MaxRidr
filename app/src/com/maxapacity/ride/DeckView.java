@@ -325,8 +325,8 @@ final class DeckView extends Panel {
         row.addView(Ui.icon(c, Icons.MONITOR, 18, Ui.TEXT_2));
         LinearLayout text = Ui.column(c);
         text.addView(Ui.body(c, "Full Deck", Ui.TEXT));
-        text.addView(Ui.small(c, "Everything the Car Thing shows, with all its controls",
-                Ui.TEXT_3));
+        text.addView(Ui.even(Ui.small(c, "Everything the Car Thing shows, with all its"
+                + " controls", Ui.TEXT_3)));
         row.addView(text, Ui.left(c, Ui.weighted(), 12));
         android.widget.ImageView go = Ui.icon(c, Icons.CHEVRON_RIGHT, 18, Ui.TEXT_3);
         ((LinearLayout.LayoutParams) go.getLayoutParams()).leftMargin = dp(8);
