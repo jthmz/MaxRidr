@@ -76,9 +76,10 @@ final class SettingsPanel extends Panel {
 
         LinearLayout links = group("CONNECTIONS");
         Bike bike = Bike.get(c);
-        link(links, Icons.BLUETOOTH, "Bike", bike.anyConfigured()
-                ? bike.configuredSummary() : "Battery and controller",
-                bike.anyConfigured() ? "Linked" : "Set up", bike.anyConfigured(),
+        link(links, Icons.BLUETOOTH, "Bike", bike.demo() ? "Demo bike on. Not a real bike"
+                : bike.anyConfigured() ? bike.configuredSummary() : "Battery and controller",
+                bike.demo() ? "Demo" : bike.anyConfigured() ? "Linked" : "Set up",
+                bike.anyConfigured() && !bike.demo(),
                 v -> host.showBike());
         final boolean strava = Strava.isConnected(c);
         link(links, Icons.CLOUD_UPLOAD, "Strava", strava

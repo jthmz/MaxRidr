@@ -173,6 +173,7 @@ final class DemoBike {
 
     static final class Battery extends BleLink {
         private final Listener listener;
+        private final Handler main = new Handler(Looper.getMainLooper());
         private boolean ready;
 
         Battery(Context c, UUID characteristic, Listener listener) {
@@ -204,11 +205,14 @@ final class DemoBike {
         @Override
         void write(byte[] request) {
             if (!ready || !Arrays.equals(request, AntBms.REQUEST_NEW)) return;
-            byte[] reply = batteryFrame(at(SystemClock.elapsedRealtime()));
-            // Twenty bytes to a notification, as the real module sends it.
-            for (int i = 0; ready && i < reply.length; i += 20) {
-                listener.onData(Arrays.copyOfRange(reply, i, Math.min(reply.length, i + 20)));
-            }
+            // The answer comes a moment after the question, never inside it.
+            main.post(() -> {
+                byte[] reply = batteryFrame(at(SystemClock.elapsedRealtime()));
+                // Twenty bytes to a notification, as the real module sends it.
+                for (int i = 0; ready && i < reply.length; i += 20) {
+                    listener.onData(Arrays.copyOfRange(reply, i, Math.min(reply.length, i + 20)));
+                }
+            });
         }
     }
 
