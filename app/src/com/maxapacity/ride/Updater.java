@@ -437,6 +437,9 @@ final class Updater {
         HttpURLConnection conn = open(url, token, accept);
         try {
             int code = conn.getResponseCode();
+            // A saved token that has expired is refused even where no token
+            // is needed, so ask again without it before giving up.
+            if (code == 401 && !token.isEmpty()) return fetch(url, "", accept, maxBytes);
             if (code != 200) throw new IOException("HTTP " + code);
             try (InputStream in = conn.getInputStream()) {
                 ByteArrayOutputStream buf = new ByteArrayOutputStream();
@@ -464,6 +467,10 @@ final class Updater {
         conn.setInstanceFollowRedirects(false);
         try {
             int code = conn.getResponseCode();
+            if (code == 401 && !token.isEmpty()) {
+                download(url, "", to, expectedSize);
+                return;
+            }
             if (code == 301 || code == 302 || code == 307) {
                 String location = conn.getHeaderField("Location");
                 conn.disconnect();

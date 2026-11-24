@@ -13,7 +13,7 @@ manifestCopy.parentFile.mkdirs()
 manifestCopy.text = new File(appDir, 'AndroidManifest.xml').text
         .replaceFirst(/\s+package="[^"]+"/, '')
 
-// CI passes its run number, so every build is newer than the last and the
+// CI passes a number that rises with each run, so every build is newer than the last and the
 // in-app updater can tell which is which. Local builds are version 1.
 def rideVersionCode = (project.findProperty('rideVersionCode') ?: '1') as int
 

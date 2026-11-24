@@ -59,7 +59,8 @@ public class ScreensTest {
         android.Manifest.permission.ACCESS_FINE_LOCATION,
         android.Manifest.permission.BLUETOOTH_CONNECT,
         android.Manifest.permission.BLUETOOTH_SCAN);
-    Units.prefs(c).edit().clear().apply();
+    // No update checks: the tests must not depend on, or download from, GitHub.
+    Units.prefs(c).edit().clear().putBoolean("auto_update", false).apply();
     Bike.links = (ctx, uuid, l) -> {
       if (uuid.equals(BleLink.uuid(0xFFEC))) return ctl = new BikeSimTest.FakeController(ctx, uuid, l);
       return bms = new BikeSimTest.FakeBms(ctx, uuid, l);

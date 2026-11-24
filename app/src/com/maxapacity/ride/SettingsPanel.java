@@ -116,11 +116,9 @@ final class SettingsPanel extends Panel {
                     if (Updater.state() == Updater.READY) Updater.install(c);
                     else Updater.check(c, host, true);
                 });
-        // Only a private repository needs one, so it is shown only once set.
-        if (Updater.hasToken(c)) {
-            link(app, Icons.KEY_ROUND, "Update token", "Read-only access to the app's releases",
-                    "Saved", true, v -> host.editUpdateToken());
-        }
+        final boolean token = Updater.hasToken(c);
+        link(app, Icons.KEY_ROUND, "Update token", "Only if the app's repository is private",
+                token ? "Saved" : "Not needed", token, v -> host.editUpdateToken());
         if (CrashLog.read(c) != null) {
             link(app, Icons.TRIANGLE_ALERT, "Last crash", "The app closed unexpectedly",
                     "View", false, v -> host.showLastCrash());
