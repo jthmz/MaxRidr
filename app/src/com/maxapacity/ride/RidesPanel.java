@@ -39,11 +39,14 @@ final class RidesPanel extends Panel {
         JSONArray rides = RideStore.load(c);
         if (rides.length() == 0) {
             status.set("", Ui.TEXT_3);
+            // The button does the thing itself rather than pointing at where to do it.
             content.addView(Ui.emptyState(c, Icons.ROUTE, "No rides yet",
-                    "Every ride is saved here with its route, speed and climb. Tap Start"
-                            + " ride on the dashboard, or just set off: recording starts on"
-                            + " its own once you are moving.",
-                    "Back to dashboard", Ui.PRIMARY, v -> close()));
+                    "Every ride is saved here with its route, speed and climb. Or just set"
+                            + " off: recording starts on its own once you are moving.",
+                    "Start a ride", Ui.PRIMARY, v -> {
+                        close();
+                        host.beginRide();
+                    }));
             return;
         }
         status.set(rides.length() + (rides.length() == 1 ? " RIDE" : " RIDES"), Ui.TEXT_3);

@@ -1150,6 +1150,11 @@ public final class RideActivity extends Activity
 
     // ---- Ride --------------------------------------------------------------
 
+    @Override
+    public void beginRide() {
+        if (!RideState.get().isRecording()) toggleRide();
+    }
+
     private void toggleRide() {
         if (RideState.get().isRecording()) {
             confirmEndRide();

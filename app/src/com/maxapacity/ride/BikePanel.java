@@ -78,8 +78,7 @@ final class BikePanel extends Panel {
             content.addView(Ui.emptyState(c, Icons.BLUETOOTH, "See inside your bike",
                     "Link an ANT BMS battery and a Fardriver controller to watch charge, power"
                             + " and temperatures live, and to tune how the bike rides. Link"
-                            + " each once, next to the bike with it switched on. After that"
-                            + " they connect by themselves.",
+                            + " each once, next to the bike with it switched on.",
                     "Link battery", Ui.PRIMARY, v -> pick(Bike.KIND_BATTERY)));
             LinearLayout ctl = Ui.button(c, "LINK CONTROLLER", null, Ui.SECONDARY);
             ctl.setOnClickListener(v -> pick(Bike.KIND_CONTROLLER));
