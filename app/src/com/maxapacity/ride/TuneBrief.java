@@ -56,6 +56,9 @@ final class TuneBrief {
             new Goal(Icons.REFRESH_CW, "Stronger regen", "More slowing when you brake",
                     "Stronger regen braking. I want the motor to slow the bike more when I"
                             + " brake."),
+            new Goal(Icons.CIRCLE_STOP, "Gentler regen", "Less grab from the motor when you brake",
+                    "Gentler regen braking. The motor slows the bike too hard when I brake and"
+                            + " I want it to bite less."),
     };
 
     /** True when the controller's settings have been read and can be written up. */
@@ -124,7 +127,7 @@ final class TuneBrief {
         }
         sb.append("\nSETTINGS NOW, AND THE RANGE THE APP ALLOWS ON THIS BIKE\n")
                 .append(settings(memory, ceiling));
-        sb.append("\nRULES THE APP ENFORCES\n").append(rules(memory));
+        sb.append("\nRULES THE APP ENFORCES\n").append(rules(ceiling));
         sb.append("\nI use ").append(metric ? "metric units (km/h, km)" : "US units (mph, miles)")
                 .append(".\n");
         return sb.toString();
@@ -139,7 +142,7 @@ final class TuneBrief {
         Fardriver memory = bike.controllerMemory();
         return " Tune settings on the controller now, each with the range the app's Tune screen"
                 + " will accept:\n" + settings(memory, bike::ceiling)
-                + "Rules the app enforces:\n" + rules(memory)
+                + "Rules the app enforces:\n" + rules(bike::ceiling)
                 + "When asked about tuning, suggest values inside those ranges, each as the"
                 + " value now and the value to try, one or two changes at a time, in up to five"
                 + " short lines. Changes are made on the app's Tune screen, tried on the bike"
@@ -234,18 +237,17 @@ final class TuneBrief {
 
     /** The highest: what is on the bike can always be kept, even above what the app would choose. */
     static int highest(Fardriver.Param p, int onBike, int ceiling) {
-        return Math.max(onBike, Math.min(p.max, ceiling));
+        return Math.max(onBike, p.top(ceiling));
     }
 
     /** What the app holds every change to, whoever suggested it. */
-    static String rules(Fardriver memory) {
+    static String rules(ToIntFunction<Fardriver.Param> ceiling) {
+        Fardriver.Param high = Fardriver.param("high_rpm");
         StringBuilder sb = new StringBuilder(
-                "- Low mode top speed stays at or below Mid, and Mid at or below High.\n");
-        int limiter = memory.limiterRpm();
-        if (limiter > 0) {
-            sb.append("- High mode top speed never goes above the controller's own speed"
-                    + " limiter, ").append(limiter).append(" rpm.\n");
-        }
+                "- Low mode top speed stays at or below Mid, and Mid at or below High.\n"
+                + "- High mode top speed can come down, but never goes above where this"
+                + " controller stood when the app first met it, ")
+                .append(high.format(ceiling.applyAsInt(high))).append(".\n");
         sb.append("- Regen strength stays at or below Max regen strength.\n"
                 + "- The two current limits can come down, but never go above where this"
                 + " controller stood when the app first met it.\n"

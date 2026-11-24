@@ -9,8 +9,9 @@ import java.util.function.ToIntFunction;
 
 /**
  * Whole tunes a rider can load in one tap: three made to measure for the
- * controller in hand, from calm to everything it came with, and the tunes
- * MAXAPACITY has published for its own builds.
+ * controller in hand, from calm to everything it came with, and the ones
+ * from MAXAPACITY's own bikes: the tunes published for its builds and the
+ * settings a stock bike was delivered with.
  *
  * Loading a tune only works out a set of changes. They are shown on the Tune
  * screen like any others and go through the same checks: nothing above what
@@ -130,29 +131,54 @@ final class TunePlan {
         return Math.min(top, Math.max(p.min, v));
     }
 
-    // ---- MAXAPACITY builds ----------------------------------------------------
+    // ---- MAXAPACITY's own bikes ----------------------------------------------
 
     /**
-     * The tunes MAXAPACITY has published for its own builds, with the values
-     * and the cautions exactly as published. Each belongs to one bike.
+     * Tunes from MAXAPACITY's own bikes, each for one exact bike, with the
+     * values and the cautions as MAXAPACITY has them on file. Nothing here is
+     * worked out by this app: a number is either published in a MAXAPACITY
+     * guide or was read off the bike.
      */
-    static List<Tune> builds() {
+    static List<Tune> ourBikes() {
         String drax = "For the Drax Bee build: a Fardriver ND72680 with the Amorge 72V 30Ah"
                 + " pack.";
         List<Tune> out = new ArrayList<>();
         out.add(build("drax-chill", Icons.HAND, "Drax Bee Chill", "180 A battery, 450 A motor",
-                drax + " Inside that pack's listed 220 A continuous rating.",
+                drax + " Inside that pack's listed 220 A continuous rating. Our guide gives it"
+                        + " as a lower-current reference, not as a tested starting tune.",
                 "line", 720, "phase", 1800));
         out.add(build("drax-daily", Icons.ROCKET, "Drax Bee Daily", "260 A battery, 600 A motor",
                 drax + " It is what MAXAPACITY runs on that bike. 260 A is above that pack's"
-                        + " listed 220 A continuous rating.",
+                        + " listed 220 A continuous rating, and no test log yet backs its"
+                        + " temperatures or how long a hard pull is safe.",
                 "line", 1040, "phase", 2400));
         out.add(build("drax-regen", Icons.REFRESH_CW, "Drax Bee Trail regen",
                 "8 A regen, 12 A at most",
-                drax + " Trail tested there. A battery's BMS sets how much charge it will"
-                        + " take, so never set regen above that, and try it at 70 to 80%"
-                        + " charge rather than on a full pack.",
+                drax + " Trail tested there with regen set to come on when the throttle closes."
+                        + " This app sets the two currents only: the release setting (Follow),"
+                        + " FreeThrottle and the RPM regen map from our guide are set in the"
+                        + " Fardriver app. A battery's BMS sets how much charge it will take, so"
+                        + " never set regen above that, and try it at 70 to 80% charge rather"
+                        + " than on a full pack.",
                 "regen", 8, "regen_max", 12));
+        // Read from the Fardriver app on one of MAXAPACITY's own bikes the day it was
+        // delivered, 5 November 2026, before anything was changed. The app gave the
+        // controller as BJ72V330AB_27_1KMA88. Mode power is stored in 128ths and the
+        // official app rounds, so its 40% is 51 and its 70% is 90.
+        out.add(build("xe-pro-r-factory", Icons.ROTATE_CCW, "XE Pro R Factory",
+                "330 A battery, 699 A motor, regen on the brake at 30 A",
+                "For the Arctic Leopard XE Pro R on its stock Fardriver controller"
+                        + " (BJ72V330AB). These are the settings MAXAPACITY read from one of its"
+                        + " own bikes on the day it was delivered. Loading it puts back every"
+                        + " setting this app can change and nothing else. A bike from another"
+                        + " batch may have been delivered with different values. As delivered,"
+                        + " regen comes on with the brake lever and is strong, so go easy on"
+                        + " the lever.",
+                "response", 0, "accel", 224, "decel", 224, "release", 0,
+                "line", 1320, "phase", 2796,
+                "low_rpm", 6000, "low_line", 51, "mid_rpm", 7000, "mid_line", 90,
+                "high_rpm", 12500,
+                "regen_mode", 2, "regen", 30, "regen_max", 50));
         return out;
     }
 
@@ -177,8 +203,13 @@ final class TunePlan {
         for (Map.Entry<String, Integer> e : t.values.entrySet()) {
             Fardriver.Param p = Fardriver.param(e.getKey());
             int want = e.getValue();
-            if (want == memory.raw(p)) continue;
-            int top = Math.min(p.max, ceiling.applyAsInt(p));
+            int now = memory.raw(p);
+            // A share is kept in 128ths and shown as a whole percent, so two neighbours
+            // that read the same are the same setting.
+            if (want == now || ("%".equals(p.unit) && p.format(want).equals(p.format(now)))) {
+                continue;
+            }
+            int top = p.top(ceiling.applyAsInt(p));
             if (want > top || want < p.min) {
                 out.changes.clear();
                 String asks = t.name + " asks for " + p.format(want) + " as the "
@@ -192,7 +223,8 @@ final class TunePlan {
             }
             out.changes.put(e.getKey(), want);
         }
-        if (t.values.containsKey("regen") && memory.raw(Fardriver.param("regen_mode")) == 1) {
+        if (t.values.containsKey("regen") && !t.values.containsKey("regen_mode")
+                && memory.raw(Fardriver.param("regen_mode")) == 1) {
             out.note = "Regen mode is Off on this bike, so regen does nothing until that is"
                     + " switched on";
         }

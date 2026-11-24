@@ -599,7 +599,7 @@ public class ScreensTest {
     int writes = ctl.settingWriteCount;
     ((TunePanel) panel("tune")).showTunes();
     idle(400);
-    tap("MAXAPACITY builds");
+    tap("MAXAPACITY bikes");
     sweep("builds sheet");
     tap("Drax Bee Chill");
     sweep("build tune, which bike it is for");

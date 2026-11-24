@@ -33,12 +33,13 @@ public class TuneBriefTest {
 
   /** The ceilings Bike works out for a controller it is meeting for the first time. */
   static ToIntFunction<Fardriver.Param> ceilings(final Fardriver fd) {
+    // Taken now, as Bike keeps them: a ceiling stays where the controller first stood.
+    final java.util.Map<String, Integer> first = new java.util.HashMap<>();
+    for (Fardriver.Param p : Fardriver.PARAMS) first.put(p.key, fd.raw(p));
     return p -> {
-      if (p.key.endsWith("_rpm")) {
-        int limiter = fd.limiterRpm();
-        return Math.min(limiter > 0 ? limiter : fd.raw(Fardriver.param("high_rpm")), p.max);
-      }
-      return p.cappedAtFactory ? Math.min(fd.raw(p), p.max) : p.max;
+      if (p.key.endsWith("_rpm")) return Math.min(first.get("high_rpm"), p.max);
+      if (p.key.equals("regen") || p.key.equals("regen_max")) return Math.max(first.get(p.key), p.max);
+      return p.cappedAtFactory ? Math.min(first.get(p.key), p.max) : p.max;
     };
   }
 
@@ -156,16 +157,22 @@ public class TuneBriefTest {
     assertFalse("nothing is said of a rating nobody gave", brief(fd, battery()).contains("rated for"));
   }
 
-  @Test public void theSpeedLimiterIsNamedOnlyWhenTheControllerHasOne() {
+  @Test public void topSpeedIsHeldToWhereTheControllerStoodWhateverItsSpeedLimitModeSays() {
     int[] ram = DemoBike.memory();
-    Fardriver fd = controller(ram);
-    assertTrue(fd.limiterRpm() > 0);
-    assertTrue(brief(fd, battery()).contains("speed limiter, " + fd.limiterRpm() + " rpm."));
-    ram[0x6C] = 0;
-    Fardriver none = controller(ram);
-    assertFalse(brief(none, battery()).contains("speed limiter, "));
-    // With no limiter to go by, the fastest mode as it stands is the most there is.
     Fardriver.Param high = Fardriver.param("high_rpm");
-    assertTrue(brief(none, battery()).contains(" to " + high.format(none.raw(high)) + ", in steps of 100 rpm"));
+    assertEquals("the capture's speed-limit mode is set faster than its top gear", 6000, ram[0x6C]);
+    for (int limitMode : new int[] {6000, 0, 2000}) {
+      ram[0x6C] = limitMode;
+      Fardriver fd = controller(ram);
+      String brief = brief(fd, battery());
+      assertTrue(brief, brief.contains("- High mode top speed can come down, but never goes above"
+          + " where this controller stood when the app first met it, 4200 rpm.\n"));
+      for (String key : new String[] {"low_rpm", "mid_rpm", "high_rpm"}) {
+        Fardriver.Param p = Fardriver.param(key);
+        assertTrue(key + " " + limitMode, brief.contains("- " + p.name + ": " + p.format(fd.raw(p))
+            + ". Range 300 rpm to " + high.format(fd.raw(high)) + ", in steps of 100 rpm. "));
+      }
+      assertFalse("that word is never called a limiter", brief.contains("limiter"));
+    }
   }
 }
