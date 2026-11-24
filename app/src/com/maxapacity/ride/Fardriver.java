@@ -103,6 +103,7 @@ final class Fardriver {
     boolean settingsLoaded() {
         if (legacy) return false;
         for (Param p : PARAMS) if (seen[p.addr] < 2) return false;
+        for (Param p : FOLLOWERS) if (seen[p.addr] < 2) return false;
         return seen[0x86] >= 1 && seen[0xA1] >= 1 && seen[0xAA] >= 1 && seen[LIMITER] >= 1
                 && seen[THROTTLE_RANGE] >= 1;
     }
@@ -498,21 +499,27 @@ final class Fardriver {
             new Param("response", G_THROTTLE, "Throttle response",
                     "The shape of the throttle curve", 0x1A, 2, 2, 0, 2, 1, 1f, "",
                     new String[] {"Linear", "Sport", "Eco"}, false),
+            // Which way is snappier is not settled: the Fardriver manual and riders'
+            // own reports disagree, so neither is claimed here.
             word("accel", G_THROTTLE, "Acceleration",
-                    "How quickly power builds when you open the throttle. Higher is snappier",
+                    "The step the controller uses to build power when you open the throttle."
+                            + " Move it a little at a time and feel the difference",
                     0x2F, 2, 224, 2, 1f, "", false),
             word("decel", G_THROTTLE, "Deceleration",
-                    "How quickly power falls when you roll off. Higher is more abrupt",
+                    "The step it uses to let power fall when you roll off. Move it a little"
+                            + " at a time and feel the difference",
                     0x2B, 4, 224, 2, 1f, "", false),
             new Param("release", G_THROTTLE, "Throttle release",
                     "How fast drive cuts when the throttle closes", 0x2C, 0, 8, 0, 192, 4, 1f,
                     "", null, false),
 
             word("line", G_POWER, "Battery current limit",
-                    "Peak current drawn from the battery. Lower runs cooler and saves range",
+                    "Peak current drawn from the battery. Lower runs cooler and saves range."
+                            + " The controller's short burst allowance moves with it",
                     0x19, 80, 4000, 20, 0.25f, "A", true),
             word("phase", G_POWER, "Motor current limit",
-                    "Peak current sent to the motor, which sets low-speed torque",
+                    "Peak current sent to the motor, which sets low-speed torque. The"
+                            + " controller's short burst allowance moves with it",
                     0x2D, 160, 8000, 40, 0.25f, "A", true),
 
             word("low_rpm", G_MODES, "Low mode top speed",
@@ -547,8 +554,27 @@ final class Fardriver {
                     "Upper limit for braking current", 0x31, 0, 20, 1, 1f, "A", false),
     };
 
+    /**
+     * The current a short burst ("boost") may draw, beside each current limit.
+     * These are never offered on their own. {@link Bike} moves each with the
+     * limit it sits above, keeping the gap the controller came with, so a
+     * burst can never draw more than a limit that has just been lowered and
+     * is never set below it. Both references place them at these addresses,
+     * at the same scale as the limits.
+     */
+    static final Param[] FOLLOWERS = {
+            word("boost_line", G_POWER, "Burst battery current",
+                    "What a short burst may draw from the battery", 0x26, 80, 4000, 20, 0.25f,
+                    "A", true),
+            word("boost_phase", G_POWER, "Burst motor current",
+                    "What a short burst may send to the motor", 0x27, 160, 8000, 40, 0.25f,
+                    "A", true),
+    };
+
+    /** A setting by its key: one a rider can change, or one that follows such a setting. */
     static Param param(String key) {
         for (Param p : PARAMS) if (p.key.equals(key)) return p;
+        for (Param p : FOLLOWERS) if (p.key.equals(key)) return p;
         return null;
     }
 
@@ -570,12 +596,15 @@ final class Fardriver {
                     + " viewed in the Fardriver app; changing them from here is not supported.";
         }
         if (!settingsLoaded()) return "Reading settings from the controller";
-        for (Param p : PARAMS) {
-            int v = raw(p);
-            if (v > p.readMax()) {
-                return "This controller reports \"" + p.name + "\" as " + v + ", outside"
-                        + " anything this app understands. Its firmware (" + firmware()
-                        + ") stores settings differently, so tuning is locked to keep it safe.";
+        for (Param[] group : new Param[][] {PARAMS, FOLLOWERS}) {
+            for (Param p : group) {
+                int v = raw(p);
+                if (v > p.readMax()) {
+                    return "This controller reports \"" + p.name + "\" as " + v + ", outside"
+                            + " anything this app understands. Its firmware (" + firmware()
+                            + ") stores settings differently, so tuning is locked to keep it"
+                            + " safe.";
+                }
             }
         }
         return null;

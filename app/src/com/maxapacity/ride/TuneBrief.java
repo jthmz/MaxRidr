@@ -67,7 +67,8 @@ final class TuneBrief {
     static String build(Context c, String goal) {
         Bike bike = Bike.get(c);
         return build(goal, Units.prefs(c).getString(ABOUT, ""), bike.demo(), Units.metric(c),
-                bike.battery(), bike.controller(), bike.controllerMemory(), bike::ceiling);
+                bike.battery(), bike.controller(), bike.controllerMemory(), bike::ceiling,
+                Units.prefs(c).getInt(TunePlan.PACK_AMPS, 0));
     }
 
     /**
@@ -80,6 +81,16 @@ final class TuneBrief {
     static String build(String goal, String about, boolean demo, boolean metric,
             AntBms.Data battery, Fardriver.Live live, Fardriver memory,
             ToIntFunction<Fardriver.Param> ceiling) {
+        return build(goal, about, demo, metric, battery, live, memory, ceiling, 0);
+    }
+
+    /**
+     * @param packAmps what the rider says the battery gives continuously, in
+     *        amps, or 0 if they have not said. An adviser is told to stay under it
+     */
+    static String build(String goal, String about, boolean demo, boolean metric,
+            AntBms.Data battery, Fardriver.Live live, Fardriver memory,
+            ToIntFunction<Fardriver.Param> ceiling, int packAmps) {
         StringBuilder sb = new StringBuilder();
         if (demo) {
             sb.append("Note: this comes from the app's demo bike. The readings are made up and"
@@ -101,8 +112,16 @@ final class TuneBrief {
                 + "- If what I want needs something these settings cannot do, such as gearing,"
                 + " tyres or a different battery, say so plainly.\n"
                 + "- If the readings below show a problem to sort out first, start there.\n"
-                + "- Use plain words. I am not an engineer.\n\n");
+                + "- Use plain words. I am not an engineer.\n"
+                + "- Finish with the changes on lines of their own, each written exactly like"
+                + " this, using the setting names below: SET Battery current limit = 100 A."
+                + " The app reads those lines so I do not have to type them in.\n\n");
         sb.append("WHAT THE APP READS FROM THE BIKE\n").append(readings(battery, live, memory));
+        if (packAmps > 0) {
+            sb.append("- By my own figure the battery is rated for ").append(packAmps)
+                    .append(" A continuous. Do not suggest a battery current limit above"
+                            + " that.\n");
+        }
         sb.append("\nSETTINGS NOW, AND THE RANGE THE APP ALLOWS ON THIS BIKE\n")
                 .append(settings(memory, ceiling));
         sb.append("\nRULES THE APP ENFORCES\n").append(rules(memory));
@@ -230,6 +249,8 @@ final class TuneBrief {
         sb.append("- Regen strength stays at or below Max regen strength.\n"
                 + "- The two current limits can come down, but never go above where this"
                 + " controller stood when the app first met it.\n"
+                + "- The controller's short burst (boost) currents move with the two limits by"
+                + " themselves, so a burst never draws more than a limit allows.\n"
                 + "- Each change is tried on the bike first and only kept when I save it, so"
                 + " anything that feels wrong can be undone.\n");
         return sb.toString();

@@ -543,9 +543,92 @@ public class ScreensTest {
     org.junit.Assert.assertTrue(brief, brief.contains("WHAT I WANT\nLess wheelspin on wet roots\n"));
     org.junit.Assert.assertTrue(brief, brief.contains("ABOUT MY BIKE AND ME\nDRAX X-Pro 72V, 13/52 gearing, 190 lb rider\n"));
 
+    // The answer comes back by way of the clipboard. Its SET lines load as changes to look over,
+    // and one that asks for more than this controller came with is left out and said.
+    c.getSystemService(android.content.ClipboardManager.class).setPrimaryClip(
+        android.content.ClipData.newPlainText("answer", "Lower these two for more range.\n"
+            + "SET Battery current limit = 100 A\nSET Motor current limit = 500 A\n"));
+    ((TunePanel) panel("tune")).showIdeas();
+    idle(400);
+    tap("Paste the answer");
+    run(400);
+    org.junit.Assert.assertNotNull("what was loaded and what was left out are both said",
+        find(a.getWindow().getDecorView(), android.widget.TextView.class, "1 change loaded to look over. Left out:"
+            + " Motor current limit 500 A is outside what this bike allows (40 A to 350 A)"));
+    sweep("tune, an answer pasted in");
+
     org.junit.Assert.assertEquals("no setting was written", 0, ctl.settingWriteCount);
     org.junit.Assert.assertEquals(Bike.TUNE_IDLE, bike.tuneState());
     org.junit.Assert.assertArrayEquals("and nothing was saved", saved, ctl.flash);
+  }
+
+  /** A whole tune loads as changes to look over, is tried like any other change, and can be undone. */
+  @Test public void aWholeTuneLoadsAsChangesAndGoesThroughTheSameTrial() throws Exception {
+    start();
+    Bike bike = Bike.get(c);
+    bike.link(Bike.KIND_BATTERY, "ANT-BLE16ZMUB");
+    bike.link(Bike.KIND_CONTROLLER, "CONTROLCN368");
+    run(3000);
+    a.showTune();
+    run(600);
+
+    tap("Tunes");
+    org.junit.Assert.assertNotNull("the tunes come up", Sheet.current());
+    sweep("tunes sheet");
+    tap("Calm");
+    run(400);
+    org.junit.Assert.assertEquals("loading a tune sends nothing", 0, ctl.settingWriteCount);
+    sweep("tune, calm loaded to look over");
+
+    tap("Try on bike");
+    run(14000);
+    org.junit.Assert.assertEquals(Bike.TRYING, bike.tuneState());
+    org.junit.Assert.assertEquals("75 A of the 130 A it came with", 300, ctl.ram[0x19]);
+    org.junit.Assert.assertEquals("and a burst cannot draw more", 300, ctl.ram[0x26]);
+    org.junit.Assert.assertEquals(840, ctl.ram[0x2D]);
+    org.junit.Assert.assertEquals(880, ctl.ram[0x27]);
+    sweep("tune, calm on trial");
+    bike.revert((ok, m) -> { });
+    run(10000);
+    org.junit.Assert.assertEquals(Bike.TUNE_IDLE, bike.tuneState());
+    org.junit.Assert.assertArrayEquals("undone: exactly as it came", ctl.flash, ctl.ram);
+
+    // A tune published for another bike asks for more than this controller came with: not loaded.
+    int writes = ctl.settingWriteCount;
+    ((TunePanel) panel("tune")).showTunes();
+    idle(400);
+    tap("MAXAPACITY builds");
+    sweep("builds sheet");
+    tap("Drax Bee Chill");
+    sweep("build tune, which bike it is for");
+    tap("Load");
+    run(400);
+    org.junit.Assert.assertNull(Sheet.current());
+    org.junit.Assert.assertNotNull("it says why", find(a.getWindow().getDecorView(), android.widget.TextView.class,
+        "Drax Bee Chill asks for 180 A as the battery current limit. This controller came set to 130 A and the app"
+            + " never goes above that, so the tune does not fit this bike"));
+    sweep("tune, a build tune refused");
+    org.junit.Assert.assertEquals(writes, ctl.settingWriteCount);
+
+    // The battery's own rating, when the rider knows it, holds the tunes at or under it.
+    ((TunePanel) panel("tune")).showTunes();
+    idle(400);
+    tap("Battery rating");
+    sweep("battery rating sheet");
+    find(Sheet.current(), android.widget.EditText.class, null).setText("100");
+    tap("Save");
+    org.junit.Assert.assertEquals(100, Units.prefs(c).getInt(TunePlan.PACK_AMPS, 0));
+    org.junit.Assert.assertNotNull("back at the tunes", Sheet.current());
+    sweep("tunes sheet, with a rated battery");
+    tap("Aggressive");
+    run(400);
+    tap("Try on bike");
+    run(14000);
+    org.junit.Assert.assertEquals("the pack's 100 A, not the controller's 130 A", 400, ctl.ram[0x19]);
+    org.junit.Assert.assertEquals(400, ctl.ram[0x26]);
+    bike.revert((ok, m) -> { });
+    run(10000);
+    org.junit.Assert.assertArrayEquals(ctl.flash, ctl.ram);
   }
 
   /** Copilot can answer tune questions once the settings are in: it is told them and their limits. */

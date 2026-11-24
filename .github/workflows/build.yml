@@ -56,10 +56,15 @@ on:
 permissions:
   contents: write
 
-# One at a time: two first runs must not both create a signing key, and the
-# published manifest must end up describing the newest build.
+# One at a time per kind of build. Builds that publish to phones (main, and
+# runs started by hand) queue behind each other, so the published manifest
+# ends up describing the newest build. Work-in-progress pushes queue among
+# themselves: GitHub drops a waiting run when a newer one joins its queue,
+# and with a single queue a branch push used to drop a waiting build of main,
+# leaving a merged change unpublished. The signing key already exists, so two
+# builds running side by side only ever read it.
 concurrency:
-  group: build-app
+  group: build-app-${{ (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && 'publish' || 'wip' }}
   cancel-in-progress: false
 
 env:
@@ -83,17 +88,17 @@ jobs:
           gradle-version: '8.10.2'
 
       # The screen tests run Android's own code on the build machine, which
-      # needs a ~200 MB runtime download; keep it between runs.
+      # needs a ~200 MB runtime download for each Android version tested; keep
+      # them between runs. When the list of versions changes the key changes
+      # with it. An older store is then restored, so only what is missing is
+      # downloaded: a build that had to fetch everything was turned away by
+      # the download site (HTTP 429) and failed every screen test.
       - uses: actions/cache@v4
         with:
           path: ~/.m2/repository/org/robolectric
           key: robolectric-runtime-sdk33-sdk35-v1
-          # Until main has saved a store under that name, start from the one
-          # it already has: only what is missing is then downloaded. A build
-          # that had to fetch everything was turned away by the download site
-          # (HTTP 429) and failed every screen test.
           restore-keys: |
-            robolectric-runtime-sdk35-v1
+            robolectric-runtime-
 
       - name: Signing key
         env:
@@ -164,7 +169,22 @@ jobs:
           else
             echo "::notice::No STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET repo secrets, so this build asks each rider for a Strava application of their own. See the top of build.yml."
           fi
-          gradle --no-daemon testReleaseUnitTest assembleRelease -PrideVersionCode="$VERSION_CODE"
+          # The runtime the screen tests need is downloaded by the tests
+          # themselves the first time, and the server it comes from sometimes
+          # answers "too many requests". That is not a failing test, so the
+          # build is tried again for that one reason and no other.
+          set -o pipefail
+          for attempt in 1 2 3; do
+            if gradle --no-daemon testReleaseUnitTest assembleRelease -PrideVersionCode="$VERSION_CODE" 2>&1 | tee "$RUNNER_TEMP/gradle.log"; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ] && grep -q "Failed to fetch maven artifact" "$RUNNER_TEMP/gradle.log"; then
+              echo "::warning::The test runtime could not be downloaded (attempt $attempt). Waiting a minute and trying again."
+              sleep 60
+            else
+              exit 1
+            fi
+          done
 
       # The screen tests keep a picture of every screen and sheet they draw.
       # Held for two days so the design can be looked over without a phone.

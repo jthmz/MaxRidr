@@ -599,11 +599,14 @@ final class Bike {
      */
     private String orderProblem(Map<String, Integer> changes) {
         String[][] pairs = {{"low_rpm", "mid_rpm"}, {"mid_rpm", "high_rpm"},
-                {"regen", "regen_max"}};
+                {"regen", "regen_max"}, BURSTS[0], BURSTS[1]};
         for (String[] pair : pairs) {
             if (!changes.containsKey(pair[0]) && !changes.containsKey(pair[1])) continue;
             Fardriver.Param lower = Fardriver.param(pair[0]);
             Fardriver.Param upper = Fardriver.param(pair[1]);
+            // A controller that came with its burst below its limit is not held to the rule
+            // it never kept: lowering its limit must stay possible.
+            if (burstsApart(pair)) continue;
             int lo = changes.containsKey(pair[0]) ? changes.get(pair[0])
                     : controllerMemory.raw(lower);
             int hi = changes.containsKey(pair[1]) ? changes.get(pair[1])
@@ -613,6 +616,38 @@ final class Bike {
         return null;
     }
 
+    /** Each current limit, and the burst allowance that must never sit below it. */
+    private static final String[][] BURSTS = {{"line", "boost_line"}, {"phase", "boost_phase"}};
+
+    /** True for a burst pair on a controller that came with the burst below the limit. */
+    private boolean burstsApart(String[] pair) {
+        if (pair != BURSTS[0] && pair != BURSTS[1]) return false;
+        return ceiling(Fardriver.param(pair[1])) < ceiling(Fardriver.param(pair[0]));
+    }
+
+    /**
+     * A change to a current limit takes its burst allowance with it. The
+     * burst stays as far above the limit as this controller came with, so it
+     * is never below the limit and never above where it started. Without
+     * this, a limit lowered for a calmer bike could still be exceeded for
+     * seconds at a time on a bike that uses bursts.
+     *
+     * @return the changes asked for, plus the burst settings that go with them
+     */
+    Map<String, Integer> withBursts(Map<String, Integer> asked) {
+        Map<String, Integer> out = new LinkedHashMap<>(asked);
+        for (String[] pair : BURSTS) {
+            Integer limit = asked.get(pair[0]);
+            if (limit == null || asked.containsKey(pair[1]) || burstsApart(pair)) continue;
+            Fardriver.Param burst = Fardriver.param(pair[1]);
+            int cameLimit = ceiling(Fardriver.param(pair[0]));
+            int cameBurst = ceiling(burst);
+            int wanted = Math.min(cameBurst, limit + (cameBurst - cameLimit));
+            if (wanted != controllerMemory.raw(burst)) out.put(pair[1], wanted);
+        }
+        return out;
+    }
+
     /**
      * The order to write a set of values in so that the settings never pass
      * through a pairing the rules forbid on the way there: rises go in from
@@ -620,7 +655,8 @@ final class Bike {
      * bottom up.
      */
     private List<String> safeOrder(Map<String, Integer> target) {
-        String[] topDown = {"high_rpm", "mid_rpm", "low_rpm", "regen_max", "regen"};
+        String[] topDown = {"high_rpm", "mid_rpm", "low_rpm", "regen_max", "regen",
+                "boost_line", "line", "boost_phase", "phase"};
         List<String> out = new ArrayList<>();
         for (String key : topDown) {
             Integer v = target.get(key);
@@ -647,12 +683,19 @@ final class Bike {
      * started turning), the values stay "on trial" so Undo can finish the
      * job later.
      */
-    void tryValues(final Map<String, Integer> changes, final TuneCallback cb) {
+    void tryValues(final Map<String, Integer> asked, final TuneCallback cb) {
         String blocked = writeBlocker();
         if (blocked != null) {
             cb.done(false, blocked);
             return;
         }
+        for (Map.Entry<String, Integer> e : asked.entrySet()) {
+            if (Fardriver.param(e.getKey()) == null || e.getValue() == null) {
+                cb.done(false, "That setting is not one this app can change");
+                return;
+            }
+        }
+        final Map<String, Integer> changes = withBursts(asked);
         if (tuneState != TUNE_IDLE && tuneState != TRYING) {
             cb.done(false, "Another change is still in progress");
             return;
@@ -1022,6 +1065,9 @@ final class Bike {
             }
             JSONObject settings = new JSONObject();
             for (Fardriver.Param p : Fardriver.PARAMS) {
+                settings.put(p.key, controllerMemory.raw(p));
+            }
+            for (Fardriver.Param p : Fardriver.FOLLOWERS) {
                 settings.put(p.key, controllerMemory.raw(p));
             }
             JSONObject out = new JSONObject()

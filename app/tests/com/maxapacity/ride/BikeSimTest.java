@@ -255,8 +255,9 @@ public class BikeSimTest {
     assertEquals(Bike.TRYING, bike.tuneState());
     assertEquals(72, ctl.ram[0x2F]);
     assertEquals(440, ctl.ram[0x19]);
+    assertEquals("the burst allowance comes down with the limit", 440, ctl.ram[0x26]);
     assertEquals("not saved", 64, ctl.flash[0x2F]);
-    assertEquals(Arrays.asList("2F=72", "19=440"), ctl.settingWrites());
+    assertEquals(Arrays.asList("2F=72", "19=440", "26=440"), ctl.settingWrites());
 
     // The backup was written before the first change and holds the old values.
     File[] backups = new File(c.getExternalFilesDir(null), "controller-backups").listFiles();
@@ -273,7 +274,8 @@ public class BikeSimTest {
     assertEquals(u.calls.toString(), Boolean.TRUE, u.ok);
     assertEquals(Bike.TUNE_IDLE, bike.tuneState());
     assertArrayEquals(ctl.flash, ctl.ram);
-    assertEquals(Arrays.asList("2F=72", "19=440", "2F=64", "19=520"), ctl.settingWrites());
+    // Going back up, the burst rises before the limit, so it is never the lower of the two.
+    assertEquals(Arrays.asList("2F=72", "19=440", "26=440", "26=520", "19=520", "2F=64"), ctl.settingWrites());
   }
 
   @Test public void saveSendsExactlyTheStampAndTheSaveCommand() {
@@ -612,8 +614,8 @@ public class BikeSimTest {
     bike.tryValues(change("accel", 72, "line", 440), r);
     run(16000);
     // Both are written back, last first: the second may have landed without being read back.
-    assertEquals("the first one was written, then both were put back",
-        Arrays.asList("2F=72", "19=440", "19=520", "2F=64"), ctl.settingWrites());
+    assertEquals("the first one was written, then everything in the batch was put back",
+        Arrays.asList("2F=72", "19=440", "26=520", "19=520", "2F=64"), ctl.settingWrites());
     assertEquals(Boolean.FALSE, r.ok);
     assertTrue(r.message, r.message.contains("Nothing was changed"));
     assertEquals(Bike.TUNE_IDLE, bike.tuneState());
@@ -763,6 +765,9 @@ public class BikeSimTest {
     assertEquals(Boolean.TRUE, s.ok);
     List<Integer> allowed = new ArrayList<>();
     for (Fardriver.Param p : Fardriver.PARAMS) allowed.add(p.addr);
+    // The two burst allowances move with the current limits and are written with them.
+    for (Fardriver.Param p : Fardriver.FOLLOWERS) allowed.add(p.addr);
+    assertEquals("and nothing else follows anything", 2, Fardriver.FOLLOWERS.length);
     int saves = 0;
     for (byte[] f : ctl.written) {
       if (Arrays.equals(f, Fardriver.HELLO)) continue;
@@ -787,6 +792,113 @@ public class BikeSimTest {
     }
     assertEquals(80, ctl.flash[0x2F]);
     assertEquals(400, ctl.flash[0x19]);
+    assertEquals("burst battery current follows to the limit", 400, ctl.flash[0x26]);
+    assertEquals("burst motor current keeps its 10 A above the limit", 1240, ctl.flash[0x27]);
+  }
+
+  // ---- Controller: the burst allowance follows the limits --------------------
+
+  /** Replays the setting writes and checks that a burst allowance is never below its limit on the way. */
+  void assertBurstsNeverBelowTheirLimits() {
+    int line = ctl.flash[0x19], burstLine = ctl.flash[0x26], phase = ctl.flash[0x2D], burstPhase = ctl.flash[0x27];
+    for (String w : ctl.settingWrites()) {
+      if (w.startsWith("19=")) line = Integer.parseInt(w.substring(3));
+      if (w.startsWith("26=")) burstLine = Integer.parseInt(w.substring(3));
+      if (w.startsWith("2D=")) phase = Integer.parseInt(w.substring(3));
+      if (w.startsWith("27=")) burstPhase = Integer.parseInt(w.substring(3));
+      assertTrue("after " + w + ": burst " + burstLine + " under limit " + line, burstLine >= line);
+      assertTrue("after " + w + ": burst " + burstPhase + " under limit " + phase, burstPhase >= phase);
+    }
+  }
+
+  @Test public void aLoweredLimitTakesItsBurstWithItAndBringsItBack() {
+    linkController();
+    assertEquals("came with a burst equal to the battery limit", 520, ctl.ram[0x26]);
+    assertEquals("and 10 A above the motor limit", 1440, ctl.ram[0x27]);
+    Result down = new Result();
+    bike.tryValues(change("line", 300, "phase", 840), down);
+    run(14000);
+    assertEquals(down.calls.toString(), Boolean.TRUE, down.ok);
+    assertEquals(300, ctl.ram[0x19]);
+    assertEquals("a burst may not draw more than the limit now allows", 300, ctl.ram[0x26]);
+    assertEquals(840, ctl.ram[0x2D]);
+    assertEquals("the motor burst keeps the gap it came with", 880, ctl.ram[0x27]);
+    // On the way down each limit goes first and its burst after.
+    assertEquals(Arrays.asList("2D=840", "27=880", "19=300", "26=300"), ctl.settingWrites());
+
+    Result up = new Result();
+    bike.tryValues(change("line", 520, "phase", 1400), up);
+    run(14000);
+    assertEquals(up.calls.toString(), Boolean.TRUE, up.ok);
+    // On the way up each burst goes first and its limit after.
+    assertEquals(Arrays.asList("2D=840", "27=880", "19=300", "26=300", "26=520", "19=520", "27=1440", "2D=1400"),
+        ctl.settingWrites());
+    assertArrayEquals("back exactly as it came", ctl.flash, ctl.ram);
+    assertBurstsNeverBelowTheirLimits();
+  }
+
+  @Test public void aFaultPutsTheBurstBackWithTheLimit() {
+    linkController();
+    Result r = new Result();
+    bike.tryValues(change("line", 300), r);
+    run(4000);
+    assertEquals(Bike.TRYING, bike.tuneState());
+    assertEquals(300, ctl.ram[0x26]);
+    ctl.ram[0xE3] |= 0x0008;        // phase current surge
+    run(9000);
+    assertEquals(Bike.TUNE_IDLE, bike.tuneState());
+    int[] ram = ctl.ram.clone();
+    ram[0xE3] = ctl.flash[0xE3];
+    assertArrayEquals("limit and burst both back", ctl.flash, ram);
+    assertBurstsNeverBelowTheirLimits();
+  }
+
+  @Test public void savingKeepsTheBurstWithTheLimitAndTheWayBackStaysOpen() {
+    linkController();
+    Result r = new Result();
+    bike.tryValues(change("line", 300), r);
+    run(9000);
+    Result s = new Result();
+    bike.save(s);
+    run(6000);
+    assertEquals(s.calls.toString(), Boolean.TRUE, s.ok);
+    assertEquals(300, ctl.flash[0x19]);
+    assertEquals(300, ctl.flash[0x26]);
+    assertEquals("still allowed back to what it came with", 520, bike.ceiling(Fardriver.param("line")));
+    assertEquals(520, bike.ceiling(Fardriver.param("boost_line")));
+    Result back = new Result();
+    bike.tryValues(change("line", 520), back);
+    run(9000);
+    assertEquals(back.calls.toString(), Boolean.TRUE, back.ok);
+    assertEquals(520, ctl.ram[0x19]);
+    assertEquals(520, ctl.ram[0x26]);
+  }
+
+  @Test public void aControllerThatCameWithItsBurstBelowItsLimitIsLeftAsItIs() {
+    linkController();
+    ctl.ram[0x26] = ctl.flash[0x26] = 400;          // 100 A burst under a 130 A limit: odd, but its own
+    run(1500);
+    Result r = new Result();
+    bike.tryValues(change("line", 440), r);
+    run(9000);
+    assertEquals(r.calls.toString(), Boolean.TRUE, r.ok);
+    assertEquals("only what was asked for is written", Arrays.asList("19=440"), ctl.settingWrites());
+    assertEquals(400, ctl.ram[0x26]);
+  }
+
+  @Test public void aBurstCannotBeAskedForOnItsOwnAboveWhatItCameWith() {
+    linkController();
+    Result r = new Result();
+    bike.tryValues(change("boost_line", 560), r);    // 140 A on a controller that came with 130 A
+    run(2000);
+    assertEquals(Boolean.FALSE, r.ok);
+    assertTrue(ctl.settingWrites().isEmpty());
+    Result under = new Result();
+    bike.tryValues(change("boost_line", 480), under);   // below the 130 A limit it sits above
+    run(2000);
+    assertEquals(Boolean.FALSE, under.ok);
+    assertTrue(under.message, under.message.contains("cannot be above"));
+    assertTrue(ctl.settingWrites().isEmpty());
   }
 
   // ---- Battery ---------------------------------------------------------------
