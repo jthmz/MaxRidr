@@ -41,8 +41,9 @@ import java.util.concurrent.Executors;
  * downloads a newer APK, checks its SHA-256 against the manifest and hands it
  * to the system installer.
  *
- * The repository is private, so the phone needs a read-only GitHub token,
- * pasted once in Settings.
+ * The repository is public, so the phone needs nothing to read it. If it is
+ * ever made private, a read-only GitHub token pasted in Settings is sent
+ * along and updates carry on.
  *
  * The first update on a phone needs one tap on the system's install prompt.
  * After that this app is its own "installer of record", which lets Android
@@ -58,7 +59,7 @@ final class Updater {
     private Updater() {
     }
 
-    private static final String API = "https://api.github.com/repos/jthmz/maxapacity";
+    private static final String API = "https://api.github.com/repos/jthmz/MaxRidr";
     private static final String RELEASE_TAG = "ride-ota";
     static final String TOKEN_PREF = "update_token";
 
@@ -144,7 +145,6 @@ final class Updater {
             default:
                 break;
         }
-        if (!hasToken(c)) return "Add an update token to receive new versions";
         String lastError = Units.prefs(c).getString("update_error", "");
         if (!lastError.isEmpty()) return lastError;
         long checked = Units.prefs(c).getLong("update_checked", 0);
@@ -154,7 +154,7 @@ final class Updater {
 
     /** True when the status line is reporting a problem. */
     static boolean hasProblem(Context c) {
-        return state == FAILED || (state == IDLE && hasToken(c)
+        return state == FAILED || (state == IDLE
                 && !Units.prefs(c).getString("update_error", "").isEmpty());
     }
 
@@ -171,7 +171,7 @@ final class Updater {
 
     /** Background check on resume, at most every six hours. */
     static void autoCheck(Context context, Host host) {
-        if (!autoEnabled(context) || !hasToken(context)) return;
+        if (!autoEnabled(context)) return;
         if (state == READY) {
             offerInstall(context, host);
             return;
@@ -194,10 +194,6 @@ final class Updater {
         final Context c = context.getApplicationContext();
         final long installed = versionCode(c);
         final String token = Units.prefs(c).getString(TOKEN_PREF, "").trim();
-        if (token.isEmpty()) {
-            if (manual) host.editUpdateToken();
-            return;
-        }
         error = null;
         set(CHECKING);
         IO.execute(() -> {
@@ -253,7 +249,7 @@ final class Updater {
                 });
             } catch (IOException | JSONException e) {
                 final String message = e instanceof IOException
-                        ? offlineMessage((IOException) e)
+                        ? offlineMessage((IOException) e, !token.isEmpty())
                         : "The update listing could not be read";
                 MAIN.post(() -> {
                     error = message;
@@ -267,15 +263,20 @@ final class Updater {
         });
     }
 
-    private static String offlineMessage(IOException e) {
+    private static String offlineMessage(IOException e, boolean withToken) {
         String m = e.getMessage();
         if (m != null && m.startsWith("The ")) return m;
-        if ("HTTP 401".equals(m) || "HTTP 403".equals(m)) {
-            return "GitHub refused the update token. Check it in Settings";
+        if ("HTTP 401".equals(m) || "HTTP 403".equals(m) || "HTTP 429".equals(m)) {
+            // Without a token GitHub allows a limited number of checks an
+            // hour from one network; that is the only way it says no.
+            return withToken ? "GitHub refused the update token. Check it in Settings"
+                    : "GitHub is not taking update checks from this network right now."
+                    + " Try again in an hour";
         }
         if ("HTTP 404".equals(m)) {
-            return "No update found. Either none is published yet or the token cannot"
-                    + " read the repository";
+            return withToken ? "No update found. Either none is published yet or the token"
+                    + " cannot read the repository"
+                    : "No update has been published yet";
         }
         return "Could not reach the update server. Check the connection and try again";
     }
@@ -424,7 +425,7 @@ final class Updater {
         conn.setConnectTimeout(8000);
         conn.setReadTimeout(30000);
         conn.setUseCaches(false);
-        conn.setRequestProperty("Authorization", "Bearer " + token);
+        if (!token.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + token);
         conn.setRequestProperty("Accept", accept);
         conn.setRequestProperty("X-GitHub-Api-Version", "2022-11-28");
         conn.setRequestProperty("User-Agent", "maxapacity-ride");

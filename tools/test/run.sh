@@ -3,7 +3,7 @@
 # Dry-runs ride-test.sh against a pretend phone (bin/adb) and checks what it
 # says, what it leaves behind and what it did to the phone. No phone needed.
 #
-#   bash os/tools/test/run.sh
+#   bash tools/test/run.sh
 #
 # Written for the bash that ships with macOS (3.2), like the script it tests.
 

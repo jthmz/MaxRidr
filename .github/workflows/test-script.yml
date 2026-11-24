@@ -1,6 +1,6 @@
 name: Ride phone-test script
 
-# os/tools/ride-test.sh is what gets run on someone's own Mac to put the app
+# tools/ride-test.sh is what gets run on someone's own Mac to put the app
 # on a phone and photograph its screens. It is checked against a pretend
 # phone: on Linux, under the bash that ships with macOS (3.2), and on a real
 # Mac with the Mac's own tools.
@@ -8,9 +8,9 @@ name: Ride phone-test script
 on:
   push:
     paths:
-      - 'os/tools/ride-test.sh'
-      - 'os/tools/test/**'
-      - '.github/workflows/ride-test-script.yml'
+      - 'tools/ride-test.sh'
+      - 'tools/test/**'
+      - '.github/workflows/test-script.yml'
   workflow_dispatch:
 
 permissions:
@@ -28,19 +28,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Lint
-        run: shellcheck -s bash os/tools/ride-test.sh os/tools/test/run.sh os/tools/test/bin/adb
+        run: shellcheck -s bash tools/ride-test.sh tools/test/run.sh tools/test/bin/adb
       - name: Test
-        run: bash os/tools/test/run.sh
+        run: bash tools/test/run.sh
       - name: Test under bash 3.2
         run: |
           docker run --rm -v "$PWD:/repo" -w /repo bash:3.2 sh -c \
-            'bash --version | head -n 1 && bash os/tools/test/run.sh'
+            'bash --version | head -n 1 && bash tools/test/run.sh'
 
   macos:
     name: test on macOS (its own bash and tools)
-    # macOS minutes cost ten times Linux ones on a private repository. This
-    # job takes under a minute and runs only when the script or its tests
-    # change; a merge to main would only repeat what the branch already ran.
+    # Runs only when the script or its tests change; a merge to main would
+    # only repeat what the branch already ran.
     if: github.ref != 'refs/heads/main'
     runs-on: macos-latest
     timeout-minutes: 10
@@ -49,4 +48,4 @@ jobs:
       - name: Test
         run: |
           /bin/bash --version | head -n 1
-          /bin/bash os/tools/test/run.sh
+          /bin/bash tools/test/run.sh

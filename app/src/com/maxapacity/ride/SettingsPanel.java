@@ -109,16 +109,15 @@ final class SettingsPanel extends Panel {
         int state = Updater.state();
         boolean busy = state == Updater.CHECKING || state == Updater.DOWNLOADING
                 || state == Updater.INSTALLING;
-        final boolean token = Updater.hasToken(c);
         link(app, Icons.REFRESH_CW, "Version " + Updater.versionName(c),
                 Updater.statusLine(c),
-                !token ? "Add token" : state == Updater.READY ? "Install" : busy ? "" : "Check",
+                state == Updater.READY ? "Install" : busy ? "" : "Check",
                 false, busy ? null : v -> {
-                    if (!Updater.hasToken(c)) host.editUpdateToken();
-                    else if (Updater.state() == Updater.READY) Updater.install(c);
+                    if (Updater.state() == Updater.READY) Updater.install(c);
                     else Updater.check(c, host, true);
                 });
-        if (token) {
+        // Only a private repository needs one, so it is shown only once set.
+        if (Updater.hasToken(c)) {
             link(app, Icons.KEY_ROUND, "Update token", "Read-only access to the app's releases",
                     "Saved", true, v -> host.editUpdateToken());
         }

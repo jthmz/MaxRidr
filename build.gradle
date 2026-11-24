@@ -1,11 +1,10 @@
-// Builds the ride launcher as a standalone APK from the same sources the ROM
-// build uses (os/vendor/extra/apps/MaxapacityRide), for installing on a stock
-// LineageOS phone with `adb install` and for over-the-air updates after that.
+// Builds the MAXAPACITY Ride app from app/: `gradle assembleRelease`. The
+// same sources can also be built into a LineageOS image (app/Android.bp).
 plugins {
     id 'com.android.application' version '8.7.3'
 }
 
-def appDir = file('../vendor/extra/apps/MaxapacityRide')
+def appDir = file('app')
 
 // The ROM build needs package= in the manifest; the Gradle plugin rejects it
 // in favour of `namespace`, so build from a copy without it.
