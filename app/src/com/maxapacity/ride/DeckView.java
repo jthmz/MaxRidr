@@ -51,11 +51,15 @@ final class DeckView extends Panel {
     private String showing = "";
 
     private final Runnable poll = this::fetchState;
-    /** While no Deck is linked, keep looking: a cable plugged in announces nothing. */
+    /**
+     * While no Deck is linked, keep looking: a cable plugged in announces
+     * nothing, and a network that drops the Deck's announcement has to be
+     * asked directly (which the link spaces out by itself).
+     */
     private final Runnable relook = new Runnable() {
         @Override
         public void run() {
-            Deck.get(getContext()).refresh();
+            Deck.get(getContext()).search(false);
             main.postDelayed(this, RELOOK_MS);
         }
     };
@@ -71,7 +75,7 @@ final class DeckView extends Panel {
 
     @Override
     protected void onOpen() {
-        Deck.get(getContext()).refresh();
+        Deck.get(getContext()).search(false);
         stayAwake(true);
         restart();
     }
@@ -109,7 +113,7 @@ final class DeckView extends Panel {
         loadedOnce = false;
         shownState = "";
         Deck d = Deck.get(getContext());
-        showing = d.state() + " " + d.address();
+        showing = key(d);
         if (d.state() == Deck.LINKED) {
             showLoading();
             fetchState();
@@ -123,7 +127,12 @@ final class DeckView extends Panel {
     /** The link came up, dropped or moved to another address. */
     void linkChanged() {
         Deck d = Deck.get(getContext());
-        if (isOpen() && !showing.equals(d.state() + " " + d.address())) restart();
+        if (isOpen() && !showing.equals(key(d))) restart();
+    }
+
+    /** Everything about the link this screen draws from. */
+    private static String key(Deck d) {
+        return d.state() + " " + d.address() + " " + d.searching() + " " + d.onNetwork();
     }
 
     private void stopPolling() {
@@ -241,14 +250,18 @@ final class DeckView extends Panel {
     // ---- States ---------------------------------------------------------
 
     private void showEmpty() {
-        boolean looking = Deck.get(getContext()).state() == Deck.LOOKING;
-        status.set(looking ? "LOOKING" : "OUT OF REACH", Ui.TEXT_3);
+        Deck d = Deck.get(getContext());
+        boolean busy = d.state() == Deck.LOOKING || d.searching();
+        status.set(!d.onNetwork() ? "NO WI-FI" : busy ? "SEARCHING" : "NOT FOUND", Ui.TEXT_3);
         content.removeAllViews();
         content.addView(Ui.emptyState(getContext(), Icons.MONITOR, "Your desk, in your pocket",
                 "Channel numbers, the video pipeline, Claude's progress and Mac controls, from"
-                        + " the Deck on your Mac. It links by itself when this phone is on the"
-                        + " same Wi-Fi as the Mac, or plugged into it.",
-                "Deck connection", Ui.PRIMARY, v -> host.editDeckConnection()));
+                        + " the Deck on your Mac. " + (!d.onNetwork()
+                        ? "This phone is not on Wi-Fi. Join the Wi-Fi your Mac is on, or plug"
+                        + " this phone into the Mac."
+                        : busy ? "Searching this Wi-Fi for it now."
+                        : "Nothing has answered on this Wi-Fi yet."),
+                "Link your Deck", Ui.PRIMARY, v -> host.editDeckConnection()));
     }
 
     /** A Deck is in reach and only wants its code. */

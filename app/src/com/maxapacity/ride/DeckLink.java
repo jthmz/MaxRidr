@@ -9,15 +9,21 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 /**
  * The wire side of the link to the MAXAPACITY Deck (the Mac service in
@@ -65,8 +71,13 @@ final class DeckLink {
 
     /** "Am I home?": does the Deck at this address answer within a couple of seconds. */
     static Probe probe(String address, String key) {
+        return probe(address, key, QUICK_MS, 0);
+    }
+
+    /** @param readMs how long to wait for the answer once connected; 0 for the usual patience */
+    private static Probe probe(String address, String key, int connectMs, int readMs) {
         try {
-            Reply r = request("GET", address, "/api/state", key, null, QUICK_MS);
+            Reply r = request("GET", address, "/api/state", key, null, connectMs, readMs);
             if (r.code == 200 && r.json != null && r.json.has("uploads")) {
                 return new Probe(HOME, r.json.optBoolean("uploads"), r.json);
             }
@@ -81,6 +92,137 @@ final class DeckLink {
             // Not there, or not an address at all. Either way: no Deck here.
         }
         return new Probe(ABSENT, false, null);
+    }
+
+    // ---- Searching a network ---------------------------------------------------
+
+    /** How long an address gets to pick up while a whole network is being asked. */
+    static final int SWEEP_CONNECT_MS = 500;
+    private static final int SWEEP_ANSWER_MS = 2500;
+    private static final int SWEEP_AT_ONCE = 64;
+    /** A search never asks more addresses than a network of this prefix holds (1022). */
+    private static final int WIDEST_PREFIX = 22;
+
+    /** A Deck that asking a whole network turned up. */
+    static final class Hit {
+        final String address;
+        /** {@link #UNPAIRED} or {@link #SHUT}; {@link #HOME} only where no key is needed. */
+        final int result;
+
+        Hit(String address, int result) {
+            this.address = address;
+            this.result = result;
+        }
+    }
+
+    /**
+     * The other addresses on this phone's own network, nearest first, for
+     * finding a Deck whose announcement the network does not pass on.
+     *
+     * Only ever a home or office network: an address that is not in one of
+     * the private ranges gives nothing to ask. A network larger than 1022
+     * addresses is asked only around the phone's own address.
+     *
+     * @param own this phone's IPv4 address, such as "192.168.1.57"
+     * @param prefix its network prefix length, such as 24
+     */
+    static List<String> neighbours(String own, int prefix, int port) {
+        List<String> out = new ArrayList<>();
+        int[] o = ipv4(own);
+        if (o == null || !privateNet(o)) return out;
+        int bits = prefix < 1 || prefix > 32 ? 24 : Math.max(prefix, WIDEST_PREFIX);
+        if (bits > 30) return out; // a link with two ends has nobody else on it
+        final int me = (o[0] << 24) | (o[1] << 16) | (o[2] << 8) | o[3];
+        int mask = -1 << (32 - bits);
+        int first = (me & mask) + 1;
+        int last = (me | ~mask) - 1;
+        List<Integer> all = new ArrayList<>();
+        for (int a = first; a <= last; a++) if (a != me) all.add(a);
+        // The Deck is most often a near neighbour: the phone's own block of 256 goes first.
+        Collections.sort(all, (x, y) -> {
+            boolean nearX = (x >>> 8) == (me >>> 8);
+            boolean nearY = (y >>> 8) == (me >>> 8);
+            if (nearX != nearY) return nearX ? -1 : 1;
+            return Integer.compareUnsigned(x, y);
+        });
+        for (int a : all) {
+            out.add((a >>> 24) + "." + ((a >>> 16) & 0xFF) + "." + ((a >>> 8) & 0xFF) + "."
+                    + (a & 0xFF) + ":" + port);
+        }
+        return out;
+    }
+
+    private static int[] ipv4(String text) {
+        if (text == null) return null;
+        String[] parts = text.trim().split("\\.");
+        if (parts.length != 4) return null;
+        int[] out = new int[4];
+        try {
+            for (int i = 0; i < 4; i++) {
+                out[i] = Integer.parseInt(parts[i]);
+                if (out[i] < 0 || out[i] > 255) return null;
+            }
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        return out;
+    }
+
+    private static boolean privateNet(int[] a) {
+        return a[0] == 10 || (a[0] == 172 && a[1] >= 16 && a[1] <= 31)
+                || (a[0] == 192 && a[1] == 168);
+    }
+
+    /**
+     * Asks many addresses at once whether a Deck lives there, and returns the
+     * ones that do. No key is sent: whatever else is on the network is not
+     * handed this phone's key, and a Deck says what it is without one.
+     *
+     * Takes about {@code connectMs} for every {@value #SWEEP_AT_ONCE} addresses
+     * that do not answer: two seconds for a home network of 254.
+     */
+    static List<Hit> sweep(List<String> addresses, final int connectMs) {
+        final List<Hit> hits = Collections.synchronizedList(new ArrayList<Hit>());
+        if (addresses.isEmpty()) return hits;
+        ExecutorService pool = Executors.newFixedThreadPool(
+                Math.min(SWEEP_AT_ONCE, addresses.size()));
+        try {
+            List<Future<?>> asked = new ArrayList<>();
+            for (final String a : addresses) {
+                asked.add(pool.submit(() -> {
+                    if (!picksUp(a, connectMs)) return;
+                    // Whatever picks up and then says nothing is not a Deck: do not wait on it.
+                    Probe p = probe(a, null, SWEEP_ANSWER_MS, SWEEP_ANSWER_MS);
+                    if (p.result != ABSENT) hits.add(new Hit(a, p.result));
+                }));
+            }
+            for (Future<?> f : asked) {
+                try {
+                    f.get();
+                } catch (Exception e) {
+                    // That address is simply not one.
+                }
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        List<Hit> inOrder = new ArrayList<>(hits);
+        Collections.sort(inOrder, (x, y) -> addresses.indexOf(x.address)
+                - addresses.indexOf(y.address));
+        return inOrder;
+    }
+
+    /** Whether anything at all accepts a connection there, found out quickly. */
+    private static boolean picksUp(String address, int connectMs) {
+        int colon = address.lastIndexOf(':');
+        if (colon <= 0) return false;
+        try (Socket s = new Socket()) {
+            s.connect(new InetSocketAddress(address.substring(0, colon),
+                    Integer.parseInt(address.substring(colon + 1))), connectMs);
+            return true;
+        } catch (IOException | RuntimeException e) {
+            return false;
+        }
     }
 
     /** How pairing went. */
@@ -228,10 +370,15 @@ final class DeckLink {
 
     private static HttpURLConnection open(String method, String address, String path, String key,
             int timeoutMs) throws IOException {
+        return open(method, address, path, key, timeoutMs, 0);
+    }
+
+    private static HttpURLConnection open(String method, String address, String path, String key,
+            int timeoutMs, int readMs) throws IOException {
         HttpURLConnection conn = (HttpURLConnection) new URL("http://" + address + path)
                 .openConnection();
         conn.setConnectTimeout(timeoutMs);
-        conn.setReadTimeout(Math.max(timeoutMs, 6000));
+        conn.setReadTimeout(readMs > 0 ? readMs : Math.max(timeoutMs, 6000));
         conn.setUseCaches(false);
         conn.setInstanceFollowRedirects(false);
         conn.setRequestMethod(method);
@@ -241,7 +388,12 @@ final class DeckLink {
 
     private static Reply request(String method, String address, String path, String key,
             JSONObject body, int timeoutMs) throws IOException {
-        HttpURLConnection conn = open(method, address, path, key, timeoutMs);
+        return request(method, address, path, key, body, timeoutMs, 0);
+    }
+
+    private static Reply request(String method, String address, String path, String key,
+            JSONObject body, int timeoutMs, int readMs) throws IOException {
+        HttpURLConnection conn = open(method, address, path, key, timeoutMs, readMs);
         try {
             if (body != null) {
                 byte[] bytes = body.toString().getBytes(StandardCharsets.UTF_8);
