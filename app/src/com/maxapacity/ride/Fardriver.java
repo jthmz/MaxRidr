@@ -141,7 +141,10 @@ final class Fardriver {
     /** True when the throttle reads above the voltage the controller itself treats as closed. */
     boolean throttleOpen() {
         if (legacy || seen[THROTTLE_RANGE] == 0 || seen[0x82] == 0) return false;
-        return words[0x82] * 0.01f > (words[THROTTLE_RANGE] & 0xFF) / 20f;
+        float closed = (words[THROTTLE_RANGE] & 0xFF) / 20f;
+        // A threshold no throttle has means this word is not what it is taken for: say nothing.
+        if (closed < 0.5f || closed > 2.5f) return false;
+        return words[0x82] * 0.01f > closed;
     }
 
     /** Every fault bit that has shown in any frame since {@link #clearFaultLatch}. */
