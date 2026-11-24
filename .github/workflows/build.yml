@@ -90,8 +90,9 @@ jobs:
       # The screen tests run Android's own code on the build machine, which
       # needs a ~200 MB runtime download for each Android version tested; keep
       # them between runs. When the list of versions changes the key changes
-      # with it, and an older copy is still restored, so only what is new has
-      # to be downloaded.
+      # with it. An older store is then restored, so only what is missing is
+      # downloaded: a build that had to fetch everything was turned away by
+      # the download site (HTTP 429) and failed every screen test.
       - uses: actions/cache@v4
         with:
           path: ~/.m2/repository/org/robolectric
