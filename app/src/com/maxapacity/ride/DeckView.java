@@ -1,6 +1,7 @@
 package com.maxapacity.ride;
 
 import android.content.Context;
+import android.os.BatteryManager;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
@@ -71,12 +72,23 @@ final class DeckView extends Panel {
     @Override
     protected void onOpen() {
         Deck.get(getContext()).refresh();
+        stayAwake(true);
         restart();
     }
 
     @Override
     protected void onClose() {
+        stayAwake(false);
         stopPolling();
+    }
+
+    /**
+     * A phone left on this screen on a charger is a desk display, so it stays
+     * lit. On battery the screen times out as usual.
+     */
+    private void stayAwake(boolean showing) {
+        BatteryManager battery = getContext().getSystemService(BatteryManager.class);
+        setKeepScreenOn(showing && battery != null && battery.isCharging());
     }
 
     /** Stop talking to the Mac while the launcher is in the background. */
@@ -87,6 +99,7 @@ final class DeckView extends Panel {
 
     @Override
     void onHostResume() {
+        stayAwake(true);
         restart();
     }
 
