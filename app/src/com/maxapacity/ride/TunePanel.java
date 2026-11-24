@@ -1,9 +1,13 @@
 package com.maxapacity.ride;
 
 import android.content.Context;
+import android.content.Intent;
+import android.text.InputType;
 import android.text.TextUtils;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -16,6 +20,10 @@ import java.util.Map;
  * "Try on bike", which makes them live but temporary. From there either Save
  * keeps them or Undo puts the old values back. Switching the bike off also
  * discards anything that was not saved.
+ *
+ * "Tune ideas" is for the rider who does not know what to change: it writes
+ * the bike up as a {@link TuneBrief} to send to an AI app or a tuner. It reads
+ * only; the advice that comes back is entered here like any other change.
  */
 final class TunePanel extends Panel {
 
@@ -137,6 +145,8 @@ final class TunePanel extends Panel {
                     + " is connected.");
         }
 
+        content.addView(ideasRow(), Ui.top(c, Ui.matchWrap(), 12));
+
         String group = "";
         LinearLayout card = null;
         for (final Fardriver.Param p : Fardriver.PARAMS) {
@@ -224,6 +234,117 @@ final class TunePanel extends Panel {
                     host.say(m);
                 }))
                 .show();
+    }
+
+    // ---- Tune ideas ----------------------------------------------------------
+
+    private View ideasRow() {
+        Context c = getContext();
+        LinearLayout row = Ui.row(c);
+        row.setBackground(Ui.pressable(c, Ui.SURFACE, Ui.HAIRLINE, 16));
+        row.setPadding(dp(16), dp(12), dp(16), dp(12));
+        row.addView(Ui.icon(c, Icons.SPARKLES, 18, Ui.TEXT_2));
+        LinearLayout text = Ui.column(c);
+        text.addView(Ui.body(c, "Tune ideas", Ui.TEXT));
+        text.addView(Ui.small(c, "Not sure what to change? Get suggestions for this bike",
+                Ui.TEXT_3));
+        row.addView(text, Ui.left(c, Ui.weighted(), 12));
+        ImageView go = Ui.icon(c, Icons.CHEVRON_RIGHT, 18, Ui.TEXT_3);
+        ((LinearLayout.LayoutParams) go.getLayoutParams()).leftMargin = dp(8);
+        row.addView(go);
+        row.setOnClickListener(v -> showIdeas());
+        Ui.press(row);
+        return row;
+    }
+
+    /**
+     * What does the rider want from the bike? Each answer goes out as a brief
+     * for an AI app or a tuner to work from. Nothing here reaches the bike.
+     */
+    void showIdeas() {
+        final Context c = getContext();
+        if (!TuneBrief.ready(Bike.get(c))) {
+            host.say("The controller's settings have not been read yet");
+            return;
+        }
+        Sheet sheet = new Sheet(host.frame(), "Tune ideas",
+                "Pick what you want. The app writes up this bike's settings and limits for you"
+                        + " to send to an AI app on this phone, or to a tuner. Nothing on the"
+                        + " bike changes.");
+        for (final TuneBrief.Goal g : TuneBrief.GOALS) {
+            sheet.item(g.icon, g.name, g.detail, false, () -> send(g.ask));
+        }
+        sheet.item(Icons.ELLIPSIS, "Something else", "Say it in your own words", false,
+                this::ownWords);
+        String about = Units.prefs(c).getString(TuneBrief.ABOUT, "");
+        sheet.item(Icons.LIST, "About my bike", about.isEmpty()
+                ? "Add your bike, gearing and weight for better answers" : shorten(about),
+                false, this::editAbout);
+        sheet.show();
+    }
+
+    /** Hands the brief to whichever app the rider picks: an AI, a message to a tuner, or Copy. */
+    private void send(String goal) {
+        host.launch(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain")
+                .putExtra(Intent.EXTRA_TITLE, "Tune ideas for my bike")
+                .putExtra(Intent.EXTRA_SUBJECT, "Tune ideas for my bike")
+                .putExtra(Intent.EXTRA_TEXT, TuneBrief.build(getContext(), goal)), null));
+    }
+
+    private void ownWords() {
+        final EditText goal = prose("What do you want from the bike?");
+        new Sheet(host.frame(), "In your own words",
+                "For example: less wheelspin on wet roots, or keep up with a friend on fire"
+                        + " roads.")
+                .view(goal)
+                .action("Back", Ui.SECONDARY, true, this::showIdeas)
+                .action("Send", Ui.PRIMARY, false, () -> {
+                    String wanted = goal.getText().toString().trim();
+                    if (wanted.isEmpty()) {
+                        host.say("Say what you want first");
+                        return;
+                    }
+                    Sheet.dismissCurrent();
+                    send(wanted);
+                })
+                .show();
+    }
+
+    private void editAbout() {
+        final Context c = getContext();
+        final EditText about = prose("Bike, battery, gearing, your weight, where you ride");
+        about.setText(Units.prefs(c).getString(TuneBrief.ABOUT, ""));
+        new Sheet(host.frame(), "About my bike",
+                "The app reads the battery and the controller, but not the rest of the bike or"
+                        + " who rides it. A line or two here goes into every brief. It stays on"
+                        + " this phone until you send one.")
+                .view(about)
+                .action("Back", Ui.SECONDARY, true, this::showIdeas)
+                .action("Save", Ui.PRIMARY, true, () -> {
+                    Units.prefs(c).edit().putString(TuneBrief.ABOUT,
+                            about.getText().toString().trim()).apply();
+                    showIdeas();
+                })
+                .show();
+    }
+
+    /** A field for a sentence or two, rather than a code or a name. */
+    private EditText prose(String hint) {
+        EditText e = Ui.input(getContext(), hint, false);
+        e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+                | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        e.setSingleLine(false);
+        e.setMinLines(2);
+        e.setMaxLines(4);
+        e.setGravity(Gravity.TOP);
+        e.setPadding(dp(16), dp(12), dp(16), dp(12));
+        return e;
+    }
+
+    /** One line of a longer note, for the row that leads to it. */
+    private static String shorten(String note) {
+        String line = note.replace('\n', ' ');
+        return line.length() <= 60 ? line : line.substring(0, 57).trim() + "...";
     }
 
     private void note(String icon, int color, String text) {
