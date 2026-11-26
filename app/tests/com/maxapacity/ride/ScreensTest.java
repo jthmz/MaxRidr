@@ -320,6 +320,14 @@ public class ScreensTest {
 
   // ---- In use: riding, rides saved, bike linked ------------------------------
 
+  @Test public void freshPhoneCanBecomeTheDeck() throws Exception {
+    start();
+    panel("deck").open();
+    idle(400);
+    tap("Make this phone my Deck");
+    org.junit.Assert.assertTrue(c.getSharedPreferences("home-deck", 0).getBoolean("enabled", false));
+  }
+
   /** The Deck link at each step: found and wanting its code, then paired and showing the desk. */
   @Test public void theDeckFoundThenPairedAndLinked() throws Exception {
     fakeDeck = new FakeDeck(true);

@@ -67,6 +67,16 @@ rider or a Deck owner sees, change the page with it.
 
 ## How the phone and the Deck link
 
+To use a spare Android phone as the home receiver, open **Deck → Make this
+phone my Deck** on that phone. Tap **Pair a riding phone**, then open **Deck**
+on the riding phone and enter the six digits. Both phones use the same home
+Wi-Fi. The receiver can stay in the background and receives the GPX and JSON
+files for saved rides when the rider comes home. The files are under
+`Android/data/com.maxapacity.ride/files/Received rides/` on the home phone.
+Open Deck there to see the last file received or stop receiving.
+
+### Using the Mac Deck
+
 Nobody types an address. The app looks for the Deck by itself: down a USB
 cable first, then by the Deck's announcement on the home Wi-Fi, then at the
 last address that worked. Plenty of home networks never pass that

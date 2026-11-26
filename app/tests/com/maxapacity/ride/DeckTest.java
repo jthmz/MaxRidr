@@ -58,6 +58,38 @@ public class DeckTest {
     Deck.neighbours = null;
   }
 
+  @Test public void freshPhoneDeckPairsAndReceivesOnce() throws Exception {
+    try (ServerSocket server = new ServerSocket(0, 8, InetAddress.getLoopbackAddress())) {
+      Thread receiver = new Thread(() -> {
+        try {
+          while (!server.isClosed()) PhoneDeckRequest.handle(c, server.accept());
+        } catch (IOException closed) { /* test finished */ }
+      });
+      receiver.setDaemon(true);
+      receiver.start();
+      String address = "127.0.0.1:" + server.getLocalPort();
+      assertEquals(DeckLink.UNPAIRED, DeckLink.probe(address, "").result);
+      String code = PhoneDeck.newCode();
+      DeckLink.Pairing pair = DeckLink.pair(address, code, "Bike");
+      assertTrue(pair.ok);
+      assertFalse(DeckLink.pair(address, code, "Other").ok);
+      assertTrue(DeckLink.probe(address, pair.key).uploads);
+      byte[] bytes = "<gpx/>".getBytes(StandardCharsets.UTF_8);
+      DeckLink.Item item = new DeckLink.Item("ride.gpx", bytes.length, 0, "ride",
+              () -> new java.io.ByteArrayInputStream(bytes));
+      List<DeckLink.Item> items = java.util.Collections.singletonList(item);
+      assertEquals(1, DeckLink.send(address, pair.key, "Bike", items).sentNow);
+      DeckLink.Outcome repeat = DeckLink.send(address, pair.key, "Bike", items);
+      assertEquals(0, repeat.sentNow);
+      assertTrue(repeat.onMac.contains(item.name));
+      File root = c.getExternalFilesDir("Received rides");
+      try (java.util.stream.Stream<java.nio.file.Path> paths = Files.walk(root.toPath())) {
+        assertArrayEquals(bytes, Files.readAllBytes(paths.filter(path ->
+                path.getFileName().toString().equals(item.name)).findFirst().get()));
+      }
+    }
+  }
+
   /** Lets the background thread and the main thread's queue both move on. */
   static void until(String what, BooleanSupplier ok) throws Exception {
     for (int i = 0; i < 600 && !ok.getAsBoolean(); i++) {

@@ -606,10 +606,10 @@ public final class RideActivity extends Activity
                 : waiting == 1 ? " 1 ride is waiting to go home."
                 : waiting > 1 ? " " + waiting + " rides are waiting to go home."
                 : RideStore.load(this).length() == 0 ? " Rides go home by themselves after each"
-                + " one." : " Every ride on this phone is on your Mac.";
+                + " one." : " Every ride on this phone is on your Deck.";
         Sheet sheet = new Sheet(frame, "Deck linked",
                 (d.viaUsb() ? "This phone reaches your Mac down the USB cable."
-                        : "This phone reaches your Mac on this network, at " + d.address() + ".")
+                        : "This phone reaches your Deck on this network, at " + d.address() + ".")
                         + rides);
         if (d.uploads() && waiting > 0) {
             sheet.item(Icons.CLOUD_UPLOAD, "Send rides now",
@@ -618,9 +618,10 @@ public final class RideActivity extends Activity
                         if (!ok && message == null) say("The Deck went out of reach");
                     }));
         }
-        sheet.item(Icons.MONITOR, "Open the full Deck",
-                "Everything the Car Thing shows, with all its controls", false,
-                this::showFullDeck);
+        if (!d.phoneDeck()) {
+            sheet.item(Icons.MONITOR, "Open the full Deck",
+                    "Everything the Car Thing shows, with all its controls", false, this::showFullDeck);
+        }
         sheet.item(Icons.INFO, "Link report", "What this phone sees, to share if you need help",
                 false, this::deckReportSheet);
         // The cable needs no pairing, so there is nothing to forget.
@@ -687,7 +688,7 @@ public final class RideActivity extends Activity
             });
         };
         final Sheet sheet = new Sheet(frame, "Deck found",
-                "On the Deck, tap the clock, then Add a screen. Type the 6-digit code it shows.")
+                "On a phone Deck, tap Pair a riding phone. On a Mac Deck, tap the clock, then Add a screen. Enter the six digits here.")
                 .view(code)
                 .item(Icons.INFO, "Code not working?",
                         "A code pairs one screen and lasts five minutes", false,
