@@ -123,6 +123,7 @@ final class Deck {
     private int state = LOOKING;
     private String address = "";
     private boolean uploads;
+    private boolean phoneDeck;
     /** The last look met a Deck that is closed to other screens. */
     private boolean shut;
     private boolean looking;
@@ -179,6 +180,8 @@ final class Deck {
     }
 
     /** Whether the linked Deck takes rides. */
+    boolean phoneDeck() { return phoneDeck; }
+
     boolean uploads() {
         return uploads;
     }
@@ -263,6 +266,7 @@ final class Deck {
         final String address;
         final boolean uploads;
         final boolean shut;
+        boolean phoneDeck;
         /** Each place asked and what it said, for the log. */
         final String tried;
 
@@ -346,7 +350,9 @@ final class Deck {
                             : p.result == DeckLink.SHUT ? " turned this phone away"
                             : " did not answer");
             if (p.result == DeckLink.HOME) {
-                return new Look(LINKED, a, p.uploads, false, tried.toString());
+                Look linked = new Look(LINKED, a, p.uploads, false, tried.toString());
+                linked.phoneDeck = p.state.optBoolean("phoneDeck");
+                return linked;
             }
             if (p.result == DeckLink.UNPAIRED && wantsCode == null) wantsCode = a;
             if (p.result == DeckLink.SHUT) shut = true;
@@ -357,10 +363,11 @@ final class Deck {
 
     private void apply(Look look) {
         boolean different = look.state != state || !look.address.equals(address)
-                || look.uploads != uploads;
+                || look.uploads != uploads || look.phoneDeck != phoneDeck;
         state = look.state;
         address = look.address;
         uploads = look.uploads;
+        phoneDeck = look.phoneDeck;
         shut = look.shut;
         if (state != NOT_FOUND && !address.equals(usb)) {
             prefs.edit().putString(PREF_LAST, address).apply();
@@ -933,8 +940,8 @@ final class Deck {
                 }
                 problem = trouble;
                 if (arrived > 0 && o.sentNow > 0) {
-                    say(arrived == 1 ? "1 ride sent to your Mac"
-                            : arrived + " rides sent to your Mac", true);
+                    say(arrived == 1 ? "1 ride sent to your Deck"
+                            : arrived + " rides sent to your Deck", true);
                 }
                 // The same trouble is said once, not at every look.
                 if (!trouble.isEmpty() && !trouble.equals(lastProblem)) say(trouble, false);

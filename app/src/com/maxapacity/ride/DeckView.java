@@ -112,6 +112,10 @@ final class DeckView extends Panel {
         stopPolling();
         loadedOnce = false;
         shownState = "";
+        if (PhoneDeck.running) {
+            showReceiver();
+            return;
+        }
         Deck d = Deck.get(getContext());
         showing = key(d);
         if (d.state() == Deck.LINKED) {
@@ -139,6 +143,7 @@ final class DeckView extends Panel {
         generation++; // replies to requests already in flight are dropped
         main.removeCallbacks(poll);
         main.removeCallbacks(relook);
+        main.removeCallbacks(receiverRefresh);
     }
 
     private String baseUrl() {
@@ -262,6 +267,43 @@ final class DeckView extends Panel {
                         : busy ? "Searching this Wi-Fi for it now."
                         : "Nothing has answered on this Wi-Fi yet."),
                 "Link your Deck", Ui.PRIMARY, v -> host.editDeckConnection()));
+        addHostButton();
+    }
+
+    private void addHostButton() {
+        View button = Ui.button(getContext(), "Make this phone my Deck", Icons.MONITOR, Ui.SECONDARY);
+        content.addView(button, Ui.matchWrap());
+        button.setOnClickListener(v -> {
+            Context c = getContext();
+            PhoneDeck.enable(c, true);
+            stopPolling();
+            showReceiver();
+        });
+    }
+
+    private final Runnable receiverRefresh = this::restart;
+
+    private void showReceiver() {
+        status.set("HOME DECK", Ui.OK);
+        content.removeAllViews();
+        String last = getContext().getSharedPreferences("home-deck", 0).getString("last-file", "");
+        content.addView(Ui.emptyState(getContext(), Icons.MONITOR, "This phone is your Deck",
+                PhoneDeck.status + (last.isEmpty() ? ". Pair your riding phone once to receive its saved rides here."
+                        : ". Last received: " + last),
+                "Pair a riding phone", Ui.PRIMARY, v -> new android.app.AlertDialog.Builder(getContext())
+                        .setTitle("Pair a riding phone")
+                        .setMessage("On the riding phone, open Deck and enter " + PhoneDeck.newCode()
+                                + ". This code lasts five minutes.")
+                        .setPositiveButton("Done", null).show()));
+        View stop = Ui.button(getContext(), "Stop receiving", Icons.UNLINK, Ui.SECONDARY);
+        content.addView(stop, Ui.matchWrap());
+        stop.setOnClickListener(v -> {
+            Context c = getContext();
+            PhoneDeck.enable(c, false);
+            main.removeCallbacks(receiverRefresh);
+            main.postDelayed(receiverRefresh, 300);
+        });
+        main.postDelayed(receiverRefresh, 3000);
     }
 
     /** A Deck is in reach and only wants its code. */
@@ -269,9 +311,10 @@ final class DeckView extends Panel {
         status.set("FOUND", Ui.WARN);
         content.removeAllViews();
         content.addView(Ui.emptyState(getContext(), Icons.LINK, "Deck found",
-                "On the Deck, tap the clock, then Add a screen, and enter the 6-digit code it"
+                "On a phone Deck, tap Pair a riding phone. On a Mac Deck, tap Add a screen. Enter the code it"
                         + " shows.",
                 "Enter code", Ui.PRIMARY, v -> host.editDeckConnection()));
+        addHostButton();
     }
 
     /** Layout-matched placeholders rather than a spinner. */
@@ -292,6 +335,7 @@ final class DeckView extends Panel {
         content.removeAllViews();
         content.addView(Ui.emptyState(getContext(), Icons.UNLINK, "Deck is out of reach", text,
                 "Deck connection", Ui.SECONDARY, v -> host.editDeckConnection()));
+        addHostButton();
     }
 
     private void showState(JSONObject s) {
@@ -307,6 +351,12 @@ final class DeckView extends Panel {
         shownState = now;
 
         content.removeAllViews();
+        if (s.optBoolean("phoneDeck")) {
+            status.set("HOME DECK LINKED", Ui.OK);
+            content.addView(Ui.body(getContext(), "Your paired home phone receives saved rides on this Wi-Fi.", Ui.TEXT));
+            return;
+        }
+        addHostButton();
         addFullDeck();
         addChannel(s.optJSONObject("yt"));
         addPipeline(s.optJSONObject("board"));
