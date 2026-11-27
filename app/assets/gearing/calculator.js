@@ -22,6 +22,14 @@ function change(current, proposed) {
 }
 
 function render() {
+  for (const [id, front, rear] of [
+    ['fitCurrent', 'cf', 'cr'],
+    ['fitProposed', 'nf', 'nr'],
+  ]) {
+    const f = form.elements[front],
+      r = form.elements[rear];
+    document.getElementById(id).disabled = !f.value || !r.value || !f.checkValidity() || !r.checkValidity();
+  }
   const custom = form.elements.pitch.value === 'custom';
   document.getElementById('pitchLabel').hidden = !custom;
   form.elements.pitchMm.disabled = !custom;
@@ -148,6 +156,10 @@ function restore() {
     );
   }
   const profile = profiles.get(active);
+  if (window.RideGearing) {
+    document.getElementById('installation').hidden = false;
+    showInstalled(window.RideGearing.select(context, active));
+  }
   applyInputs(profile.inputs);
   goal.value = profile.goal || '';
   statusLine.textContent = profile.inputs
@@ -156,6 +168,39 @@ function restore() {
   render();
   suggestion();
 }
+
+function showInstalled(saved) {
+  const label = document.getElementById('installed');
+  label.hidden = false;
+  const setup = saved ? JSON.parse(saved) : null;
+  label.textContent = setup
+    ? 'Installed · ' + setup.front + 'T front / ' + setup.rear + 'T rear'
+    : 'No installed setup recorded for this bike.';
+}
+
+function installPair(proposed) {
+  const front = form.elements[proposed ? 'nf' : 'cf'].valueAsNumber;
+  const rear = form.elements[proposed ? 'nr' : 'cr'].valueAsNumber;
+  const inputs = Object.fromEntries(new FormData(form));
+  const result = window.RideGearing.install(
+    context,
+    active,
+    profiles.get(active).name,
+    front,
+    rear,
+    JSON.stringify(inputs),
+  );
+  if (!result) {
+    statusLine.textContent = 'Installation could not be saved. Try again.';
+    return;
+  }
+  form.elements.cf.value = front;
+  form.elements.cr.value = rear;
+  edited();
+  showInstalled(result);
+}
+document.getElementById('fitCurrent').onclick = () => installPair(false);
+document.getElementById('fitProposed').onclick = () => installPair(true);
 
 function edited() {
   render();

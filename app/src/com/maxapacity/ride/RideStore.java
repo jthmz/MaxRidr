@@ -100,6 +100,9 @@ final class RideStore {
                     .put("leanLeft", Math.round(state.maxLeanLeftDeg()))
                     .put("leanRight", Math.round(state.maxLeanRightDeg()))
                     .put("strava", strava ? STRAVA_PENDING : STRAVA_NONE);
+            if (state.installedGearing() != null) {
+                ride.put("gearing", new JSONObject(state.installedGearing()));
+            }
             BikeLog.Summary bike = state.bikeLog().summary();
             if (bike != null) {
                 ride.put(BIKE, bikeJson(bike));

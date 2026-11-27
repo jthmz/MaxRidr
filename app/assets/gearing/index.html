@@ -181,6 +181,7 @@
           <button type="submit">Add bike</button> <button type="button" id="cancelBike">Cancel</button>
         </form>
         <p id="saved" role="status"></p>
+        <p id="installed" role="status" hidden></p>
       </section>
       <form id="gearing">
         <fieldset>
@@ -216,6 +217,14 @@
             <button type="button" data-rear="45">45T</button><button type="button" data-rear="48">48T</button
             ><button type="button" data-rear="60">60T</button>
           </div>
+        </fieldset>
+        <fieldset id="installation" hidden>
+          <legend>Record an installation</legend>
+          <p class="help">
+            Which sprockets are fitted now? New rides will record this pair for the selected bike.
+          </p>
+          <button type="button" id="fitCurrent">Mark current installed</button>
+          <button type="button" id="fitProposed">Mark proposed installed</button>
         </fieldset>
         <section aria-live="polite">
           <table>

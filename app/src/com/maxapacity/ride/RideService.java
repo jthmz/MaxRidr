@@ -137,7 +137,7 @@ public final class RideService extends Service
             return START_NOT_STICKY;
         }
 
-        if (!RideState.get().isRecording()) RideState.get().start();
+        if (!RideState.get().isRecording()) RideState.get().start(InstalledGearing.atStart(this));
         startCrashWatch();
         handler.removeCallbacks(idleCheck);
         handler.postDelayed(idleCheck, 15000);

@@ -97,8 +97,30 @@ try {
     check(form.elements.cr.value === '48', 'partial edit overwrote saved profile');
   `,
   );
+  launch(
+    'talaria-mx4',
+    `
+    const calls = [];
+    window.RideGearing = {
+      select: () => '',
+      install: (ctx, id, name, front, rear) => {
+        calls.push([ctx, id, front, rear]);
+        return JSON.stringify({front, rear});
+      }
+    };
+    restore();
+    set('nr',52);
+    check(calls.length === 0, 'draft installed without rider action');
+    document.getElementById('fitCurrent').click();
+    check(calls[0][2] === 14 && calls[0][3] === 48, 'wrong current setup');
+    document.getElementById('fitProposed').click();
+    check(calls[1][1] === active && calls[1][3] === 52 && form.elements.cr.value === '52', 'wrong swap');
+    set('nr',54);
+    check(document.getElementById('installed').textContent.includes('52T rear'), 'draft changed installed label');
+  `,
+  );
   console.log(
-    'Passed six offline launches covering automatic and manual bike switching, saves, and gearing suggestions.',
+    'Passed offline installation and profile launches covering automatic and manual bike switching, saves, and gearing suggestions.',
   );
 } finally {
   rmSync(directory, { recursive: true, force: true });

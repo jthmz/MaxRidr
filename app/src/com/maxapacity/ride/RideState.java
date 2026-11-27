@@ -91,7 +91,13 @@ final class RideState {
         }
     }
 
-    void start() {
+    private String installedGearing;
+    String installedGearing() { return installedGearing; }
+
+    void start() { start(null); }
+
+    void start(String snapshot) {
+        installedGearing = snapshot;
         recording = true;
         startElapsedMs = SystemClock.elapsedRealtime();
         startWallMs = System.currentTimeMillis();

@@ -24,17 +24,9 @@ public final class BikeToolActivity extends Activity {
     static final String LOCAL_GEARING = "https://" + ASSET_HOST + "/gearing/index.html";
 
     private String calculatorUrl() {
-        String model = PickerBike.path(this);
-        Bike bike = Bike.get(this);
-        if (bike.demo()) return LOCAL_GEARING + "#demo";
-        if (model.startsWith("/builder/")) return LOCAL_GEARING + "#" + model.substring("/builder/".length());
-        // These are the identifiers the app uses to reconnect to configured hardware.
-        // Keep them local, including when opening a shareable website setup.
-        if (bike.anyConfigured()) {
-            String pair = Uri.encode(bike.controllerName()) + "|" + Uri.encode(bike.batteryName());
-            return LOCAL_GEARING + "#linked:" + Uri.encode(pair);
-        }
-        return LOCAL_GEARING;
+        String key = InstalledGearing.contextKey(this);
+        if (key.equals("manual")) return LOCAL_GEARING;
+        return LOCAL_GEARING + "#" + Uri.encode(key, ":");
     }
     private WebView page;
     private String gearingContext;
@@ -61,6 +53,10 @@ public final class BikeToolActivity extends Activity {
         ProgressBar progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         root.addView(progress, new LinearLayout.LayoutParams(-1, Ui.dp(this, 3)));
         page = new WebView(this);
+        boolean calculator = SPROCKET.equals(path);
+        if (calculator) {
+            page.addJavascriptInterface(new InstalledGearing(this), "RideGearing");
+        }
         page.setBackgroundColor(Ui.BG);
         page.getSettings().setJavaScriptEnabled(true);
         page.getSettings().setDomStorageEnabled(true);
@@ -80,7 +76,9 @@ public final class BikeToolActivity extends Activity {
         page.setWebViewClient(new WebViewClient() {
             @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
-                if (!ASSET_HOST.equals(uri.getHost())) return null;
+                if (!ASSET_HOST.equals(uri.getHost())) {
+                    return calculator ? new WebResourceResponse("text/plain", "utf-8", null) : null;
+                }
                 String file = uri.getPath();
                 String type;
                 if ("/gearing/index.html".equals(file)) type = "text/html";
@@ -88,8 +86,11 @@ public final class BikeToolActivity extends Activity {
                 else if ("/fonts/SpaceGrotesk.ttf".equals(file) || "/fonts/JetBrainsMono.ttf".equals(file)) type = "font/ttf";
                 else return new WebResourceResponse("text/plain", "utf-8", null);
                 try {
-                    return new WebResourceResponse(type, type.equals("font/ttf") ? null : "utf-8",
+                    WebResourceResponse response = new WebResourceResponse(type, type.equals("font/ttf") ? null : "utf-8",
                             getAssets().open(file.substring(1)));
+                    if (calculator) response.setResponseHeaders(java.util.Collections.singletonMap(
+                            "Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; frame-src 'none'; object-src 'none'"));
+                    return response;
                 } catch (IOException missing) {
                     return new WebResourceResponse("text/plain", "utf-8", null);
                 }

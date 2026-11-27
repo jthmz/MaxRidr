@@ -396,6 +396,8 @@ public class ScreensTest {
       JSONObject summary = new JSONObject().put("file", base + ".gpx").put("bikeName", "XE Pro R")
               .put("start", 1795478000000L - i * 86400000L).put("distanceM", 9650 + i * 1000)
               .put("movingMs", 1490000).put("elapsedMs", 1620000);
+      summary.put("gearing", new JSONObject().put("bikeId", "inbox-bike").put("name", "XE Pro R")
+              .put("front", 14).put("rear", i == 0 ? 50 : 48));
       writeReceived(root, base + ".gpx", route);
       writeReceived(root, base + ".json", summary.toString());
     }
@@ -420,6 +422,8 @@ public class ScreensTest {
     org.junit.Assert.assertNull(checkout.getQueryParameter("amount"));
     tap(Units.distance(c, 9650) + " " + Units.distanceLabel(c));
     org.junit.Assert.assertTrue(panel("rideDetail").isOpen());
+    await("before-swap comparison on the receiver", () -> find(a.getWindow().getDecorView(),
+            android.widget.TextView.class, "BEFORE SWAP → THIS RIDE") != null);
     sweep("Received ride details");
     a.onBackPressed();
     idle(400);
@@ -693,6 +697,42 @@ public class ScreensTest {
     JSONObject plain = RideStore.load(c).getJSONObject(RideStore.load(c).length() - 1);
     org.junit.Assert.assertNull(RideStore.bike(plain));
     org.junit.Assert.assertFalse(plain.has(RideStore.BIKE));
+  }
+
+  @Test public void rideKeepsInstalledPairAtStartAndComparesOnlyItsBike() throws Exception {
+    start();
+    InstalledGearing registry = new InstalledGearing(c);
+    org.junit.Assert.assertNull(InstalledGearing.atStart(c));
+    String original = registry.install("manual", "named:trail", "Trail", 14, 48, "{\"pitch\":\"428\"}");
+    org.junit.Assert.assertEquals(original, InstalledGearing.atStart(c));
+    android.app.Service service = Robolectric.buildService(RideService.class).create().get();
+    JSONObject[] rides = new JSONObject[2];
+    for (int i = 0; i < 2; i++) {
+      service.onStartCommand(new android.content.Intent(), 0, i + 1);
+      if (i == 0) registry.install("manual", "named:trail", "Trail", 14, 50, "{}");
+      for (int k = 0; k < 5; k++) {
+        RideState.get().onLocation(fix(40 + k * 0.00012, -111.63, 14f));
+        run(1000);
+      }
+      RideStore.finish(c);
+      rides[i] = RideStore.load(c).getJSONObject(i);
+    }
+    service.onDestroy();
+    org.junit.Assert.assertEquals(48, rides[0].getJSONObject("gearing").getInt("rear"));
+    org.junit.Assert.assertEquals(50, rides[1].getJSONObject("gearing").getInt("rear"));
+    org.junit.Assert.assertTrue(InstalledGearing.beforeSwap(rides[1], rides[0]));
+    JSONObject home = new JSONObject(new String(Deck.summary(rides[1]), java.nio.charset.StandardCharsets.UTF_8));
+    org.junit.Assert.assertEquals(50, home.getJSONObject("gearing").getInt("rear"));
+    registry.select("manual", "named:cargo");
+    org.junit.Assert.assertNull(InstalledGearing.atStart(c));
+    String other = registry.install("manual", "named:cargo", "Cargo", 14, 48, "{}");
+    JSONObject unrelated = new JSONObject(rides[0].toString()).put("gearing", new JSONObject(other));
+    org.junit.Assert.assertFalse(InstalledGearing.beforeSwap(home, unrelated));
+    org.junit.Assert.assertFalse(InstalledGearing.beforeSwap(home, new JSONObject()));
+    a.showRide(rides[1]);
+    await("before-swap comparison", () -> find(a.getWindow().getDecorView(), android.widget.TextView.class,
+            "BEFORE SWAP → THIS RIDE") != null);
+    sweep("Installed sprocket comparison");
   }
 
   @Test public void everyScreenPopulated() throws Exception {

@@ -66,6 +66,10 @@ final class WhatsNew {
 
     /** Newest first. */
     static final Note[] NOTES = {
+        new Note(13, "November 2026",
+                new Item(Icons.COG, "See what changed after a sprocket swap",
+                        "Mark your fitted sprockets in the calculator. Each new ride keeps its gearing."
+                                + " Open a ride to compare it with the last ride on a different pair.")),
         new Note(12, "November 2026",
                 new Item(Icons.COG, "Gearing for each bike",
                         "The sprocket calculator remembers each bike’s setup on this phone."

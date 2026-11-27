@@ -864,7 +864,7 @@ final class Deck {
         try {
             s.put("app", "MAXAPACITY Ride");
             String[] keep = {"file", "start", "distanceM", "movingMs", "elapsedMs", "topMps",
-                    "climbM", "stops", "leanLeft", "leanRight", RideStore.BIKE, "bikeName"};
+                    "climbM", "stops", "leanLeft", "leanRight", RideStore.BIKE, "bikeName", "gearing"};
             for (String k : keep) {
                 if (ride.has(k)) s.put(k, ride.get(k));
             }

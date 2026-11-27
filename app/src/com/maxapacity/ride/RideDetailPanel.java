@@ -122,6 +122,8 @@ final class RideDetailPanel extends Panel {
         stats.addView(b, Ui.matchWrap());
         content.addView(stats, Ui.top(c, Ui.matchWrap(), 12));
 
+        if (r.optJSONObject("gearing") != null) addGearing(r, received != null, gen);
+
         BikeLog.Summary bike = RideStore.bike(r);
         if (bike != null) addBike(bike, distance);
 
@@ -237,6 +239,68 @@ final class RideDetailPanel extends Panel {
         v.setText(value);
         col.addView(v, Ui.top(c, Ui.matchWrap(), 8));
         row.addView(col, Ui.weighted());
+    }
+
+    private void addGearing(JSONObject ride, boolean home, int gen) {
+        Context c = getContext();
+        LinearLayout card = Ui.card(c);
+        JSONObject setup = ride.optJSONObject("gearing");
+        card.addView(Ui.label(c, "INSTALLED GEARING"));
+        card.addView(Ui.title(c, teeth(setup)), Ui.top(c, Ui.matchWrap(), 8));
+        card.addView(Ui.small(c, setup.optString("name"), Ui.TEXT_2));
+        content.addView(card, Ui.top(c, Ui.matchWrap(), 12));
+
+        IO.execute(() -> {
+            JSONObject previous = null;
+            if (home) {
+                for (DeckInbox.Ride other : DeckInbox.load(c)) {
+                    if (InstalledGearing.beforeSwap(ride, other.stats)) { previous = other.stats; break; }
+                }
+            } else {
+                org.json.JSONArray history = RideStore.load(c);
+                for (int i = 0; i < history.length(); i++) {
+                    JSONObject other = history.optJSONObject(i);
+                    if (other != null && InstalledGearing.beforeSwap(ride, other)
+                            && (previous == null || previous.optLong("start") < other.optLong("start"))) previous = other;
+                }
+            }
+            JSONObject before = previous;
+            MAIN.post(() -> {
+                if (gen != generation) return;
+                if (before == null) {
+                    card.addView(Ui.small(c, "This ride can be compared after you record a ride on different sprockets.",
+                            Ui.TEXT_2), Ui.top(c, Ui.matchWrap(), 8));
+                    return;
+                }
+                String date = android.text.format.DateUtils.formatDateTime(c, before.optLong("start"),
+                        android.text.format.DateUtils.FORMAT_SHOW_DATE | android.text.format.DateUtils.FORMAT_SHOW_TIME);
+                card.addView(Ui.label(c, "BEFORE SWAP → THIS RIDE"), Ui.top(c, Ui.matchWrap(), 16));
+                card.addView(Ui.body(c, "Compared with " + date + " on " + teeth(before.optJSONObject("gearing")), Ui.TEXT_2));
+                addMeta(card, "Distance · " + Units.distanceLabel(c), Units.distance(c, before.optDouble("distanceM"))
+                        + " → " + Units.distance(c, ride.optDouble("distanceM")), true);
+                if (before.has("climbM") && ride.has("climbM")) addMeta(card, "Climb · " + Units.climbLabel(c), Units.climb(c, (float) before.optDouble("climbM"))
+                        + " → " + Units.climb(c, (float) ride.optDouble("climbM")), true);
+                addMeta(card, "Moving time", Units.duration(before.optLong("movingMs"))
+                        + " → " + Units.duration(ride.optLong("movingMs")), true);
+                if (before.has("topMps") && ride.has("topMps")) addMeta(card, "Top speed · " + Units.speedLabel(c), Units.speed(c, (float) before.optDouble("topMps"))
+                        + " → " + Units.speed(c, (float) ride.optDouble("topMps")), true);
+                double oldEnergy = energyPerDistance(c, before), newEnergy = energyPerDistance(c, ride);
+                if (Double.isFinite(oldEnergy) && Double.isFinite(newEnergy)) {
+                    addMeta(card, "Wh/" + Units.distanceLabel(c), fmt("%.1f", oldEnergy) + " → " + fmt("%.1f", newEnergy), true);
+                }
+            });
+        });
+    }
+
+    private static double energyPerDistance(Context c, JSONObject r) {
+        JSONObject log = r.optJSONObject(RideStore.BIKE);
+        double distance = r.optDouble("distanceM");
+        double wh = log == null ? Double.NaN : log.optDouble("usedWh");
+        return distance > 0 && wh > 0 ? wh * (Units.metric(c) ? 1000 : 1609.344) / distance : Double.NaN;
+    }
+
+    private static String teeth(JSONObject setup) {
+        return setup.optInt("front") + "T front / " + setup.optInt("rear") + "T rear";
     }
 
     private void addMeta(LinearLayout card, String name, String value, boolean rule) {
