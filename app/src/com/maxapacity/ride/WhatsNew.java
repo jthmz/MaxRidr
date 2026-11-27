@@ -66,6 +66,10 @@ final class WhatsNew {
 
     /** Newest first. */
     static final Note[] NOTES = {
+        new Note(11, "November 2026",
+                new Item(Icons.COG, "Gearing works off the grid",
+                        "Compare sprockets in Apps even on your first launch offline. The Part Picker"
+                                + " opens your build when MaxRidr recognizes the bike.")),
         new Note(10, "November 2026",
                 new Item(Icons.COG, "Build your bike in MaxRidr",
                         "Open Apps for the Part Picker and Sprocket Calculator. Compare parts and gearing,"

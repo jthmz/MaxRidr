@@ -82,8 +82,10 @@ The inbox also offers optional PayPal support, with a QR code for a second phone
 Riders can also donate from Settings. PayPal handles the amount and checkout.
 
 Open **Apps → Part Picker** to choose a bike and explore its build, or **Apps →
-Sprocket Calculator** to compare gearing. Both load the live MAXAPACITY tools
-inside the app and need internet access.
+Sprocket Calculator** to compare gearing. The calculator works from first launch without internet, including wheel torque
+change, speed and chain-length estimates. The Part Picker uses the live catalog
+and opens a recognized model from linked hardware or the rider’s “About my bike”
+note. Unknown or conflicting models open the bike chooser.
 
 ### Using the Mac Deck
 
