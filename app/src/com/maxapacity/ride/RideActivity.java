@@ -622,6 +622,8 @@ public final class RideActivity extends Activity
             sheet.item(Icons.MONITOR, "Open the full Deck",
                     "Everything the Car Thing shows, with all its controls", false, this::showFullDeck);
         }
+        sheet.item(Icons.MONITOR, "Make this phone my Deck", "Receive rides here on home Wi-Fi.",
+                false, deck::startReceiver);
         sheet.item(Icons.INFO, "Link report", "What this phone sees, to share if you need help",
                 false, this::deckReportSheet);
         // The cable needs no pairing, so there is nothing to forget.
@@ -660,8 +662,8 @@ public final class RideActivity extends Activity
     /** What the looking sheet says right now. It is rewritten as the search moves on. */
     private static String deckLookingText(Deck d) {
         if (!d.onNetwork()) {
-            return "This phone is not on Wi-Fi, so it cannot reach your Mac. Join the Wi-Fi your"
-                    + " Mac is on, or plug this phone into the Mac.";
+            return "Connect both phones to the same Wi-Fi. For a Mac Deck, join its network"
+                    + " or connect by USB.";
         }
         if (d.state() == Deck.LOOKING || d.searching()) {
             return "Searching this Wi-Fi for your Deck. That takes a few seconds.";
@@ -688,7 +690,7 @@ public final class RideActivity extends Activity
             });
         };
         final Sheet sheet = new Sheet(frame, "Deck found",
-                "On a phone Deck, tap Pair a riding phone. On a Mac Deck, tap the clock, then Add a screen. Enter the six digits here.")
+                "Enter the six digits shown on your home Deck.")
                 .view(code)
                 .item(Icons.INFO, "Code not working?",
                         "A code pairs one screen and lasts five minutes", false,
@@ -718,7 +720,7 @@ public final class RideActivity extends Activity
 
     private void deckCodeHelp() {
         new Sheet(frame, "If the code does not work",
-                "A code lasts five minutes and pairs one screen. Scanning the Deck's QR code"
+                "On a home phone, tap Pair a riding phone for a fresh code. On a Mac, scanning the QR code"
                         + " with the camera pairs the phone's browser instead, and that uses the"
                         + " code up. On the Deck, open Add a screen again, or tap New code, and"
                         + " type the new one here.")

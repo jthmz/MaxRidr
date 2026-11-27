@@ -68,7 +68,10 @@ final class DeckView extends Panel {
         super(context, "Deck");
         this.host = host;
         View edit = Ui.iconButton(context, Icons.LINK, "Deck connection");
-        edit.setOnClickListener(v -> host.editDeckConnection());
+        edit.setOnClickListener(v -> {
+            if (PhoneDeck.running) receiverDetails();
+            else host.editDeckConnection();
+        });
         setHeaderAction(edit);
         content = addScrollContent();
     }
@@ -110,6 +113,7 @@ final class DeckView extends Panel {
     /** Starts again from what the link is now. */
     void restart() {
         stopPolling();
+        receiverText = "";
         loadedOnce = false;
         shownState = "";
         if (PhoneDeck.running) {
@@ -259,51 +263,88 @@ final class DeckView extends Panel {
         boolean busy = d.state() == Deck.LOOKING || d.searching();
         status.set(!d.onNetwork() ? "NO WI-FI" : busy ? "SEARCHING" : "NOT FOUND", Ui.TEXT_3);
         content.removeAllViews();
-        content.addView(Ui.emptyState(getContext(), Icons.MONITOR, "Your desk, in your pocket",
-                "Channel numbers, the video pipeline, Claude's progress and Mac controls, from"
-                        + " the Deck on your Mac. " + (!d.onNetwork()
-                        ? "This phone is not on Wi-Fi. Join the Wi-Fi your Mac is on, or plug"
-                        + " this phone into the Mac."
-                        : busy ? "Searching this Wi-Fi for it now."
-                        : "Nothing has answered on this Wi-Fi yet."),
-                "Link your Deck", Ui.PRIMARY, v -> host.editDeckConnection()));
-        addHostButton();
+        role("Make this phone my Deck", "Leave this phone at home to receive rides over Wi-Fi.",
+                Icons.MONITOR, this::startReceiver);
+        role("Connect to my Deck", "Send rides from this phone when you get home.",
+                Icons.LINK, host::editDeckConnection);
+    }
+
+    private void role(String title, String detail, String icon, Runnable action) {
+        Context c = getContext();
+        LinearLayout card = Ui.card(c);
+        card.setBackground(Ui.pressable(c, Ui.SURFACE, Ui.HAIRLINE, 16));
+        card.addView(Ui.icon(c, icon, 24, Ui.ACCENT));
+        card.addView(Ui.title(c, title), Ui.top(c, Ui.matchWrap(), 12));
+        card.addView(Ui.body(c, detail, Ui.TEXT_2), Ui.top(c, Ui.matchWrap(), 4));
+        card.setOnClickListener(v -> action.run());
+        content.addView(card, Ui.top(c, Ui.matchWrap(), content.getChildCount() == 0 ? 0 : 12));
+    }
+
+    void startReceiver() {
+        PhoneDeck.enable(getContext(), true);
+        if (!isOpen()) open();
+        stopPolling();
+        showReceiver();
     }
 
     private void addHostButton() {
-        View button = Ui.button(getContext(), "Make this phone my Deck", Icons.MONITOR, Ui.SECONDARY);
-        content.addView(button, Ui.matchWrap());
-        button.setOnClickListener(v -> {
-            Context c = getContext();
-            PhoneDeck.enable(c, true);
-            stopPolling();
-            showReceiver();
-        });
+        role("Make this phone my Deck", "Receive rides here on home Wi-Fi.", Icons.MONITOR, this::startReceiver);
     }
 
-    private final Runnable receiverRefresh = this::restart;
+    private final Runnable receiverRefresh = () -> {
+        if (PhoneDeck.running) showReceiver();
+        else restart();
+    };
+    private String receiverText = "";
 
     private void showReceiver() {
-        status.set("HOME DECK", Ui.OK);
-        content.removeAllViews();
+        Context c = getContext();
+        boolean ready = !PhoneDeck.address.isEmpty();
+        String state = ready ? "Ready to receive" : PhoneDeck.status;
+        status.set(state.toUpperCase(Locale.US), ready ? Ui.OK : Ui.WARN);
+        long last = c.getSharedPreferences("home-deck", 0).getLong("last-ride-at", 0);
+        String detail = "Pair your riding phone to receive rides on home Wi-Fi.";
+        if (last > 0) {
+            String when = android.text.format.DateUtils.formatDateTime(c, last,
+                    android.text.format.DateUtils.FORMAT_SHOW_TIME
+                    | (android.text.format.DateUtils.isToday(last) ? 0 : android.text.format.DateUtils.FORMAT_SHOW_DATE));
+            detail = "Last ride received at " + when;
+        }
+        if (ready && PhoneDeckRequest.receiving()) detail = "Receiving ride…";
+        if (!detail.equals(receiverText)) {
+            receiverText = detail;
+            content.removeAllViews();
+            content.addView(Ui.emptyState(c, Icons.MONITOR, "Home Deck", detail,
+                    "Pair a riding phone", Ui.PRIMARY, v -> pairingSheet()));
+            View stop = Ui.button(c, "Stop receiving", Icons.UNLINK, Ui.SECONDARY);
+            content.addView(stop, Ui.matchWrap());
+            stop.setOnClickListener(v -> {
+                PhoneDeck.enable(c, false);
+                main.removeCallbacks(receiverRefresh);
+                main.postDelayed(receiverRefresh, 300);
+            });
+        }
+        main.removeCallbacks(receiverRefresh);
+        main.postDelayed(receiverRefresh, 1000);
+    }
+
+    private void pairingSheet() {
+        Context c = getContext();
+        String code = PhoneDeck.newCode();
+        TextView digits = Ui.value(c, code.substring(0, 3) + " " + code.substring(3), 42);
+        digits.setGravity(android.view.Gravity.CENTER);
+        new Sheet(host.frame(), "Pair a riding phone", null)
+                .view(digits)
+                .view(Ui.body(c, "Enter this on your riding phone. The code lasts five minutes.", Ui.TEXT_2))
+                .action("Done", Ui.SECONDARY, true, null).show();
+    }
+
+    private void receiverDetails() {
         String last = getContext().getSharedPreferences("home-deck", 0).getString("last-file", "");
-        content.addView(Ui.emptyState(getContext(), Icons.MONITOR, "This phone is your Deck",
-                PhoneDeck.status + (last.isEmpty() ? ". Pair your riding phone once to receive its saved rides here."
-                        : ". Last received: " + last),
-                "Pair a riding phone", Ui.PRIMARY, v -> new android.app.AlertDialog.Builder(getContext())
-                        .setTitle("Pair a riding phone")
-                        .setMessage("On the riding phone, open Deck and enter " + PhoneDeck.newCode()
-                                + ". This code lasts five minutes.")
-                        .setPositiveButton("Done", null).show()));
-        View stop = Ui.button(getContext(), "Stop receiving", Icons.UNLINK, Ui.SECONDARY);
-        content.addView(stop, Ui.matchWrap());
-        stop.setOnClickListener(v -> {
-            Context c = getContext();
-            PhoneDeck.enable(c, false);
-            main.removeCallbacks(receiverRefresh);
-            main.postDelayed(receiverRefresh, 300);
-        });
-        main.postDelayed(receiverRefresh, 3000);
+        String address = PhoneDeck.address;
+        new Sheet(host.frame(), "Connection details", (address.isEmpty() ? PhoneDeck.status : address)
+                + (last.isEmpty() ? "" : "\nLast file received: " + last))
+                .action("Done", Ui.SECONDARY, true, null).show();
     }
 
     /** A Deck is in reach and only wants its code. */
@@ -338,11 +379,12 @@ final class DeckView extends Panel {
         addHostButton();
     }
 
-    private void showState(JSONObject s) {
+    void showState(JSONObject s) {
         // The Deck's own link to the Car Thing: "connected", "no Car Thing on USB", ...
         String link = s.optString("link", "unknown");
         boolean linked = "connected".equals(link);
-        status.set(linked ? "CAR THING LINKED" : "CAR THING OFF", linked ? Ui.OK : Ui.WARN);
+        if (s.optBoolean("phoneDeck")) status.set("HOME DECK LINKED", Ui.OK);
+        else status.set(linked ? "CAR THING LINKED" : "CAR THING OFF", linked ? Ui.OK : Ui.WARN);
 
         // Polled every two seconds: rebuild only when something actually changed,
         // so the screen does not flicker or lose its scroll position.
@@ -352,11 +394,9 @@ final class DeckView extends Panel {
 
         content.removeAllViews();
         if (s.optBoolean("phoneDeck")) {
-            status.set("HOME DECK LINKED", Ui.OK);
             content.addView(Ui.body(getContext(), "Your paired home phone receives saved rides on this Wi-Fi.", Ui.TEXT));
             return;
         }
-        addHostButton();
         addFullDeck();
         addChannel(s.optJSONObject("yt"));
         addPipeline(s.optJSONObject("board"));

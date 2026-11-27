@@ -66,6 +66,10 @@ final class WhatsNew {
 
     /** Newest first. */
     static final Note[] NOTES = {
+        new Note(7, "November 2026",
+                new Item(Icons.MONITOR, "A home Deck for your rides",
+                        "Open Deck to set up a home phone or connect your riding phone. Pair once"
+                                + " on Wi-Fi. Your home Deck shows when each ride finishes arriving.")),
         new Note(6, "November 2026",
                 new Item(Icons.REFRESH_CW, "Regen when you roll off",
                         "Regen mode can now be set to On throttle release, so the motor slows"

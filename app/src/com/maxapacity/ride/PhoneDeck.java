@@ -13,6 +13,7 @@ import java.security.SecureRandom;
 
 /** A rider opts in on the home phone. Listen only on its current Wi-Fi address. */
 public final class PhoneDeck extends Service {
+    static volatile String address = "";
     static volatile String status = "Starting receiver";
     static volatile boolean running;
     private static final SecureRandom random = new SecureRandom();
@@ -66,6 +67,8 @@ public final class PhoneDeck extends Service {
                 .setSmallIcon(android.R.drawable.stat_sys_upload_done)
                 .setContentTitle("This phone is your home Deck")
                 .setContentText("Receiving paired riders on Wi-Fi").setOngoing(true).build());
+        address = "";
+        status = "Starting receiver";
         running = true;
         new Thread(this::receive, "home-deck").start();
     }
@@ -97,7 +100,7 @@ public final class PhoneDeck extends Service {
     private void receive() {
         while (!closing) {
             InetAddress ip = wifiAddress();
-            if (ip == null) status = "Waiting for home Wi-Fi";
+            if (ip == null) status = "Waiting for Wi-Fi";
             else try (ServerSocket server = new ServerSocket()) {
                 listener = server;
                 server.setReuseAddress(true);
@@ -116,7 +119,8 @@ public final class PhoneDeck extends Service {
                 };
                 nsd.registerService(info, NsdManager.PROTOCOL_DNS_SD, registration);
                 try {
-                    status = "Listening at " + ip.getHostAddress() + ":8791";
+                    address = ip.getHostAddress() + ":8791";
+                    status = "Ready to receive";
                     while (!closing && ip.equals(wifiAddress())) {
                         try {
                             Socket socket = server.accept();
@@ -126,9 +130,13 @@ public final class PhoneDeck extends Service {
                             } catch (RejectedExecutionException busy) { socket.close(); }
                         } catch (SocketTimeoutException ignored) {}
                     }
-                } finally { nsd.unregisterService(registration); }
+                } finally {
+                    address = "";
+                    status = "Waiting for Wi-Fi";
+                    nsd.unregisterService(registration);
+                }
             } catch (IOException | RuntimeException e) {
-                status = "Wi-Fi receiver unavailable. Retrying…";
+                status = "Retrying Wi-Fi";
             }
             if (!closing) SystemClock.sleep(2000);
         }
