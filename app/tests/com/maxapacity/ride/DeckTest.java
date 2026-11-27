@@ -461,6 +461,10 @@ public class DeckTest {
 
     fake.stop();
     fake = null;
+    // Let the receiver departure reach the main thread before checking an
+    // offload while away. A probe sent before shutdown can still answer.
+    d.refresh();
+    until("the stopped Deck to go out of reach", () -> d.state() == Deck.NOT_FOUND);
     Object[] away = offload(d);
     assertEquals(false, away[0]);
     assertNull("out of reach is not worth a message", away[1]);
