@@ -347,7 +347,8 @@ public class ScreensTest {
     org.junit.Assert.assertFalse(BikeToolActivity.onSite(android.net.Uri.parse("https://vendor.example")));
   }
 
-  @Test public void connectedCalculatorOpensTheLiveWebsite() {
+  @Test public void connectedCalculatorUsesTheSameBikeProfileAsOffline() {
+    Units.prefs(c).edit().putString(TuneBrief.ABOUT, "Talaria MX4").apply();
     android.net.ConnectivityManager cm = c.getSystemService(android.net.ConnectivityManager.class);
     android.net.NetworkCapabilities caps = org.robolectric.shadows.ShadowNetworkCapabilities.newInstance();
     Shadows.shadowOf(caps).addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED);
@@ -357,7 +358,7 @@ public class ScreensTest {
     org.robolectric.android.controller.ActivityController<BikeToolActivity> screen =
             Robolectric.buildActivity(BikeToolActivity.class, intent).setup();
     android.webkit.WebView page = find(screen.get().getWindow().getDecorView(), android.webkit.WebView.class, null);
-    org.junit.Assert.assertEquals(Site.HOME + BikeToolActivity.SPROCKET, Shadows.shadowOf(page).getLastLoadedUrl());
+    org.junit.Assert.assertEquals(BikeToolActivity.LOCAL_GEARING + "#talaria-mx4", Shadows.shadowOf(page).getLastLoadedUrl());
     screen.pause().stop().destroy();
   }
 

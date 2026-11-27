@@ -83,7 +83,10 @@ Riders can also donate from Settings. PayPal handles the amount and checkout.
 
 Open **Apps → Part Picker** to choose a bike and explore its build, or **Apps →
 Sprocket Calculator** to compare gearing. The calculator works from first launch without internet, including wheel torque
-change, speed and chain-length estimates. The Part Picker uses the live catalog
+change, speed and chain-length estimates. Both online and offline, the in-app calculator
+restores the selected bike’s last valid setup. Choose a bike or add a named one for a
+second build. Enter your installed tooth counts, then choose a gearing goal to try a
+two-tooth rear change. The website link carries the current numbers. The Part Picker uses the live catalog
 and opens a recognized model from linked hardware or the rider’s “About my bike”
 note. Unknown or conflicting models open the bike chooser.
 

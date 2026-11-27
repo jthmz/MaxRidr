@@ -4,8 +4,8 @@ import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.net.Uri;
-import android.net.ConnectivityManager;
-import android.net.NetworkCapabilities;
+import android.webkit.WebResourceResponse;
+import java.io.IOException;
 import android.os.Bundle;
 import android.view.View;
 import android.webkit.WebResourceError;
@@ -20,8 +20,24 @@ import android.widget.Toast;
 public final class BikeToolActivity extends Activity {
     static final String PICKER = "/picker";
     static final String SPROCKET = "/tools/sprocket-calculator";
-    static final String LOCAL_GEARING = "file:///android_asset/gearing/index.html";
+    private static final String ASSET_HOST = "appassets.androidplatform.net";
+    static final String LOCAL_GEARING = "https://" + ASSET_HOST + "/gearing/index.html";
+
+    private String calculatorUrl() {
+        String model = PickerBike.path(this);
+        Bike bike = Bike.get(this);
+        if (bike.demo()) return LOCAL_GEARING + "#demo";
+        if (model.startsWith("/builder/")) return LOCAL_GEARING + "#" + model.substring("/builder/".length());
+        // These are the identifiers the app uses to reconnect to configured hardware.
+        // Keep them local, including when opening a shareable website setup.
+        if (bike.anyConfigured()) {
+            String pair = Uri.encode(bike.controllerName()) + "|" + Uri.encode(bike.batteryName());
+            return LOCAL_GEARING + "#linked:" + Uri.encode(pair);
+        }
+        return LOCAL_GEARING;
+    }
     private WebView page;
+    private String gearingContext;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -62,10 +78,27 @@ public final class BikeToolActivity extends Activity {
             }
         });
         page.setWebViewClient(new WebViewClient() {
+            @Override public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                Uri uri = request.getUrl();
+                if (!ASSET_HOST.equals(uri.getHost())) return null;
+                String file = uri.getPath();
+                String type;
+                if ("/gearing/index.html".equals(file)) type = "text/html";
+                else if ("/gearing/calculator.js".equals(file)) type = "application/javascript";
+                else if ("/fonts/SpaceGrotesk.ttf".equals(file) || "/fonts/JetBrainsMono.ttf".equals(file)) type = "font/ttf";
+                else return new WebResourceResponse("text/plain", "utf-8", null);
+                try {
+                    return new WebResourceResponse(type, type.equals("font/ttf") ? null : "utf-8",
+                            getAssets().open(file.substring(1)));
+                } catch (IOException missing) {
+                    return new WebResourceResponse("text/plain", "utf-8", null);
+                }
+            }
+
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 if (!request.isForMainFrame()) return false;
                 Uri destination = request.getUrl();
-                if (onSite(destination)) return false;
+                if (!SPROCKET.equals(path) && onSite(destination)) return false;
                 if ("https".equals(destination.getScheme())) {
                     try { startActivity(new Intent(Intent.ACTION_VIEW, destination)); }
                     catch (ActivityNotFoundException e) {
@@ -81,21 +114,28 @@ public final class BikeToolActivity extends Activity {
                 if (!request.isForMainFrame()) return;
                 if (onSite(request.getUrl()) && SPROCKET.equals(request.getUrl().getPath())) {
                     String query = request.getUrl().getEncodedQuery();
-                    view.loadUrl(LOCAL_GEARING + (query == null ? "" : "?" + query));
+                    view.loadUrl(Uri.parse(calculatorUrl()).buildUpon().encodedQuery(query).build().toString());
                 } else {
                     retry.setVisibility(View.VISIBLE);
                 }
             }
         });
         setContentView(root);
-        if (state == null || page.restoreState(state) == null) {
-            if (SPROCKET.equals(path)) {
-                ConnectivityManager networks = getSystemService(ConnectivityManager.class);
-                NetworkCapabilities caps = networks.getNetworkCapabilities(networks.getActiveNetwork());
-                boolean online = caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
-                page.loadUrl(online ? Site.HOME + SPROCKET : LOCAL_GEARING);
-            } else {
-                page.loadUrl(Site.HOME + pickerPath);
+        if (SPROCKET.equals(path)) {
+            gearingContext = calculatorUrl();
+            page.loadUrl(gearingContext);
+        } else if (state == null || page.restoreState(state) == null) {
+            page.loadUrl(Site.HOME + pickerPath);
+        }
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (gearingContext != null) {
+            String current = calculatorUrl();
+            if (!current.equals(gearingContext)) {
+                gearingContext = current;
+                page.loadUrl(current);
             }
         }
     }
@@ -107,7 +147,7 @@ public final class BikeToolActivity extends Activity {
 
     @Override protected void onSaveInstanceState(Bundle state) {
         super.onSaveInstanceState(state);
-        if (page != null) page.saveState(state);
+        if (page != null && gearingContext == null) page.saveState(state);
     }
 
     @Override public void onBackPressed() {
