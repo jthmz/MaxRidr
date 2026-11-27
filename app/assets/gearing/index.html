@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Sprocket calculator</title>
+    <style>
+      @font-face {
+        font-family: Space;
+        src: url('../fonts/SpaceGrotesk.ttf');
+      }
+      @font-face {
+        font-family: Mono;
+        src: url('../fonts/JetBrainsMono.ttf');
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #0a0b0d;
+        color: #edeef0;
+        font:
+          16px Space,
+          system-ui,
+          sans-serif;
+      }
+      main {
+        max-width: 42rem;
+        margin: auto;
+        padding: 16px;
+      }
+      h1 {
+        font-size: 1.6rem;
+        margin: 0 0 16px;
+      }
+      fieldset,
+      section,
+      details {
+        margin: 0 0 12px;
+        border: 1px solid #34363c;
+        border-radius: 14px;
+        background: #151519;
+        padding: 12px 16px;
+      }
+      fieldset {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      legend,
+      summary {
+        font-weight: bold;
+      }
+      summary {
+        cursor: pointer;
+        padding: 6px 0;
+      }
+      label {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        font-size: 0.85rem;
+        color: #c6c7ce;
+      }
+      input,
+      select,
+      button,
+      a {
+        font: inherit;
+        min-height: 48px;
+      }
+      input,
+      select,
+      button {
+        background: #202125;
+        color: #fff;
+        border: 1px solid #6e7079;
+        border-radius: 8px;
+        padding: 8px;
+        min-width: 0;
+      }
+      input:invalid {
+        border-color: #ff8787;
+      }
+      input {
+        width: 100%;
+        font-family: Mono, monospace;
+      }
+      section {
+        border-top: 3px solid #ffeb1a;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.9rem;
+      }
+      th,
+      td {
+        text-align: right;
+        padding: 7px 0;
+      }
+      th:first-child {
+        text-align: left;
+      }
+      td {
+        font-family: Mono, monospace;
+      }
+      td:last-child {
+        color: #ffeb1a;
+      }
+      p {
+        line-height: 1.45;
+      }
+      #delta {
+        margin-bottom: 0;
+        color: #c6c7ce;
+      }
+      .advanced {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        padding-top: 12px;
+      }
+      .presets {
+        grid-column: span 2;
+        display: flex;
+        gap: 8px;
+      }
+      .presets button {
+        flex: 1;
+      }
+      a {
+        display: inline-flex;
+        align-items: center;
+        color: #ffeb1a;
+      }
+      button,
+      summary,
+      a {
+        touch-action: manipulation;
+      }
+      :focus-visible {
+        outline: 2px solid #ffeb1a;
+        outline-offset: 2px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Sprocket calculator</h1>
+      <form id="gearing">
+        <fieldset>
+          <legend>Current gearing</legend>
+          <label>Front teeth<input name="cf" type="number" min="8" max="30" value="14" required /></label>
+          <label>Rear teeth<input name="cr" type="number" min="20" max="90" value="48" required /></label>
+        </fieldset>
+        <fieldset>
+          <legend>Proposed gearing</legend>
+          <label>Front teeth<input name="nf" type="number" min="8" max="30" value="14" required /></label>
+          <label>Rear teeth<input name="nr" type="number" min="20" max="90" value="60" required /></label>
+          <div class="presets" aria-label="Rear sprocket presets">
+            <button type="button" data-rear="45">45T</button><button type="button" data-rear="48">48T</button
+            ><button type="button" data-rear="60">60T</button>
+          </div>
+        </fieldset>
+        <section aria-live="polite">
+          <table>
+            <thead>
+              <tr>
+                <th>Estimate</th>
+                <th>Current</th>
+                <th>Proposed</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th>Drive ratio</th>
+                <td id="oldRatio"></td>
+                <td id="newRatio"></td>
+              </tr>
+              <tr>
+                <th id="speedLabel">Top speed</th>
+                <td id="oldSpeed"></td>
+                <td id="newSpeed"></td>
+              </tr>
+              <tr>
+                <th>Chain links</th>
+                <td id="oldChain"></td>
+                <td id="newChain"></td>
+              </tr>
+            </tbody>
+          </table>
+          <p id="delta"></p>
+        </section>
+        <details>
+          <summary>Bike and drivetrain inputs</summary>
+          <p>
+            Defaults use the DRAX X Pro 72V. Enter your measured wheel diameter and axle distance for your
+            bike.
+          </p>
+          <div class="advanced">
+            <label
+              >Countershaft RPM<input name="rpm" type="number" min="500" max="20000" value="2800" required
+            /></label>
+            <label
+              >Primary reduction<input
+                name="prim"
+                type="number"
+                min="1"
+                max="10"
+                step="any"
+                value="1"
+                required
+            /></label>
+            <label
+              >Wheel diameter (in)<input
+                name="dia"
+                type="number"
+                min="12"
+                max="34"
+                step="any"
+                value="22.5"
+                required
+            /></label>
+            <label
+              >Axle distance (mm)<input
+                name="ctr"
+                type="number"
+                min="200"
+                max="1000"
+                step="any"
+                value="560"
+                required
+            /></label>
+            <label
+              >Chain size<select name="pitch">
+                <option>420</option>
+                <option selected>428</option>
+                <option>520</option>
+                <option>525</option>
+              </select></label
+            >
+            <label
+              >Speed unit<select name="unit">
+                <option value="mph">mph</option>
+                <option value="kmh">km/h</option>
+              </select></label
+            >
+          </div>
+        </details>
+        <button type="reset">Reset gearing</button>
+      </form>
+      <a id="website">Open this setup on the website</a>
+    </main>
+    <script src="calculator.js"></script>
+  </body>
+</html>

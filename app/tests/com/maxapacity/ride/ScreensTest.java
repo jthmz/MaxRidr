@@ -329,7 +329,7 @@ public class ScreensTest {
     org.junit.Assert.assertNotNull(find(screen.status, android.widget.TextView.class, "HOME DECK LINKED"));
   }
 
-  @Test public void drawerOpensBothLiveToolsInsideMaxRidr() throws Exception {
+  @Test public void drawerOpensBothToolsInsideMaxRidr() throws Exception {
     start();
     panel("drawer").open();
     for (String[] tool : new String[][]{{"Part Picker", "/picker"},
@@ -340,10 +340,49 @@ public class ScreensTest {
       org.robolectric.android.controller.ActivityController<BikeToolActivity> screen =
               Robolectric.buildActivity(BikeToolActivity.class, intent).setup();
       android.webkit.WebView page = find(screen.get().getWindow().getDecorView(), android.webkit.WebView.class, null);
-      org.junit.Assert.assertEquals(Site.HOME + tool[1], Shadows.shadowOf(page).getLastLoadedUrl());
+      org.junit.Assert.assertEquals(tool[1].equals(BikeToolActivity.SPROCKET) ? BikeToolActivity.LOCAL_GEARING
+              : Site.HOME + tool[1], Shadows.shadowOf(page).getLastLoadedUrl());
       screen.pause().stop().destroy();
     }
     org.junit.Assert.assertFalse(BikeToolActivity.onSite(android.net.Uri.parse("https://vendor.example")));
+  }
+
+  @Test public void connectedCalculatorOpensTheLiveWebsite() {
+    android.net.ConnectivityManager cm = c.getSystemService(android.net.ConnectivityManager.class);
+    android.net.NetworkCapabilities caps = org.robolectric.shadows.ShadowNetworkCapabilities.newInstance();
+    Shadows.shadowOf(caps).addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+    Shadows.shadowOf(cm).setNetworkCapabilities(cm.getActiveNetwork(), caps);
+    android.content.Intent intent = new android.content.Intent(c, BikeToolActivity.class)
+            .putExtra("path", BikeToolActivity.SPROCKET);
+    org.robolectric.android.controller.ActivityController<BikeToolActivity> screen =
+            Robolectric.buildActivity(BikeToolActivity.class, intent).setup();
+    android.webkit.WebView page = find(screen.get().getWindow().getDecorView(), android.webkit.WebView.class, null);
+    org.junit.Assert.assertEquals(Site.HOME + BikeToolActivity.SPROCKET, Shadows.shadowOf(page).getLastLoadedUrl());
+    screen.pause().stop().destroy();
+  }
+
+  @Test public void knownBikeOpensItsBuilderAndCanSwitchToTheFullPicker() {
+    Units.prefs(c).edit().putString(TuneBrief.ABOUT, "I ride a Talaria MX4, 48T rear").apply();
+    android.content.Intent intent = new android.content.Intent(c, BikeToolActivity.class)
+            .putExtra("path", BikeToolActivity.PICKER);
+    org.robolectric.android.controller.ActivityController<BikeToolActivity> screen =
+            Robolectric.buildActivity(BikeToolActivity.class, intent).setup();
+    View root = screen.get().getWindow().getDecorView();
+    android.webkit.WebView page = find(root, android.webkit.WebView.class, null);
+    org.junit.Assert.assertEquals(Site.HOME + "/builder/talaria-mx4", Shadows.shadowOf(page).getLastLoadedUrl());
+    View choose = find(root, android.widget.TextView.class, "Choose another bike");
+    while (!choose.hasOnClickListeners()) choose = (View) choose.getParent();
+    choose.performClick();
+    org.junit.Assert.assertEquals(Site.HOME + "/picker", Shadows.shadowOf(page).getLastLoadedUrl());
+    screen.pause().stop().destroy();
+  }
+
+  @Test public void pickerUsesKnownModelAndHandlesConflictingOrGenericHardware() {
+    org.junit.Assert.assertEquals("/builder/sur-ron-light-bee-x", PickerBike.path("Light Bee X", "ANT", ""));
+    org.junit.Assert.assertEquals("/builder/talaria-mx4", PickerBike.path("FarDriver", "ANT", "I ride Talaria MX4, stock gearing"));
+    org.junit.Assert.assertEquals("/picker", PickerBike.path("FarDriver", "ANT", ""));
+    org.junit.Assert.assertEquals("/picker", PickerBike.path("Light Bee X", "Talaria MX4", ""));
+    org.junit.Assert.assertEquals("/picker", PickerBike.path("", "", "DRAX X Pro with Ultra Bee forks"));
   }
 
   @Test public void homeInboxOpensReceivedRide() throws Exception {

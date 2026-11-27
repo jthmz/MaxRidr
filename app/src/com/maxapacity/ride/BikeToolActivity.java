@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.net.Uri;
+import android.net.ConnectivityManager;
+import android.net.NetworkCapabilities;
 import android.os.Bundle;
 import android.view.View;
 import android.webkit.WebResourceError;
@@ -14,10 +16,11 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.Toast;
 
-/** The website owns the catalog and gearing math. Keep its bike tools together in the app. */
+/** Local gearing calculator and the live, bike-specific parts catalog. */
 public final class BikeToolActivity extends Activity {
     static final String PICKER = "/picker";
     static final String SPROCKET = "/tools/sprocket-calculator";
+    static final String LOCAL_GEARING = "file:///android_asset/gearing/index.html";
     private WebView page;
 
     @Override public void onCreate(Bundle state) {
@@ -33,6 +36,12 @@ public final class BikeToolActivity extends Activity {
         View done = Ui.button(this, "Back to MaxRidr", Icons.X, Ui.SECONDARY);
         done.setOnClickListener(v -> finish());
         root.addView(done, Ui.matchWrap());
+        String pickerPath = PICKER.equals(path) ? PickerBike.path(this) : PICKER;
+        if (!PICKER.equals(pickerPath)) {
+            View choose = Ui.button(this, "Choose another bike", Icons.SLIDERS_HORIZONTAL, Ui.SECONDARY);
+            choose.setOnClickListener(v -> page.loadUrl(Site.HOME + PICKER));
+            root.addView(choose, Ui.matchWrap());
+        }
         ProgressBar progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         root.addView(progress, new LinearLayout.LayoutParams(-1, Ui.dp(this, 3)));
         page = new WebView(this);
@@ -69,11 +78,26 @@ public final class BikeToolActivity extends Activity {
                 retry.setVisibility(View.GONE);
             }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-                if (request.isForMainFrame()) retry.setVisibility(View.VISIBLE);
+                if (!request.isForMainFrame()) return;
+                if (onSite(request.getUrl()) && SPROCKET.equals(request.getUrl().getPath())) {
+                    String query = request.getUrl().getEncodedQuery();
+                    view.loadUrl(LOCAL_GEARING + (query == null ? "" : "?" + query));
+                } else {
+                    retry.setVisibility(View.VISIBLE);
+                }
             }
         });
         setContentView(root);
-        if (state == null || page.restoreState(state) == null) page.loadUrl(Site.HOME + path);
+        if (state == null || page.restoreState(state) == null) {
+            if (SPROCKET.equals(path)) {
+                ConnectivityManager networks = getSystemService(ConnectivityManager.class);
+                NetworkCapabilities caps = networks.getNetworkCapabilities(networks.getActiveNetwork());
+                boolean online = caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+                page.loadUrl(online ? Site.HOME + SPROCKET : LOCAL_GEARING);
+            } else {
+                page.loadUrl(Site.HOME + pickerPath);
+            }
+        }
     }
 
     static boolean onSite(Uri uri) {
