@@ -408,6 +408,7 @@ final class DeckView extends Panel {
             header.addView(pair, Ui.top(c, Ui.matchWrap(), 12));
             content.addView(header, Ui.matchWrap());
             inboxCards();
+            if (!inbox.isEmpty()) content.addView(Support.card(c, host), Ui.top(c, Ui.matchWrap(), 16));
             View stop = Ui.button(c, "Stop receiving", Icons.UNLINK, Ui.SECONDARY);
             content.addView(stop, Ui.top(c, Ui.matchWrap(), 20));
             stop.setOnClickListener(v -> {

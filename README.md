@@ -78,6 +78,13 @@ On the home phone, the **Ride inbox** shows completed rides newest first. Tap a 
 for its route and recorded numbers. If Wi-Fi drops, the next sync checks which files
 arrived and retries the missing ones. Each completed ride appears once.
 
+The inbox also offers optional PayPal support, with a QR code for a second phone.
+Riders can also donate from Settings. PayPal handles the amount and checkout.
+
+Open **Apps → Part Picker** to choose a bike and explore its build, or **Apps →
+Sprocket Calculator** to compare gearing. Both load the live MAXAPACITY tools
+inside the app and need internet access.
+
 ### Using the Mac Deck
 
 Nobody types an address. The app looks for the Deck by itself: down a USB
