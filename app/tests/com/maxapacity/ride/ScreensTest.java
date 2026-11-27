@@ -429,8 +429,36 @@ public class ScreensTest {
     idle(400);
     org.junit.Assert.assertFalse(panel("rideDetail").isOpen());
     org.junit.Assert.assertTrue(deck.isOpen());
+    tap(Units.distance(c, 10650) + " " + Units.distanceLabel(c));
+    awaitDetail("Pin benchmark loop");
+    tap("Pin benchmark loop");
+    tap("Pin this ride");
+    awaitDetail("Pinned baseline · 14T front / 48T rear");
+    a.onBackPressed();
+    idle(400);
+    tap(Units.distance(c, 9650) + " " + Units.distanceLabel(c));
+    awaitDetail("Confirm same loop");
+    tap("Confirm same loop");
+    awaitDetail("Climbed easier");
+    tap("Climbed easier");
+    awaitDetail("Change verdict");
+    sweep("Home Deck benchmark comparison");
+    a.onBackPressed();
+    idle(400);
+    tap(Units.distance(c, 9650) + " " + Units.distanceLabel(c));
+    awaitDetail("SAME LOOP · BEFORE → AFTER");
+    awaitDetail("Climbed easier");
+    tap("Share ride card");
+    android.content.Intent card = Shadows.shadowOf(a).getNextStartedActivity();
+    org.junit.Assert.assertEquals(RideShareActivity.class.getName(), card.getComponent().getClassName());
+    org.junit.Assert.assertEquals("14T / 50T", card.getStringExtra("Gearing"));
     PhoneDeck.running = false;
     PhoneDeck.address = "";
+  }
+
+  private void awaitDetail(String text) throws Exception {
+    Panel detail = panel("rideDetail");
+    await(text, () -> find(detail, android.widget.TextView.class, text) != null);
   }
 
   private void writeReceived(File root, String name, String data) throws Exception {

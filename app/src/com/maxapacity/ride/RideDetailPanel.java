@@ -81,6 +81,8 @@ final class RideDetailPanel extends Panel {
         content.addView(routeCard, Ui.matchWrap());
         final int gen = ++generation;
         final File gpx = received != null ? received.route : new File(RideStore.dir(c), file);
+        final boolean home = received != null;
+        final LinearLayout gearingCard = r.optJSONObject("gearing") == null ? null : gearingHeader(r);
         IO.execute(() -> {
             final List<double[]> points = readTrack(gpx);
             MAIN.post(() -> {
@@ -95,6 +97,7 @@ final class RideDetailPanel extends Panel {
                             ViewGroup.LayoutParams.MATCH_PARENT, dp(168)));
                 }
             });
+            if (gearingCard != null) loadComparison(r, home, gen, gearingCard, points);
         });
 
         String speedUnit = Units.speedLabel(c).toLowerCase(Locale.US);
@@ -122,7 +125,9 @@ final class RideDetailPanel extends Panel {
         stats.addView(b, Ui.matchWrap());
         content.addView(stats, Ui.top(c, Ui.matchWrap(), 12));
 
-        if (r.optJSONObject("gearing") != null) addGearing(r, received != null, gen);
+        if (gearingCard != null) content.addView(gearingCard, Ui.top(c, Ui.matchWrap(), 12));
+
+        button(content, "Share ride card", Icons.ROUTE, () -> host.launch(RideShareActivity.forRide(c, r)));
 
         BikeLog.Summary bike = RideStore.bike(r);
         if (bike != null) addBike(bike, distance);
@@ -241,55 +246,153 @@ final class RideDetailPanel extends Panel {
         row.addView(col, Ui.weighted());
     }
 
-    private void addGearing(JSONObject ride, boolean home, int gen) {
+    private LinearLayout gearingHeader(JSONObject ride) {
         Context c = getContext();
         LinearLayout card = Ui.card(c);
         JSONObject setup = ride.optJSONObject("gearing");
         card.addView(Ui.label(c, "INSTALLED GEARING"));
         card.addView(Ui.title(c, teeth(setup)), Ui.top(c, Ui.matchWrap(), 8));
         card.addView(Ui.small(c, setup.optString("name"), Ui.TEXT_2));
-        content.addView(card, Ui.top(c, Ui.matchWrap(), 12));
+        return card;
+    }
 
-        IO.execute(() -> {
-            JSONObject previous = null;
-            if (home) {
-                for (DeckInbox.Ride other : DeckInbox.load(c)) {
-                    if (InstalledGearing.beforeSwap(ride, other.stats)) { previous = other.stats; break; }
-                }
-            } else {
-                org.json.JSONArray history = RideStore.load(c);
-                for (int i = 0; i < history.length(); i++) {
-                    JSONObject other = history.optJSONObject(i);
-                    if (other != null && InstalledGearing.beforeSwap(ride, other)
-                            && (previous == null || previous.optLong("start") < other.optLong("start"))) previous = other;
-                }
-            }
-            JSONObject before = previous;
+    private void loadComparison(JSONObject ride, boolean home, int gen, LinearLayout card, List<double[]> points) {
+        Context c = getContext();
+        BenchmarkLoop loop = home ? new BenchmarkLoop(c, ride) : null;
+        JSONObject pin = home ? loop.pin() : null;
+        JSONObject shape = home ? BenchmarkLoop.shape(points) : null;
+        if (home && !loop.bike.isEmpty()) {
             MAIN.post(() -> {
-                if (gen != generation) return;
-                if (before == null) {
-                    card.addView(Ui.small(c, "This ride can be compared after you record a ride on different sprockets.",
-                            Ui.TEXT_2), Ui.top(c, Ui.matchWrap(), 8));
-                    return;
-                }
-                String date = android.text.format.DateUtils.formatDateTime(c, before.optLong("start"),
-                        android.text.format.DateUtils.FORMAT_SHOW_DATE | android.text.format.DateUtils.FORMAT_SHOW_TIME);
-                card.addView(Ui.label(c, "BEFORE SWAP → THIS RIDE"), Ui.top(c, Ui.matchWrap(), 16));
-                card.addView(Ui.body(c, "Compared with " + date + " on " + teeth(before.optJSONObject("gearing")), Ui.TEXT_2));
-                addMeta(card, "Distance · " + Units.distanceLabel(c), Units.distance(c, before.optDouble("distanceM"))
-                        + " → " + Units.distance(c, ride.optDouble("distanceM")), true);
-                if (before.has("climbM") && ride.has("climbM")) addMeta(card, "Climb · " + Units.climbLabel(c), Units.climb(c, (float) before.optDouble("climbM"))
-                        + " → " + Units.climb(c, (float) ride.optDouble("climbM")), true);
-                addMeta(card, "Moving time", Units.duration(before.optLong("movingMs"))
-                        + " → " + Units.duration(ride.optLong("movingMs")), true);
-                if (before.has("topMps") && ride.has("topMps")) addMeta(card, "Top speed · " + Units.speedLabel(c), Units.speed(c, (float) before.optDouble("topMps"))
-                        + " → " + Units.speed(c, (float) ride.optDouble("topMps")), true);
-                double oldEnergy = energyPerDistance(c, before), newEnergy = energyPerDistance(c, ride);
-                if (Double.isFinite(oldEnergy) && Double.isFinite(newEnergy)) {
-                    addMeta(card, "Wh/" + Units.distanceLabel(c), fmt("%.1f", oldEnergy) + " → " + fmt("%.1f", newEnergy), true);
-                }
+                if (gen == generation) benchmarkControls(card, loop, ride, pin, shape);
             });
+        }
+        if (pin != null) return;
+        JSONObject previous = null;
+        if (home) {
+            for (DeckInbox.Ride other : DeckInbox.load(c)) {
+                if (InstalledGearing.beforeSwap(ride, other.stats)) { previous = other.stats; break; }
+            }
+        } else {
+            org.json.JSONArray history = RideStore.load(c);
+            for (int i = 0; i < history.length(); i++) {
+                JSONObject other = history.optJSONObject(i);
+                if (other != null && InstalledGearing.beforeSwap(ride, other)
+                        && (previous == null || previous.optLong("start") < other.optLong("start"))) previous = other;
+            }
+        }
+        JSONObject before = previous;
+        MAIN.post(() -> {
+            if (gen != generation) return;
+            if (before == null) {
+                card.addView(Ui.small(c, "This ride can be compared after you record a ride on different sprockets.",
+                        Ui.TEXT_2), Ui.top(c, Ui.matchWrap(), 8));
+                return;
+            }
+            comparisonRows(card, ride, before, "BEFORE SWAP → THIS RIDE");
         });
+    }
+
+    private void comparisonRows(LinearLayout card, JSONObject ride, JSONObject before, String heading) {
+        Context c = getContext();
+        String date = android.text.format.DateUtils.formatDateTime(c, before.optLong("start"),
+                android.text.format.DateUtils.FORMAT_SHOW_DATE | android.text.format.DateUtils.FORMAT_SHOW_TIME);
+        card.addView(Ui.label(c, heading), Ui.top(c, Ui.matchWrap(), 16));
+        card.addView(Ui.body(c, "Compared with " + date + " on " + teeth(before.optJSONObject("gearing")), Ui.TEXT_2));
+        addMeta(card, "Distance · " + Units.distanceLabel(c), Units.distance(c, before.optDouble("distanceM"))
+                + " → " + Units.distance(c, ride.optDouble("distanceM")), true);
+        if (before.has("climbM") && ride.has("climbM")) addMeta(card, "Climb · " + Units.climbLabel(c), Units.climb(c, (float) before.optDouble("climbM"))
+                + " → " + Units.climb(c, (float) ride.optDouble("climbM")), true);
+        addMeta(card, "Moving time", Units.duration(before.optLong("movingMs"))
+                + " → " + Units.duration(ride.optLong("movingMs")), true);
+        if (before.has("topMps") && ride.has("topMps")) addMeta(card, "Top speed · " + Units.speedLabel(c), Units.speed(c, (float) before.optDouble("topMps"))
+                + " → " + Units.speed(c, (float) ride.optDouble("topMps")), true);
+        double oldEnergy = energyPerDistance(c, before), newEnergy = energyPerDistance(c, ride);
+        if (Double.isFinite(oldEnergy) && Double.isFinite(newEnergy)) {
+            addMeta(card, "Wh/" + Units.distanceLabel(c), fmt("%.1f", oldEnergy) + " → " + fmt("%.1f", newEnergy), true);
+        }
+    }
+
+    private void button(LinearLayout card, String title, String icon, Runnable click) {
+        View action = Ui.button(getContext(), title, icon, Ui.SECONDARY);
+        action.setOnClickListener(v -> click.run());
+        card.addView(action, Ui.top(getContext(), Ui.matchWrap(), 8));
+    }
+
+    private void benchmarkControls(LinearLayout card, BenchmarkLoop loop, JSONObject ride, JSONObject pin, JSONObject shape) {
+        Context c = getContext();
+        JSONObject baseline = pin == null ? null : pin.optJSONObject("ride");
+        String name = pin == null ? "" : pin.optString("name");
+        String id = BenchmarkLoop.id(ride);
+        if (baseline != null) {
+            card.addView(Ui.label(c, "BENCHMARK LOOP"), Ui.top(c, Ui.matchWrap(), 16));
+            card.addView(Ui.title(c, name));
+            if (BenchmarkLoop.id(baseline).equals(id)) {
+                card.addView(Ui.small(c, "Pinned baseline · " + teeth(baseline.optJSONObject("gearing")), Ui.TEXT_2));
+                button(card, "Unpin benchmark", Icons.PIN, () -> {
+                    loop.prefs.edit().remove("pin." + loop.bike).apply();
+                    build();
+                });
+                return;
+            }
+            String matchKey = "match/" + BenchmarkLoop.id(baseline) + "/" + id;
+            if (InstalledGearing.beforeSwap(ride, baseline) && BenchmarkLoop.matches(pin.optJSONObject("shape"), shape)) {
+                String answer = loop.note(matchKey);
+                if ("yes".equals(answer)) {
+                    comparisonRows(card, ride, baseline, "SAME LOOP · BEFORE → AFTER");
+                    verdict(card, loop, ride, baseline);
+                } else if (!"no".equals(answer)) {
+                    card.addView(Ui.body(c, "The GPS tracks look similar. Did you ride the same loop in the same direction?", Ui.TEXT_2));
+                    button(card, "Confirm same loop", Icons.CHECK, () -> { loop.note(matchKey, "yes"); build(); });
+                }
+                button(card, "no".equals(answer) ? "Review route match" : "Different route", Icons.ROUTE, () -> {
+                    loop.note(matchKey, "no".equals(answer) ? "" : "no"); build();
+                });
+            } else {
+                card.addView(Ui.small(c, "A comparison needs a later ride on this loop with different sprockets.", Ui.TEXT_2));
+            }
+        }
+        if (shape == null) {
+            card.addView(Ui.small(c, "A benchmark needs a GPS track of at least 200 m.", Ui.TEXT_2));
+            return;
+        }
+        button(card, pin == null ? "Pin benchmark loop" : "Use this ride as baseline", Icons.PIN, () -> {
+            android.widget.EditText field = Ui.input(c, "Loop name", false);
+            field.setText(pin == null ? "My benchmark loop" : name);
+            field.selectAll();
+            new Sheet(host.frame(), "Pin benchmark loop", "Use this ride as the comparison baseline for this bike.")
+                    .view(field).action("Cancel", Ui.SECONDARY, true, null)
+                    .action("Pin this ride", Ui.PRIMARY, true, () -> {
+                        String label = field.getText().toString().trim();
+                        loop.pin(label.isEmpty() ? "My benchmark loop" : label, ride, shape);
+                        build();
+                    }).show();
+        });
+    }
+
+    private void verdict(LinearLayout card, BenchmarkLoop loop, JSONObject ride, JSONObject baseline) {
+        Context c = getContext();
+        String key = "feel/" + BenchmarkLoop.id(ride);
+        String promptKey = "asked/" + BenchmarkLoop.id(baseline) + "/" + teeth(ride.optJSONObject("gearing"));
+        String saved = loop.note(key);
+        Runnable choices = () -> {
+            for (String label : new String[]{"Climbed easier", "Cruised easier", "About the same", "Wanted more pull", "Skip"}) {
+                button(card, label, Icons.CHECK, () -> {
+                    loop.note(key, label);
+                    loop.note(promptKey, "yes");
+                    build();
+                });
+            }
+        };
+        card.addView(Ui.label(c, "HOW DID IT FEEL?"), Ui.top(c, Ui.matchWrap(), 16));
+        if (saved.isEmpty() && loop.note(promptKey).isEmpty()) {
+            choices.run();
+        } else {
+            if (!saved.isEmpty() && !"Skip".equals(saved)) card.addView(Ui.body(c, saved, Ui.TEXT));
+            View edit = Ui.button(c, saved.isEmpty() || "Skip".equals(saved) ? "Add ride verdict" : "Change verdict",
+                    Icons.FLAG, Ui.SECONDARY);
+            edit.setOnClickListener(v -> { edit.setVisibility(GONE); choices.run(); });
+            card.addView(edit);
+        }
     }
 
     private static double energyPerDistance(Context c, JSONObject r) {
