@@ -86,7 +86,10 @@ Sprocket Calculator** to compare gearing. The calculator works from first launch
 change, speed and chain-length estimates. Both online and offline, the in-app calculator
 restores the selected bike’s last valid setup. Choose a bike or add a named one for a
 second build. Enter your installed tooth counts, then choose a gearing goal to try a
-two-tooth rear change. The website link carries the current numbers. The Part Picker uses the live catalog
+two-tooth rear change. Mark the current or proposed pair installed once it is fitted.
+The recorder captures that bike’s installed setup at ride start. A ride with an earlier
+different pair on the same bike shows both rides’ distance, moving time and top speed.
+The home Deck can compare rides it has received, too. The website link carries the current numbers. The Part Picker uses the live catalog
 and opens a recognized model from linked hardware or the rider’s “About my bike”
 note. Unknown or conflicting models open the bike chooser.
 
