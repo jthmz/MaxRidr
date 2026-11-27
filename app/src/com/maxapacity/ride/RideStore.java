@@ -101,7 +101,12 @@ final class RideStore {
                     .put("leanRight", Math.round(state.maxLeanRightDeg()))
                     .put("strava", strava ? STRAVA_PENDING : STRAVA_NONE);
             BikeLog.Summary bike = state.bikeLog().summary();
-            if (bike != null) ride.put(BIKE, bikeJson(bike));
+            if (bike != null) {
+                ride.put(BIKE, bikeJson(bike));
+                Bike linked = Bike.get(c);
+                String name = linked.controllerLinked() ? linked.controllerName() : linked.batteryName();
+                if (!name.isEmpty()) ride.put("bikeName", name);
+            }
             JSONArray rides = load(c);
             rides.put(ride);
             save(c, rides);

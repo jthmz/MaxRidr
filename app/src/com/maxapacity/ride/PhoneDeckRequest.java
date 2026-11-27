@@ -15,7 +15,23 @@ final class PhoneDeckRequest {
     // The check request declares both filenames and sizes before either body arrives.
     private static final Map<String, Map<File, File>> batches = new HashMap<>();
     private static volatile long receivingUntil;
+    private static final Map<String, Integer> totals = new HashMap<>();
+
+    static synchronized String syncProgress() {
+        if (batches.isEmpty()) return receiving() ? "Finishing sync" : "";
+        if (!receiving()) return "Sync paused · Waiting for riding phone";
+        int remaining = 0, total = 0;
+        for (String rider : batches.keySet()) {
+            remaining += batches.get(rider).size() / 2;
+            total += totals.get(rider);
+        }
+        return "Receiving ride " + (total - remaining + 1) + " of " + total;
+    }
     private static final java.util.concurrent.atomic.AtomicInteger uploads = new java.util.concurrent.atomic.AtomicInteger();
+
+    private static final java.util.concurrent.atomic.AtomicLong revision = new java.util.concurrent.atomic.AtomicLong();
+
+    static long revision() { return revision.get(); }
 
     static boolean receiving() {
         return uploads.get() > 0 || android.os.SystemClock.elapsedRealtime() < receivingUntil;
@@ -23,18 +39,26 @@ final class PhoneDeckRequest {
 
     private static synchronized void expect(String rider, Map<String, File> files) {
         Map<File, File> companions = new HashMap<>();
+        int total = 0;
         for (Map.Entry<String, File> entry : files.entrySet()) {
             String name = entry.getKey();
             if (!name.endsWith(".gpx")) continue;
             File route = entry.getValue();
             File summary = files.get(name.substring(0, name.length() - 4) + ".json");
-            if (summary == null || (route.isFile() && summary.isFile())) continue;
+            if (summary == null) continue;
+            total++;
+            if (route.isFile() && summary.isFile()) continue;
             companions.put(route, summary);
             companions.put(summary, route);
             receivingUntil = android.os.SystemClock.elapsedRealtime() + 15000;
         }
-        if (companions.isEmpty()) batches.remove(rider);
-        else batches.put(rider, companions);
+        if (companions.isEmpty()) {
+            batches.remove(rider);
+            totals.remove(rider);
+        } else {
+            batches.put(rider, companions);
+            totals.put(rider, total);
+        }
     }
 
     static void handle(Context context, Socket socket) {
@@ -76,7 +100,11 @@ final class PhoneDeckRequest {
                 } else if (route.equals("GET /api/state")) {
                     result.put("uploads", true).put("phoneDeck", true);
                 } else if (route.equals("POST /api/upload/check")) {
-                    JSONArray files = json(input, size).getJSONArray("files");
+                    JSONObject manifest = json(input, size);
+                    String device = manifest.optString("device").trim();
+                    if (!device.isEmpty()) prefs.edit().putString("device-" + tokenId(token),
+                            device.substring(0, Math.min(80, device.length()))).apply();
+                    JSONArray files = manifest.getJSONArray("files");
                     Map<String, File> offered = new HashMap<>();
                     JSONArray have = new JSONArray(), need = new JSONArray();
                     for (int i = 0; i < files.length(); i++) {
@@ -109,12 +137,13 @@ final class PhoneDeckRequest {
                                     update.putLong("last-ride-at", System.currentTimeMillis());
                                     companions.remove(companion);
                                     companions.remove(target);
-                                    if (companions.isEmpty()) batches.remove(rider);
+                                    if (companions.isEmpty()) { batches.remove(rider); totals.remove(rider); }
                                     if (batches.isEmpty()) receivingUntil = 0;
                                 } else if (companion != null) {
                                     receivingUntil = android.os.SystemClock.elapsedRealtime() + 15000;
                                 }
                                 update.apply();
+                                revision.incrementAndGet();
                             }
                             result.put("saved", fresh);
                         }

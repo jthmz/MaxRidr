@@ -329,6 +329,48 @@ public class ScreensTest {
     org.junit.Assert.assertNotNull(find(screen.status, android.widget.TextView.class, "HOME DECK LINKED"));
   }
 
+  @Test public void homeInboxOpensReceivedRide() throws Exception {
+    File root = new File(c.getExternalFilesDir("Received rides"), "paired-phone");
+    for (int i = 0; i < 2; i++) {
+      String base = "ride_" + i;
+      String route = "<gpx><trk><trkseg><trkpt lat='40.51' lon='-111.65'/>"
+              + "<trkpt lat='40.52' lon='-111.64'/><trkpt lat='40.54' lon='-111.64'/>"
+              + "</trkseg></trk></gpx>";
+      JSONObject summary = new JSONObject().put("file", base + ".gpx").put("bikeName", "XE Pro R")
+              .put("start", 1795478000000L - i * 86400000L).put("distanceM", 9650 + i * 1000)
+              .put("movingMs", 1490000).put("elapsedMs", 1620000);
+      writeReceived(root, base + ".gpx", route);
+      writeReceived(root, base + ".json", summary.toString());
+    }
+    start();
+    panel("deck").open();
+    tap("Make this phone my Deck");
+    // Robolectric records the foreground-service request without running Android's Wi-Fi service.
+    PhoneDeck.running = true;
+    PhoneDeck.address = "192.168.1.8:8791";
+    c.getSharedPreferences("home-deck", 0).edit().putLong("last-ride-at", 1795479800000L).apply();
+    DeckView deck = (DeckView) panel("deck");
+    deck.restart();
+    await("both inbox cards", () -> find(deck, android.widget.TextView.class, "RIDE INBOX  ·  2") != null);
+    sweep("Home Deck ride inbox");
+    tap(Units.distance(c, 9650) + " " + Units.distanceLabel(c));
+    org.junit.Assert.assertTrue(panel("rideDetail").isOpen());
+    sweep("Received ride details");
+    a.onBackPressed();
+    idle(400);
+    org.junit.Assert.assertFalse(panel("rideDetail").isOpen());
+    org.junit.Assert.assertTrue(deck.isOpen());
+    PhoneDeck.running = false;
+    PhoneDeck.address = "";
+  }
+
+  private void writeReceived(File root, String name, String data) throws Exception {
+    byte[] bytes = data.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    File size = new File(root, String.valueOf(bytes.length));
+    size.mkdirs();
+    java.nio.file.Files.write(new File(size, name).toPath(), bytes);
+  }
+
   @Test public void freshPhoneCanBecomeTheDeck() throws Exception {
     start();
     panel("deck").open();

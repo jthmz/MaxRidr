@@ -24,7 +24,11 @@ final class GpxWriter {
             throw new IOException("Cannot create " + dir);
         }
         SimpleDateFormat fileFmt = new SimpleDateFormat("yyyy-MM-dd_HHmm", Locale.US);
-        File out = new File(dir, "ride_" + fileFmt.format(new Date(startWallMs)) + ".gpx");
+        String base = "ride_" + fileFmt.format(new Date(startWallMs));
+        File out = new File(dir, base + ".gpx");
+        for (int suffix = 2; !out.createNewFile(); suffix++) {
+            out = new File(dir, base + "_" + suffix + ".gpx");
+        }
 
         SimpleDateFormat iso = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US);
         iso.setTimeZone(TimeZone.getTimeZone("UTC"));
