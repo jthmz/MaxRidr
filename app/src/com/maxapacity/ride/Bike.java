@@ -152,7 +152,8 @@ final class Bike {
                 bmsAskedAtMs = 0;
                 bmsMisses = 0;
                 batteryStatus = "Live";
-                if (!demo && d.legacy != prefs.getBoolean("bike_bms_legacy", false)) {
+                if (!demo && (!prefs.contains("bike_bms_legacy")
+                        || d.legacy != prefs.getBoolean("bike_bms_legacy", false))) {
                     prefs.edit().putBoolean("bike_bms_legacy", d.legacy).apply();
                 }
                 logForRide(false);
@@ -174,6 +175,7 @@ final class Bike {
             @Override
             public void onReady() {
                 controllerStatus = "Reading";
+                controller = null;
                 controllerMemory.reset();
                 liveSeen = 0;
                 liveAtMs = 0;
@@ -375,6 +377,7 @@ final class Bike {
         setDemo(false);
         if (kind == KIND_BATTERY) {
             bmsLink.close();
+            battery = null;
             prefs.edit().putString("bike_bms_name", name).remove("bike_bms_legacy").apply();
         } else {
             controllerLink.close();
@@ -428,6 +431,14 @@ final class Bike {
             return null;
         }
         return controller;
+    }
+
+    String batteryProtocol() {
+        if (battery != null) return battery.legacy ? "ANT · Legacy" : "ANT · Current";
+        if (!demo && batteryLinked() && prefs.contains("bike_bms_legacy")) {
+            return prefs.getBoolean("bike_bms_legacy", false) ? "ANT · Legacy" : "ANT · Current";
+        }
+        return "Detecting ANT protocol";
     }
 
     String batteryStatus() {

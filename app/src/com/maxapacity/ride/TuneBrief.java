@@ -196,6 +196,7 @@ final class TuneBrief {
             }
             if (b.temps.length > 0) sb.append("Hottest sensor ").append(b.maxTempC()).append(" C. ");
             if (b.soh >= 0) sb.append("Health ").append(b.soh).append("%. ");
+            if (!b.warnings.isEmpty()) sb.append("BMS warnings: ").append(join(b.warnings)).append(". ");
             sb.append(b.hasProblem() ? "Protections active: " + join(b.problems) + ".\n"
                     : "No protections active.\n");
         }

@@ -60,6 +60,7 @@ final class AntBms {
         /** Charging has stopped because the pack is full: how every charge ends, not a fault. */
         boolean full;
         /** Active protections, in plain words. Empty when the pack is healthy. */
+        final List<String> warnings = new ArrayList<>();
         List<String> problems = new ArrayList<>();
 
         float deltaCellV() {
@@ -207,6 +208,12 @@ final class AntBms {
         long protect = u32le(f, 10) | (u32le(f, 14) << 32);
         long warning = u32le(f, 18) | (u32le(f, 22) << 32);
 
+        for (int bit = 0; bit < WARNINGS.length; bit++) {
+            if (WARNINGS[bit] != null && (warning & (1L << bit)) != 0) {
+                d.warnings.add(WARNINGS[bit]);
+            }
+        }
+
         d.cellVolts = new float[cells];
         for (int i = 0; i < cells; i++) {
             // The top three bits flag balancer state on some models.
@@ -224,7 +231,8 @@ final class AntBms {
         d.volts = u16le(f, base + 4) / 100f;
         d.amps = (short) u16le(f, base + 6) / 10f;
         d.soc = clampPct(u16le(f, base + 8));
-        d.soh = clampPct(u16le(f, base + 10));
+        int health = u16le(f, base + 10);
+        if (health <= 100) d.soh = health;
         int dischargeCode = f[base + 12] & 0xFF;
         int chargeCode = f[base + 13] & 0xFF;
         int balanceCode = f[base + 14] & 0xFF;
@@ -279,6 +287,25 @@ final class AntBms {
         return d.dischargeOn && d.soc >= 95
                 && (chargeCode == 2 || chargeCode == 4 || chargeCode == 5);
     }
+
+    // ANT realtime protocol, table 5.3.1. This word also carries normal operating
+    // states (charge MOS on, balancing, standby, etc.). Only warnings are named here.
+    private static final String[] WARNINGS = {
+            /* 0 */ "High cell voltage", "High pack voltage", "Low cell voltage", "Low pack voltage",
+            /* 4 */ "Cell voltage difference too large", "High charging temperature",
+            "High discharge temperature", "Low charging temperature", "Low discharge temperature",
+            /* 9 */ "High MOSFET temperature", "High charging current", "High discharge current",
+            "Low charge (level 1)", "Low charge (level 2)", "Cell voltage check failed",
+            "Pack voltage check failed", "Precharge failed",
+            /* 17–29: operating states */ null, null, null, null, null, null, null, null,
+            null, null, null, null, null,
+            /* 30 */ "Balancer over-temperature", "Voltage protection reported",
+            "Temperature protection reported", "System error", "GPS communication lost",
+            /* 35–42: operating states */ null, null, null, null, null, null, null, null,
+            /* 43 */ "Clock error", null, null, "Usage period ended", "Usage period ending",
+            null, "Low-voltage shutdown approaching", null, null, null,
+            /* 53 */ "Internal communication unstable", "Heater fault",
+    };
 
     private static final String[] PROTECTION = {
             null, "Cell over-voltage", "Cell over-voltage", "Pack over-voltage",

@@ -64,10 +64,12 @@ final class BikePanel extends Panel {
         if (!bike.anyConfigured()) status.set("", Ui.TEXT_3);
         else if (bike.demo()) status.set("DEMO", Ui.WARN);
         else if (problem) status.set("ATTENTION", Ui.DANGER);
+        else if (b != null && !b.warnings.isEmpty()) status.set("WARNING", Ui.WARN);
         else status.set(live ? "LIVE" : "CONNECTING", live ? Ui.OK : Ui.WARN);
 
         String key = bike.demo() + "|" + bike.summaryKey() + "|" + (b == null ? "" : Math.round(b.amps * 10) + "/"
-                + Math.round(b.deltaCellV() * 1000) + "/" + b.maxTempC())
+                + Math.round(b.deltaCellV() * 1000) + "/" + b.maxTempC()
+                + "/" + b.soh + "/" + b.warnings + "/" + b.problems)
                 + "|" + (l == null ? "" : l.rpm + "/" + Math.round(l.amps) + "/" + l.motorTempC
                 + "/" + Math.round(l.volts * 10));
         if (key.equals(shown)) return;
@@ -173,7 +175,20 @@ final class BikePanel extends Panel {
             card.addView(new CellsView(c, b), Ui.top(c, new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, dp(56)), 8));
         }
-        for (String p : b.problems) alert(card, p);
+        if (b.soh >= 0) {
+            card.addView(Ui.body(c, "Battery health " + b.soh + "%", Ui.TEXT_2),
+                    Ui.top(c, Ui.matchWrap(), 12));
+        }
+        if (b.hasProblem()) {
+            card.addView(Ui.label(c, "PROTECTIONS"), Ui.top(c, Ui.matchWrap(), 16));
+            for (String protection : b.problems) alert(card, protection);
+        }
+        if (!b.warnings.isEmpty()) {
+            card.addView(Ui.label(c, "BMS WARNINGS"), Ui.top(c, Ui.matchWrap(), 16));
+            for (String warning : b.warnings) {
+                card.addView(Ui.body(c, warning, Ui.WARN), Ui.top(c, Ui.matchWrap(), 8));
+            }
+        }
     }
 
     // ---- Controller --------------------------------------------------------
@@ -333,7 +348,7 @@ final class BikePanel extends Panel {
         final boolean battery = kind == Bike.KIND_BATTERY;
         final Bike bike = Bike.get(getContext());
         if (bike.demo()) {
-            new Sheet(host.frame(), "Demo bike", null)
+            new Sheet(host.frame(), "Demo bike", battery ? bike.batteryProtocol() : null)
                     .item(Icons.UNLINK, "End demo", "Back to your own bike", false, () -> {
                         bike.setDemo(false);
                         host.say("Demo bike off");
@@ -341,7 +356,8 @@ final class BikePanel extends Panel {
                     .show();
             return;
         }
-        new Sheet(host.frame(), battery ? bike.batteryName() : bike.controllerName(), null)
+        new Sheet(host.frame(), battery ? bike.batteryName() : bike.controllerName(),
+                battery ? bike.batteryProtocol() : null)
                 .item(Icons.UNLINK, battery ? "Unlink battery" : "Unlink controller",
                         "Nothing on the bike changes", true, () -> {
                             final String was = bike.unlink(kind);

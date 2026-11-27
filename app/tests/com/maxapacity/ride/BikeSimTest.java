@@ -1078,6 +1078,7 @@ public class BikeSimTest {
     bike.link(Bike.KIND_BATTERY, "ANT-BLE16ZMUB");
     for (int i = 0; i < 20; i++) ShadowLooper.idleMainLooper(200, TimeUnit.MILLISECONDS);
     assertNotNull(bike.battery());
+    assertEquals("ANT · Current", bike.batteryProtocol());
     assertEquals(91, bike.battery().soc);
     assertEquals(52.84f, bike.battery().volts, 0.01f);
     for (byte[] f : bms.written) assertArrayEquals(AntBms.REQUEST_NEW, f);
@@ -1089,6 +1090,7 @@ public class BikeSimTest {
     for (int i = 0; i < 100 && bike.battery() == null; i++) ShadowLooper.idleMainLooper(200, TimeUnit.MILLISECONDS);
     assertNotNull("found the protocol by itself", bike.battery());
     assertTrue(bike.battery().legacy);
+    assertEquals("ANT · Legacy", bike.batteryProtocol());
     assertEquals(41, bike.battery().soc);
     // Only ever the two read requests, never a write command.
     for (byte[] f : bms.written) {

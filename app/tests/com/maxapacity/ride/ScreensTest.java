@@ -453,6 +453,29 @@ public class ScreensTest {
     sweep("dashboard after the demo");
   }
 
+  @Test public void batteryShowsOnlyReportedHealthAndSeparatesWarnings() throws Exception {
+    start();
+    Bike bike = Bike.get(c);
+    bike.link(Bike.KIND_BATTERY, "ANT-BLE16ZMUB");
+    run(1000);
+    Panel screen = panel("bike");
+    screen.open();
+    byte[] frame = ProtocolTest.hex(ProtocolTest.NEW16);
+    frame[10] = 2;
+    frame[18] = 4;
+    int crc = AntBms.crc16(frame, 1, frame.length - 5);
+    frame[frame.length - 4] = (byte) crc;
+    frame[frame.length - 3] = (byte) (crc >> 8);
+    bms.listener.onData(frame);
+    Class<android.widget.TextView> text = android.widget.TextView.class;
+    org.junit.Assert.assertNotNull(find(screen, text, "Battery health 100%"));
+    org.junit.Assert.assertNotNull(find(screen, text, "BMS WARNINGS"));
+    org.junit.Assert.assertNotNull(find(screen, text, "PROTECTIONS"));
+    bms.listener.onData(ProtocolTest.hex(ProtocolTest.OLD14));
+    org.junit.Assert.assertNull(find(screen, text, "Battery health 100%"));
+    org.junit.Assert.assertNull(find(screen, text, "BMS WARNINGS"));
+  }
+
   @Test public void dashboardWhileRidingWithTheBikeLinked() throws Exception {
     start();
     Bike.get(c).link(Bike.KIND_BATTERY, "ANT-BLE16ZMUB");
