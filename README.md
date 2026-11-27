@@ -37,6 +37,12 @@ Two halves that find each other:
 
 The app is plain Android SDK, Java, no libraries. Android 12 or newer.
 
+## Compare a sprocket swap on the home phone
+
+In the Deck ride inbox, open a ride with installed gearing and choose **Pin benchmark loop**. Give the route a name. Ride it again on the same bike with the new sprockets installed in the calculator. Open the later ride on the Deck, confirm the GPS match, and tap how it felt. The Deck keeps a baseline per bike and remembers the answer for each ride. Use the same start, finish and direction for both recordings.
+
+Choose **Share ride card** on either phone to preview a MAXAPACITY image, select the ride stats, add a photo, and send the finished card through an Android app of your choice. The card contains the displayed pixels, without a GPS track or the original photo’s metadata.
+
 ## On the website
 
 Both halves have a page on [maxapacitybikes.com/apps](https://maxapacitybikes.com/apps):

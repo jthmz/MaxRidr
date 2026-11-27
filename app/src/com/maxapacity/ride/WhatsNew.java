@@ -66,6 +66,11 @@ final class WhatsNew {
 
     /** Newest first. */
     static final Note[] NOTES = {
+        new Note(14, "November 2026",
+                new Item(Icons.ROUTE, "Ride your benchmark again",
+                        "Pin a baseline ride in the home Deck inbox. After a sprocket swap, confirm the same loop and tap how it felt."),
+                new Item(Icons.FLAG, "Share a ride card",
+                        "Open a ride on either phone, pick your stats and add an optional photo. Preview the card and choose who gets it.")),
         new Note(13, "November 2026",
                 new Item(Icons.COG, "See what changed after a sprocket swap",
                         "Mark your fitted sprockets in the calculator. Each new ride keeps its gearing."

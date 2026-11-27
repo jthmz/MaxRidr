@@ -87,6 +87,10 @@
             </intent-filter>
         </activity>
 
+        <activity android:name=".RideShareActivity" android:exported="false" />
+        <provider android:name=".RideCardProvider" android:authorities="com.maxapacity.ride.cards"
+            android:exported="false" android:grantUriPermissions="true" />
+
         <activity android:name=".BikeToolActivity" android:exported="false" />
 
         <receiver android:name=".PhoneDeck$BootReceiver" android:exported="false">
