@@ -192,6 +192,13 @@ jobs:
             fi
           done
 
+      - name: Check offline gearing profiles in the release APK
+        env:
+          CHROME_BIN: google-chrome
+        run: |
+          unzip -q build/outputs/apk/release/*.apk 'assets/gearing/*' -d "$RUNNER_TEMP/gearing-check"
+          node tools/test/gearing-profiles.mjs "$RUNNER_TEMP/gearing-check/assets"
+
       # The screen tests keep a picture of every screen and sheet they draw.
       # Held for two days so the design can be looked over without a phone.
       - name: Keep the screen pictures

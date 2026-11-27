@@ -66,6 +66,10 @@ final class WhatsNew {
 
     /** Newest first. */
     static final Note[] NOTES = {
+        new Note(12, "November 2026",
+                new Item(Icons.COG, "Gearing for each bike",
+                        "The sprocket calculator remembers each bike’s setup on this phone."
+                                + " Enter your current tooth counts and choose a goal to compare a change.")),
         new Note(11, "November 2026",
                 new Item(Icons.COG, "Gearing works off the grid",
                         "Compare sprockets in Apps even on your first launch offline. The Part Picker"

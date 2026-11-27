@@ -145,21 +145,73 @@
         outline: 2px solid #ffeb1a;
         outline-offset: 2px;
       }
+      .help {
+        grid-column: 1 / -1;
+        margin: 0;
+      }
+      #saved,
+      .help,
+      #suggestion {
+        color: #c6c7ce;
+        font-size: 0.9rem;
+      }
+      #saved {
+        margin-bottom: 0;
+      }
+      #addBike,
+      #suggest,
+      #suggestion {
+        margin-top: 8px;
+      }
+      #suggestion {
+        display: block;
+      }
+      [hidden] {
+        display: none !important;
+      }
     </style>
   </head>
   <body>
     <main>
       <h1>Sprocket calculator</h1>
+      <section aria-label="Bike setup">
+        <label>Bike<select id="bike"></select></label>
+        <form id="addBike" hidden>
+          <label>Bike name<input id="bikeName" maxlength="60" placeholder="e.g. My trail bike" /></label>
+          <button type="submit">Add bike</button> <button type="button" id="cancelBike">Cancel</button>
+        </form>
+        <p id="saved" role="status"></p>
+      </section>
       <form id="gearing">
         <fieldset>
           <legend>Current gearing</legend>
-          <label>Front teeth<input name="cf" type="number" min="8" max="30" value="14" required /></label>
-          <label>Rear teeth<input name="cr" type="number" min="20" max="90" value="48" required /></label>
+          <p class="help">
+            How many teeth are on your front and rear sprockets? Look for a stamp such as 14T, or count the
+            teeth.
+          </p>
+          <label
+            >Front teeth<input name="cf" type="number" min="1" max="300" inputmode="numeric" required
+          /></label>
+          <label
+            >Rear teeth<input name="cr" type="number" min="1" max="300" inputmode="numeric" required
+          /></label>
         </fieldset>
         <fieldset>
           <legend>Proposed gearing</legend>
-          <label>Front teeth<input name="nf" type="number" min="8" max="30" value="14" required /></label>
-          <label>Rear teeth<input name="nr" type="number" min="20" max="90" value="60" required /></label>
+          <label>Front teeth<input name="nf" type="number" min="1" max="300" inputmode="numeric" /></label>
+          <label>Rear teeth<input name="nr" type="number" min="1" max="300" inputmode="numeric" /></label>
+          <div class="help">
+            <label
+              >What would you like to change?
+              <select id="goal">
+                <option value="">Compare my own setup</option>
+                <option value="pull">More pull on climbs</option>
+                <option value="speed">Taller gearing for cruising</option>
+              </select>
+            </label>
+            <button type="button" id="suggest" hidden></button>
+            <small id="suggestion"></small>
+          </div>
           <div class="presets" aria-label="Rear sprocket presets">
             <button type="button" data-rear="45">45T</button><button type="button" data-rear="48">48T</button
             ><button type="button" data-rear="60">60T</button>
@@ -197,51 +249,30 @@
         <details>
           <summary>Bike and drivetrain inputs</summary>
           <p>
-            Defaults use the DRAX X Pro 72V. Enter your measured wheel diameter and axle distance for your
-            bike.
+            What chain size is stamped on the side plates? Measure the rear tire across its outside diameter
+            and the distance between sprocket centers. Use countershaft RPM or account for primary reduction
+            once when using motor RPM.
           </p>
           <div class="advanced">
+            <label>Countershaft RPM<input name="rpm" type="number" min="1" step="any" /></label>
             <label
-              >Countershaft RPM<input name="rpm" type="number" min="500" max="20000" value="2800" required
+              >Primary reduction<input name="prim" type="number" min="1" step="any" value="1" required
             /></label>
-            <label
-              >Primary reduction<input
-                name="prim"
-                type="number"
-                min="1"
-                max="10"
-                step="any"
-                value="1"
-                required
-            /></label>
-            <label
-              >Wheel diameter (in)<input
-                name="dia"
-                type="number"
-                min="12"
-                max="34"
-                step="any"
-                value="22.5"
-                required
-            /></label>
-            <label
-              >Axle distance (mm)<input
-                name="ctr"
-                type="number"
-                min="200"
-                max="1000"
-                step="any"
-                value="560"
-                required
-            /></label>
+            <label>Wheel diameter (in)<input name="dia" type="number" min="0.01" step="any" /></label>
+            <label>Axle distance (mm)<input name="ctr" type="number" min="1" step="any" /></label>
             <label
               >Chain size<select name="pitch">
+                <option value="">Select size</option>
                 <option>420</option>
-                <option selected>428</option>
+                <option>428</option>
                 <option>520</option>
                 <option>525</option>
+                <option value="custom">Other pitch</option>
               </select></label
             >
+            <label id="pitchLabel" hidden
+              >Chain pitch (mm)<input type="number" name="pitchMm" min="0.01" step="any"
+            /></label>
             <label
               >Speed unit<select name="unit">
                 <option value="mph">mph</option>
