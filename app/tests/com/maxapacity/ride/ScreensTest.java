@@ -320,11 +320,23 @@ public class ScreensTest {
 
   // ---- In use: riding, rides saved, bike linked ------------------------------
 
+  @Test public void unchangedPhoneDeckPollKeepsItsBadge() throws Exception {
+    start();
+    DeckView screen = (DeckView) panel("deck");
+    JSONObject state = new JSONObject().put("phoneDeck", true).put("uploads", true);
+    screen.showState(state);
+    screen.showState(state);
+    org.junit.Assert.assertNotNull(find(screen.status, android.widget.TextView.class, "HOME DECK LINKED"));
+  }
+
   @Test public void freshPhoneCanBecomeTheDeck() throws Exception {
     start();
     panel("deck").open();
     idle(400);
+    sweep("Deck role choices");
     tap("Make this phone my Deck");
+    tap("Pair a riding phone");
+    sweep("Home Deck pairing code");
     org.junit.Assert.assertTrue(c.getSharedPreferences("home-deck", 0).getBoolean("enabled", false));
   }
 

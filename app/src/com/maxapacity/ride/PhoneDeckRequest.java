@@ -12,6 +12,31 @@ import java.util.*;
 
 /** One bounded HTTP request using the Ride client's existing wire format. */
 final class PhoneDeckRequest {
+    // The check request declares both filenames and sizes before either body arrives.
+    private static final Map<String, Map<File, File>> batches = new HashMap<>();
+    private static volatile long receivingUntil;
+    private static final java.util.concurrent.atomic.AtomicInteger uploads = new java.util.concurrent.atomic.AtomicInteger();
+
+    static boolean receiving() {
+        return uploads.get() > 0 || android.os.SystemClock.elapsedRealtime() < receivingUntil;
+    }
+
+    private static synchronized void expect(String rider, Map<String, File> files) {
+        Map<File, File> companions = new HashMap<>();
+        for (Map.Entry<String, File> entry : files.entrySet()) {
+            String name = entry.getKey();
+            if (!name.endsWith(".gpx")) continue;
+            File route = entry.getValue();
+            File summary = files.get(name.substring(0, name.length() - 4) + ".json");
+            if (summary == null || (route.isFile() && summary.isFile())) continue;
+            companions.put(route, summary);
+            companions.put(summary, route);
+            receivingUntil = android.os.SystemClock.elapsedRealtime() + 15000;
+        }
+        if (companions.isEmpty()) batches.remove(rider);
+        else batches.put(rider, companions);
+    }
+
     static void handle(Context context, Socket socket) {
         try (Socket client = socket) {
             client.setSoTimeout(8000);
@@ -52,17 +77,21 @@ final class PhoneDeckRequest {
                     result.put("uploads", true).put("phoneDeck", true);
                 } else if (route.equals("POST /api/upload/check")) {
                     JSONArray files = json(input, size).getJSONArray("files");
+                    Map<String, File> offered = new HashMap<>();
                     JSONArray have = new JSONArray(), need = new JSONArray();
                     for (int i = 0; i < files.length(); i++) {
                         JSONObject file = files.getJSONObject(i);
                         String name = file.getString("name");
                         File target = target(context, token, name, file.getLong("size"));
+                        offered.put(name, target);
                         (target.isFile() ? have : need).put(name);
                     }
+                    expect(tokenId(token), offered);
                     result.put("have", have).put("need", need);
                 } else if (route.equals("PUT /api/upload")) {
                     File target = target(context, token, uri.getQueryParameter("name"), size);
                     File tmp = File.createTempFile("incoming-", ".part", target.getParentFile());
+                    uploads.incrementAndGet();
                     try {
                         try (FileOutputStream file = new FileOutputStream(tmp)) {
                             copy(input, file, size);
@@ -72,11 +101,24 @@ final class PhoneDeckRequest {
                             boolean fresh = !target.exists();
                             if (fresh) {
                                 Files.move(tmp.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE);
-                                prefs.edit().putString("last-file", target.getName()).apply();
+                                SharedPreferences.Editor update = prefs.edit().putString("last-file", target.getName());
+                                String rider = tokenId(token);
+                                Map<File, File> companions = batches.get(rider);
+                                File companion = companions == null ? null : companions.get(target);
+                                if (companion != null && companion.isFile()) {
+                                    update.putLong("last-ride-at", System.currentTimeMillis());
+                                    companions.remove(companion);
+                                    companions.remove(target);
+                                    if (companions.isEmpty()) batches.remove(rider);
+                                    if (batches.isEmpty()) receivingUntil = 0;
+                                } else if (companion != null) {
+                                    receivingUntil = android.os.SystemClock.elapsedRealtime() + 15000;
+                                }
+                                update.apply();
                             }
                             result.put("saved", fresh);
                         }
-                    } finally { tmp.delete(); }
+                    } finally { uploads.decrementAndGet(); tmp.delete(); }
                 } else {
                     reply(output, 404, result.put("ok", false));
                     return;

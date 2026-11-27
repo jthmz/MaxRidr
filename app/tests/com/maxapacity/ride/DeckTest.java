@@ -82,6 +82,16 @@ public class DeckTest {
       DeckLink.Outcome repeat = DeckLink.send(address, pair.key, "Bike", items);
       assertEquals(0, repeat.sentNow);
       assertTrue(repeat.onMac.contains(item.name));
+      android.content.SharedPreferences receipt = c.getSharedPreferences("home-deck", 0);
+      assertEquals(0L, receipt.getLong("last-ride-at", 0));
+      DeckLink.Item summary = new DeckLink.Item("ride.json", 2, 0, "ride",
+              () -> new java.io.ByteArrayInputStream(new byte[]{123, 125}));
+      items = java.util.Arrays.asList(item, summary);
+      assertEquals(1, DeckLink.send(address, pair.key, "Bike", items).sentNow);
+      long completed = receipt.getLong("last-ride-at", 0);
+      assertTrue(completed > 0);
+      assertEquals(0, DeckLink.send(address, pair.key, "Bike", items).sentNow);
+      assertEquals(completed, receipt.getLong("last-ride-at", 0));
       File root = c.getExternalFilesDir("Received rides");
       try (java.util.stream.Stream<java.nio.file.Path> paths = Files.walk(root.toPath())) {
         assertArrayEquals(bytes, Files.readAllBytes(paths.filter(path ->
