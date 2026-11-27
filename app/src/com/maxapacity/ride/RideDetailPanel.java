@@ -300,6 +300,9 @@ final class RideDetailPanel extends Panel {
         private float startY;
         private float endX;
         private float endY;
+        private final Paint grid = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private double metersPerPixel;
+        private final android.graphics.RectF bounds = new android.graphics.RectF();
 
         RouteView(Context c, List<double[]> points) {
             super(c);
@@ -308,7 +311,8 @@ final class RideDetailPanel extends Panel {
             line.setStrokeWidth(Ui.dp(c, 2.5f));
             line.setStrokeCap(Paint.Cap.ROUND);
             line.setStrokeJoin(Paint.Join.ROUND);
-            line.setColor(Ui.TEXT);
+            line.setColor(Ui.ACCENT);
+            setContentDescription("Recorded route, from the open circle to the finish dot");
         }
 
         @Override
@@ -327,8 +331,10 @@ final class RideDetailPanel extends Panel {
             double kx = Math.cos(Math.toRadians((minLat + maxLat) / 2));
             double spanX = Math.max((maxLon - minLon) * kx, 1e-6);
             double spanY = Math.max(maxLat - minLat, 1e-6);
-            float pad = Ui.dp(getContext(), 8);
+            float pad = Math.min(Ui.dp(getContext(), 22), Math.min(w, h) / 4f);
             double scale = Math.min((w - 2 * pad) / spanX, (h - 2 * pad) / spanY);
+            metersPerPixel = 111320.0 / scale;
+            bounds.set(0, 0, w, h);
             double offX = (w - spanX * scale) / 2;
             double offY = (h - spanY * scale) / 2;
             path.rewind();
@@ -350,6 +356,29 @@ final class RideDetailPanel extends Panel {
 
         @Override
         protected void onDraw(Canvas canvas) {
+            int cell = Ui.dp(getContext(), 24);
+            grid.setStyle(Paint.Style.FILL);
+            grid.setColor(Ui.BG);
+            float corner = Ui.dp(getContext(), 10);
+            canvas.drawRoundRect(bounds, corner, corner, grid);
+            grid.setColor(Ui.HAIRLINE);
+            grid.setStrokeWidth(Ui.dp(getContext(), 1));
+            for (int x = cell; x < getWidth(); x += cell) canvas.drawLine(x, 4, x, getHeight() - 4, grid);
+            for (int y = cell; y < getHeight(); y += cell) canvas.drawLine(4, y, getWidth() - 4, y, grid);
+
+            // Label a ground distance represented by the route projection.
+            double target = metersPerPixel * getWidth() / 5;
+            if (target >= 1 && Double.isFinite(target)) {
+                double unit = Math.pow(10, Math.floor(Math.log10(target)));
+                double distance = unit * (target >= 5 * unit ? 5 : target >= 2 * unit ? 2 : 1);
+                float left = Ui.dp(getContext(), 10), bottom = getHeight() - left;
+                grid.setColor(Ui.TEXT_2);
+                grid.setTypeface(Ui.mono);
+                grid.setTextSize(Ui.dp(getContext(), 10));
+                String label = distance >= 1000 ? Math.round(distance / 1000) + " km" : Math.round(distance) + " m";
+                canvas.drawText(label, left, bottom - Ui.dp(getContext(), 4), grid);
+                canvas.drawLine(left, bottom, left + (float) (distance / metersPerPixel), bottom, grid);
+            }
             canvas.drawPath(path, line);
             float r = Ui.dp(getContext(), 5);
             dot.setStyle(Paint.Style.FILL);

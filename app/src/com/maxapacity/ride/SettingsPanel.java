@@ -194,6 +194,8 @@ final class SettingsPanel extends Panel {
                 false, v -> host.showTour());
         link(about, Icons.BELL, "What's new", "What recent updates brought", "View", false,
                 v -> host.showWhatsNew());
+        link(about, Icons.EXTERNAL_LINK, "Support MaxRidr", "Donate with PayPal", "Donate",
+                false, v -> Support.donate(host));
         link(about, Icons.EXTERNAL_LINK, "MAXAPACITY website", "maxapacitybikes.com", "Open",
                 false, v -> host.launch(new Intent(Intent.ACTION_VIEW,
                         Uri.parse(Site.HOME))));

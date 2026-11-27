@@ -66,6 +66,10 @@ final class WhatsNew {
 
     /** Newest first. */
     static final Note[] NOTES = {
+        new Note(10, "November 2026",
+                new Item(Icons.COG, "Build your bike in MaxRidr",
+                        "Open Apps for the Part Picker and Sprocket Calculator. Compare parts and gearing,"
+                                + " then return to your dashboard. Optional PayPal support is in Settings.")),
         new Note(9, "November 2026",
                 new Item(Icons.MONITOR, "Your rides made it home",
                         "Open Deck on either phone to see auto-sync. On your home phone, tap a ride"

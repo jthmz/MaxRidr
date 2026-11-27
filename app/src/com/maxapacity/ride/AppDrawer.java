@@ -162,11 +162,15 @@ final class AppDrawer extends Panel {
         addView(box, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
 
         // MAXAPACITY site tools.
-        tools = Ui.row(context);
-        addTool("Garage", Icons.WAREHOUSE, "/garage");
-        addTool("Picker", Icons.SLIDERS_HORIZONTAL, "/picker");
-        addTool("Guides", Icons.BOOK_OPEN, "/guides");
-        addTool("Gearing", Icons.COG, "/tools/sprocket-calculator");
+        tools = Ui.column(context);
+        LinearLayout bikeTools = Ui.row(context);
+        addTool(bikeTools, "Part Picker", Icons.SLIDERS_HORIZONTAL, BikeToolActivity.PICKER, true);
+        addTool(bikeTools, "Sprocket Calculator", Icons.COG, BikeToolActivity.SPROCKET, true);
+        tools.addView(bikeTools, Ui.matchWrap());
+        LinearLayout links = Ui.row(context);
+        addTool(links, "Garage", Icons.WAREHOUSE, "/garage", false);
+        addTool(links, "Guides", Icons.BOOK_OPEN, "/guides", false);
+        tools.addView(links, Ui.top(context, Ui.matchWrap(), 8));
         addView(tools, Ui.top(context, Ui.matchWrap(), 12));
 
         emptySlot = new FrameLayout(context);
@@ -190,24 +194,28 @@ final class AppDrawer extends Panel {
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f), 12));
     }
 
-    private void addTool(String name, String icon, final String path) {
+    private void addTool(LinearLayout row, String name, String icon, String path, boolean embedded) {
         Context c = getContext();
         LinearLayout tile = Ui.row(c);
         tile.setGravity(Gravity.CENTER);
         tile.setBackground(Ui.pressable(c, Ui.SURFACE, Ui.HAIRLINE, 10));
         tile.addView(Ui.icon(c, icon, 16, Ui.TEXT_2));
         TextView l = Ui.small(c, name, Ui.TEXT);
-        l.setSingleLine(true);
+        l.setMaxLines(2);
+        l.setGravity(Gravity.CENTER);
         l.setIncludeFontPadding(false);
         tile.addView(l, Ui.left(c, Ui.wrap(), 6));
         tile.setOnClickListener(v -> {
-            host.launch(new Intent(Intent.ACTION_VIEW, Uri.parse(Site.HOME + path)));
-            close();
+            if (embedded) host.launch(new Intent(c, BikeToolActivity.class).putExtra("path", path));
+            else {
+                host.launch(new Intent(Intent.ACTION_VIEW, Uri.parse(Site.HOME + path)));
+                close();
+            }
         });
         Ui.press(tile);
-        LayoutParams lp = new LayoutParams(0, dp(40), 1f);
-        if (tools.getChildCount() > 0) lp.leftMargin = dp(8);
-        tools.addView(tile, lp);
+        LayoutParams lp = new LayoutParams(0, dp(48), 1f);
+        if (row.getChildCount() > 0) lp.leftMargin = dp(8);
+        row.addView(tile, lp);
     }
 
     /** True when the grid is scrolled to the top, so a downward swipe may close it. */

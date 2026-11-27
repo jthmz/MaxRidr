@@ -329,6 +329,23 @@ public class ScreensTest {
     org.junit.Assert.assertNotNull(find(screen.status, android.widget.TextView.class, "HOME DECK LINKED"));
   }
 
+  @Test public void drawerOpensBothLiveToolsInsideMaxRidr() throws Exception {
+    start();
+    panel("drawer").open();
+    for (String[] tool : new String[][]{{"Part Picker", "/picker"},
+            {"Sprocket Calculator", "/tools/sprocket-calculator"}}) {
+      tap(tool[0]);
+      android.content.Intent intent = Shadows.shadowOf(a).getNextStartedActivity();
+      org.junit.Assert.assertEquals(BikeToolActivity.class.getName(), intent.getComponent().getClassName());
+      org.robolectric.android.controller.ActivityController<BikeToolActivity> screen =
+              Robolectric.buildActivity(BikeToolActivity.class, intent).setup();
+      android.webkit.WebView page = find(screen.get().getWindow().getDecorView(), android.webkit.WebView.class, null);
+      org.junit.Assert.assertEquals(Site.HOME + tool[1], Shadows.shadowOf(page).getLastLoadedUrl());
+      screen.pause().stop().destroy();
+    }
+    org.junit.Assert.assertFalse(BikeToolActivity.onSite(android.net.Uri.parse("https://vendor.example")));
+  }
+
   @Test public void homeInboxOpensReceivedRide() throws Exception {
     File root = new File(c.getExternalFilesDir("Received rides"), "paired-phone");
     for (int i = 0; i < 2; i++) {
@@ -353,6 +370,14 @@ public class ScreensTest {
     deck.restart();
     await("both inbox cards", () -> find(deck, android.widget.TextView.class, "RIDE INBOX  ·  2") != null);
     sweep("Home Deck ride inbox");
+    tap("Show PayPal QR");
+    org.junit.Assert.assertNotNull(find(Sheet.current(), android.widget.ImageView.class, null));
+    tap("Done");
+    tap("Donate with PayPal");
+    android.net.Uri checkout = Shadows.shadowOf(a).getNextStartedActivity().getData();
+    org.junit.Assert.assertEquals("www.paypal.com", checkout.getHost());
+    org.junit.Assert.assertEquals("jaytee5611@gmail.com", checkout.getQueryParameter("business"));
+    org.junit.Assert.assertNull(checkout.getQueryParameter("amount"));
     tap(Units.distance(c, 9650) + " " + Units.distanceLabel(c));
     org.junit.Assert.assertTrue(panel("rideDetail").isOpen());
     sweep("Received ride details");
