@@ -145,6 +145,25 @@ public class AntFramesTest {
   };
 
 
+  @Test public void warningsAreSeparateFromProtectionsAndOperationalFlags() {
+    byte[] frame = hex(T1);
+    java.util.Arrays.fill(frame, 10, 26, (byte) 0);
+    frame[10] = 2;       // Cell over-voltage protection.
+    frame[18] = 4;       // Low cell voltage warning.
+    frame[21] = 1;       // Discharge MOS on, an ordinary operating state.
+    frame[24] = 0x40;    // Heater fault, bit 54.
+    int base = 34 + 2 * ((frame[8] & 255) + (frame[9] & 255));
+    frame[base + 10] = (byte) 255;
+    int crc = AntBms.crc16(frame, 1, frame.length - 5);
+    frame[frame.length - 4] = (byte) crc;
+    frame[frame.length - 3] = (byte) (crc >> 8);
+    AntBms.Data data = AntBms.decodeNew(frame);
+    assertEquals(java.util.Arrays.asList("Low cell voltage", "Heater fault"), data.warnings);
+    assertEquals(java.util.Collections.singletonList("Cell over-voltage"), data.problems);
+    assertEquals(-1, data.soh);
+    assertEquals(-1, AntBms.decodeLegacy(hex(ProtocolTest.OLD14)).soh);
+  }
+
   @Test public void dischargingPackOfTwentyTwoCells() {
     AntBms.Data d = decoded(T1, false, 50.88f, 2.1f, 10, 22, 2.19f, 2.338f);
     assertEquals(106f, d.powerW, 0.5f);

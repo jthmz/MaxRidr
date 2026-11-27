@@ -79,6 +79,21 @@ public class ProtocolTest {
     assertEquals(0x4D, fd.raw(Fardriver.param("low_line"))); assertEquals(0x66, fd.raw(Fardriver.param("mid_line")));
     assertEquals("130 A", Fardriver.param("line").format(fd.raw(Fardriver.param("line"))));
   }
+  @Test public void legacyReconnectWaitsForNewVoltage() {
+    Fardriver fd = new Fardriver();
+    byte[] voltage = hex("aa0102e4000000000000000000000191");
+    byte[] phase = hex("aa0200000000000000000000000000ac");
+    for (int i = 0; i < 3; i++) assertTrue(fd.feed(voltage));
+    assertEquals(74f, fd.live().volts, 0f);
+    fd.reset();
+    for (int i = 0; i < 3; i++) assertTrue(fd.feed(phase));
+    assertTrue(fd.isLegacy());
+    assertNull(fd.live());
+    assertTrue(fd.feed(voltage));
+    assertEquals(-1, fd.live().soc);
+    assertEquals(Integer.MIN_VALUE, fd.live().motorTempC);
+  }
+
   @Test public void fardriverFrames() {
     // Known-good frames from the sources.
     Fardriver fd = new Fardriver();

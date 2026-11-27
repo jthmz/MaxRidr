@@ -166,7 +166,8 @@ final class Gemini {
                             + " cell spread %d mV, %.1f Ah remaining.",
                     b.soc, b.volts, b.amps, b.cellVolts.length,
                     Math.round(b.deltaCellV() * 1000), b.remainingAh));
-            if (b.hasProblem()) sb.append(" BMS reports: ").append(b.problems).append('.');
+            if (!b.warnings.isEmpty()) sb.append(" BMS warnings: ").append(b.warnings).append('.');
+            if (b.hasProblem()) sb.append(" BMS protections: ").append(b.problems).append('.');
         }
         Fardriver.Live l = bike.controller();
         if (l != null) {

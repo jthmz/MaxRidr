@@ -58,7 +58,7 @@ final class Fardriver {
     private int legacyRun;
     private int currentRun;
     private long goodFrames;
-    private final Live legacyLive = new Live();
+    private Live legacyLive = new Live();
     private int legacyRawRpm;
     private int legacyPoles;
     /** Every fault bit seen in any frame since it was last cleared. */
@@ -71,6 +71,7 @@ final class Fardriver {
         legacy = false;
         legacyRun = 0;
         currentRun = 0;
+        legacyLive = new Live();
         legacyRawRpm = 0;
         legacyPoles = 0;
         faultLatch = 0;
@@ -279,9 +280,9 @@ final class Fardriver {
         float amps;
         float phaseAmps;
         float throttleVolts;
-        int mosfetTempC;
-        int motorTempC;
-        int soc;
+        int mosfetTempC = Integer.MIN_VALUE;
+        int motorTempC = Integer.MIN_VALUE;
+        int soc = -1;
         /** Fault bits 0-14; zero means healthy. */
         int faults;
         boolean brake;
