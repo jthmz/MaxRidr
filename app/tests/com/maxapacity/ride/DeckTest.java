@@ -16,6 +16,10 @@ import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.SequenceInputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -96,6 +100,86 @@ public class DeckTest {
       try (java.util.stream.Stream<java.nio.file.Path> paths = Files.walk(root.toPath())) {
         assertArrayEquals(bytes, Files.readAllBytes(paths.filter(path ->
                 path.getFileName().toString().equals(item.name)).findFirst().get()));
+      }
+    }
+  }
+
+  @Test public void twoRidesReachPhoneInboxOnceAfterWifiDropsMidUpload() throws Exception {
+    List<String> names = seedRides(2);
+    FakeDeck.onWifi(c);
+    Deck.usb = "127.0.0.1:1";
+    java.util.concurrent.atomic.AtomicBoolean offline = new java.util.concurrent.atomic.AtomicBoolean();
+    java.util.Map<String,Integer> puts = new java.util.concurrent.ConcurrentHashMap<>();
+    try (ServerSocket server = new ServerSocket(0, 8, InetAddress.getLoopbackAddress())) {
+      Thread receiver = new Thread(() -> {
+        try {
+          while (!server.isClosed()) {
+            try (Socket peer = server.accept()) {
+              if (offline.get()) continue;
+              InputStream body = peer.getInputStream();
+              ByteArrayOutputStream head = new ByteArrayOutputStream();
+              int tail = 0;
+              while (head.size() < 16384 && tail != 0x0d0a0d0a) {
+                int b = body.read();
+                if (b < 0) break;
+                head.write(b);
+                tail = (tail << 8) | b;
+              }
+              String first = head.toString("UTF-8").split("\r\n")[0];
+              if (first.startsWith("PUT ")) {
+                String name = android.net.Uri.parse(first.split(" ")[1]).getQueryParameter("name");
+                int attempt = puts.merge(name, 1, Integer::sum);
+                if (name.equals(names.get(1)) && attempt == 1) {
+                  int half = (int) new File(RideStore.dir(c), name).length() / 2;
+                  byte[] partial = new byte[half];
+                  new java.io.DataInputStream(body).readFully(partial);
+                  body = new ByteArrayInputStream(partial);
+                  peer.close();
+                  offline.set(true);
+                }
+              }
+              InputStream request = new SequenceInputStream(new ByteArrayInputStream(head.toByteArray()), body);
+              PhoneDeckRequest.handle(c, new Socket() {
+                @Override public InputStream getInputStream() { return request; }
+                @Override public OutputStream getOutputStream() throws IOException {
+                  return peer.isClosed() ? new ByteArrayOutputStream() : peer.getOutputStream();
+                }
+                @Override public void setSoTimeout(int ms) throws java.net.SocketException {
+                  if (!peer.isClosed()) peer.setSoTimeout(ms);
+                }
+              });
+            }
+          }
+        } catch (IOException closed) { /* The fixture closes its listener at teardown. */ }
+      });
+      receiver.setDaemon(true);
+      receiver.start();
+      Deck d = Deck.start(c);
+      d.useAddress("127.0.0.1:" + server.getLocalPort(), (ok, message) -> {});
+      until("home Deck discovery", () -> d.state() == Deck.FOUND);
+      d.pair(PhoneDeck.newCode(), (ok, message) -> {});
+      until("one acknowledged ride and a dropped upload", () -> offline.get() && onMac() == 1);
+      assertEquals(1, DeckInbox.load(c).size());
+      assertEquals(1, d.ridesWaiting());
+      offline.set(false);
+      ShadowLooper.idleMainLooper(25, TimeUnit.SECONDS);
+      d.refresh();
+      until("automatic retry after reconnect", () -> onMac() == 2);
+      assertEquals(0, d.ridesWaiting());
+      assertEquals(true, offload(d)[0]);
+      List<DeckInbox.Ride> received = DeckInbox.load(c);
+      assertEquals(2, received.size());
+      for (int i = 0; i < 2; i++) {
+        String name = names.get(i);
+        assertEquals(name, received.get(i).stats.getString("file"));
+        assertArrayEquals(Files.readAllBytes(new File(RideStore.dir(c), name).toPath()),
+                Files.readAllBytes(received.get(i).route.toPath()));
+        assertEquals(Integer.valueOf(i + 1), puts.get(name));
+        assertEquals(Integer.valueOf(1), puts.get(name.replace(".gpx", ".json")));
+      }
+      try (java.util.stream.Stream<java.nio.file.Path> paths =
+              Files.walk(c.getExternalFilesDir("Received rides").toPath())) {
+        assertEquals(4L, paths.filter(Files::isRegularFile).count());
       }
     }
   }

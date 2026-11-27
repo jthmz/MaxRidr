@@ -263,6 +263,7 @@ final class DeckView extends Panel {
         boolean busy = d.state() == Deck.LOOKING || d.searching();
         status.set(!d.onNetwork() ? "NO WI-FI" : busy ? "SEARCHING" : "NOT FOUND", Ui.TEXT_3);
         content.removeAllViews();
+        if (d.everLinked()) syncCard(d);
         role("Make this phone my Deck", "Leave this phone at home to receive rides over Wi-Fi.",
                 Icons.MONITOR, this::startReceiver);
         role("Connect to my Deck", "Send rides from this phone when you get home.",
@@ -296,6 +297,78 @@ final class DeckView extends Panel {
         else restart();
     };
     private String receiverText = "";
+    private java.util.List<DeckInbox.Ride> inbox = java.util.Collections.emptyList();
+    private long inboxRevision = -1;
+    private boolean loadingInbox;
+    private java.util.List<double[]> preview = java.util.Collections.emptyList();
+
+    private void loadInbox() {
+        long revision = PhoneDeckRequest.revision();
+        if (loadingInbox || inboxRevision == revision) return;
+        loadingInbox = true;
+        Context c = getContext().getApplicationContext();
+        io.execute(() -> {
+            java.util.List<DeckInbox.Ride> entries = DeckInbox.load(c);
+            java.util.List<double[]> track = entries.isEmpty() ? java.util.Collections.emptyList()
+                    : RideDetailPanel.readTrack(entries.get(0).route);
+            main.post(() -> {
+                loadingInbox = false;
+                inboxRevision = revision;
+                inbox = entries;
+                preview = track;
+                receiverText = "";
+                if (isOpen() && isShown() && PhoneDeck.running && hasWindowFocus()) showReceiver();
+            });
+        });
+    }
+
+    private static String time(Context c, long when) {
+        return android.text.format.DateUtils.formatDateTime(c, when,
+                android.text.format.DateUtils.FORMAT_SHOW_TIME | android.text.format.DateUtils.FORMAT_SHOW_DATE);
+    }
+
+    private void syncCard(Deck d) {
+        Context c = getContext();
+        LinearLayout card = Ui.card(c);
+        card.addView(Ui.label(c, "AUTO-SYNC"));
+        TextView sync = Ui.title(c, d.syncStatus());
+        sync.setSingleLine(false);
+        card.addView(sync, Ui.top(c, Ui.matchWrap(), 8));
+        if (d.lastSync() > 0) card.addView(Ui.small(c, "Last synced " + time(c, d.lastSync()), Ui.TEXT_2));
+        if (d.ridesWaiting() > 0) {
+            View retry = Ui.button(c, "Retry sync", Icons.REFRESH_CW, Ui.SECONDARY);
+            retry.setOnClickListener(v -> d.offload((ok, why) -> host.say(ok ? "Everything synced"
+                    : why == null ? "Waiting for your home Deck" : why)));
+            card.addView(retry, Ui.top(c, Ui.matchWrap(), 12));
+        }
+        content.addView(card, Ui.matchWrap());
+    }
+
+    private void inboxCards() {
+        Context c = getContext();
+        content.addView(Ui.label(c, "RIDE INBOX  ·  " + inbox.size()), Ui.top(c, Ui.matchWrap(), 20));
+        if (inbox.isEmpty()) {
+            content.addView(Ui.body(c, loadingInbox ? "Loading rides…" : "Completed rides appear here when your riding phone comes home.",
+                    Ui.TEXT_2), Ui.top(c, Ui.matchWrap(), 8));
+        }
+        boolean first = true;
+        for (DeckInbox.Ride ride : inbox) {
+            JSONObject r = ride.stats;
+            LinearLayout card = Ui.card(c);
+            card.setBackground(Ui.pressable(c, Ui.SURFACE, Ui.HAIRLINE, 16));
+            card.addView(Ui.label(c, time(c, r.optLong("start"))));
+            card.addView(Ui.title(c, Units.distance(c, r.optDouble("distanceM")) + " " + Units.distanceLabel(c)),
+                    Ui.top(c, Ui.matchWrap(), 8));
+            card.addView(Ui.small(c, ride.source + "  ·  " + Units.duration(r.optLong("movingMs")) + " moving", Ui.TEXT_2));
+            if (first && preview.size() >= 2) {
+                card.addView(new RideDetailPanel.RouteView(c, preview),
+                        Ui.top(c, new LinearLayout.LayoutParams(-1, dp(116)), 12));
+            }
+            first = false;
+            card.setOnClickListener(v -> host.showReceivedRide(ride));
+            content.addView(card, Ui.top(c, Ui.matchWrap(), 10));
+        }
+    }
 
     private void showReceiver() {
         Context c = getContext();
@@ -303,21 +376,40 @@ final class DeckView extends Panel {
         String state = ready ? "Ready to receive" : PhoneDeck.status;
         status.set(state.toUpperCase(Locale.US), ready ? Ui.OK : Ui.WARN);
         long last = c.getSharedPreferences("home-deck", 0).getLong("last-ride-at", 0);
-        String detail = "Pair your riding phone to receive rides on home Wi-Fi.";
-        if (last > 0) {
+        loadInbox();
+        String detail = ready ? "Listening for your riding phone" : state;
+        String receipt = "";
+        if (last > 0 && inboxRevision >= 0) {
             String when = android.text.format.DateUtils.formatDateTime(c, last,
                     android.text.format.DateUtils.FORMAT_SHOW_TIME
                     | (android.text.format.DateUtils.isToday(last) ? 0 : android.text.format.DateUtils.FORMAT_SHOW_DATE));
-            detail = "Last ride received at " + when;
+            if (ready) detail = inbox.size() + (inbox.size() == 1 ? " ride home" : " rides home");
+            receipt = "Last received " + when;
         }
-        if (ready && PhoneDeckRequest.receiving()) detail = "Receiving ride…";
-        if (!detail.equals(receiverText)) {
-            receiverText = detail;
+        String progress = PhoneDeckRequest.syncProgress();
+        if (ready && !progress.isEmpty()) detail = progress;
+        String display = detail + receipt;
+        if (!display.equals(receiverText)) {
+            receiverText = display;
             content.removeAllViews();
-            content.addView(Ui.emptyState(c, Icons.MONITOR, "Home Deck", detail,
-                    "Pair a riding phone", Ui.PRIMARY, v -> pairingSheet()));
+            LinearLayout header = Ui.card(c);
+            android.widget.ImageView logo = new android.widget.ImageView(c);
+            logo.setImageResource(R.drawable.maxapacity_lockup);
+            logo.setScaleType(android.widget.ImageView.ScaleType.FIT_START);
+            logo.setContentDescription("MAXAPACITY");
+            header.addView(logo, new LinearLayout.LayoutParams(dp(150), dp(42)));
+            header.addView(Ui.label(c, "AUTO-SYNC"), Ui.top(c, Ui.matchWrap(), 12));
+            TextView headline = Ui.title(c, detail);
+            headline.setSingleLine(false);
+            header.addView(headline, Ui.top(c, Ui.matchWrap(), 8));
+            if (!receipt.isEmpty()) header.addView(Ui.small(c, receipt, Ui.TEXT_2), Ui.top(c, Ui.matchWrap(), 4));
+            View pair = Ui.button(c, "Pair a riding phone", Icons.LINK, Ui.SECONDARY);
+            pair.setOnClickListener(v -> pairingSheet());
+            header.addView(pair, Ui.top(c, Ui.matchWrap(), 12));
+            content.addView(header, Ui.matchWrap());
+            inboxCards();
             View stop = Ui.button(c, "Stop receiving", Icons.UNLINK, Ui.SECONDARY);
-            content.addView(stop, Ui.matchWrap());
+            content.addView(stop, Ui.top(c, Ui.matchWrap(), 20));
             stop.setOnClickListener(v -> {
                 PhoneDeck.enable(c, false);
                 main.removeCallbacks(receiverRefresh);
@@ -388,16 +480,18 @@ final class DeckView extends Panel {
 
         // Polled every two seconds: rebuild only when something actually changed,
         // so the screen does not flicker or lose its scroll position.
-        String now = s.toString();
+        Deck deck = Deck.get(getContext());
+        String now = s.toString() + deck.syncStatus() + deck.lastSync();
         if (now.equals(shownState)) return;
         shownState = now;
 
         content.removeAllViews();
         if (s.optBoolean("phoneDeck")) {
-            content.addView(Ui.body(getContext(), "Your paired home phone receives saved rides on this Wi-Fi.", Ui.TEXT));
+            syncCard(deck);
             return;
         }
         addFullDeck();
+        syncCard(deck);
         addChannel(s.optJSONObject("yt"));
         addPipeline(s.optJSONObject("board"));
         addClaude(s.optJSONArray("claude"));

@@ -73,7 +73,10 @@ on the riding phone and enter the six digits. Both phones use the same home
 Wi-Fi. The receiver can stay in the background and receives the GPX and JSON
 files for saved rides when the rider comes home. The files are under
 `Android/data/com.maxapacity.ride/files/Received rides/` on the home phone.
-Open Deck there to see when the last complete ride arrived or stop receiving.
+Open **Deck** on the riding phone to see queued rides, transfer progress and the last sync.
+On the home phone, the **Ride inbox** shows completed rides newest first. Tap a ride
+for its route and recorded numbers. If Wi-Fi drops, the next sync checks which files
+arrived and retries the missing ones. Each completed ride appears once.
 
 ### Using the Mac Deck
 

@@ -395,6 +395,11 @@ public final class RideActivity extends Activity
     }
 
     @Override
+    public void showReceivedRide(DeckInbox.Ride ride) {
+        rideDetail.showReceived(ride);
+    }
+
+    @Override
     public void ridesChanged() {
         if (rides.isOpen()) rides.refresh();
     }
@@ -1393,11 +1398,11 @@ public final class RideActivity extends Activity
         settings = new SettingsPanel(this, this);
         panels.add(drawer);
         panels.add(rides);
-        panels.add(rideDetail);
         panels.add(copilot);
         panels.add(bike);
         panels.add(tune);
         panels.add(deck);
+        panels.add(rideDetail);
         panels.add(fullDeck);
         panels.add(settings);
         for (Panel p : panels) {

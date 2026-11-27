@@ -15,7 +15,9 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import org.xmlpull.v1.XmlPullParser;
+import org.xmlpull.v1.XmlPullParserException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -24,20 +26,16 @@ import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /** One saved ride: its route, its numbers, and what can be done with it. */
 final class RideDetailPanel extends Panel {
 
     private static final ExecutorService IO = Executors.newSingleThreadExecutor();
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
-    private static final Pattern TRKPT =
-            Pattern.compile("<trkpt lat=\"(-?[0-9.]+)\" lon=\"(-?[0-9.]+)\"");
-
     private final Host host;
     private final LinearLayout content;
     private JSONObject ride;
+    private DeckInbox.Ride received;
     private int generation;
 
     RideDetailPanel(Context context, Host host) {
@@ -47,7 +45,15 @@ final class RideDetailPanel extends Panel {
     }
 
     void show(JSONObject r) {
+        received = null;
         ride = r;
+        build();
+        open();
+    }
+
+    void showReceived(DeckInbox.Ride entry) {
+        received = entry;
+        ride = entry.stats;
         build();
         open();
     }
@@ -60,7 +66,8 @@ final class RideDetailPanel extends Panel {
         titleView.setText(new SimpleDateFormat("EEE d MMM, HH:mm", Locale.getDefault())
                 .format(new Date(r.optLong("start"))));
         String strava = r.optString("strava");
-        if (RideStore.STRAVA_UPLOADED.equals(strava)) status.set("ON STRAVA", Ui.OK);
+        if (received != null) status.set("HOME DECK", Ui.OK);
+        else if (RideStore.STRAVA_UPLOADED.equals(strava)) status.set("ON STRAVA", Ui.OK);
         else if (RideStore.STRAVA_PENDING.equals(strava)) status.set("SENDING", Ui.WARN);
         else if (RideStore.STRAVA_FAILED.equals(strava)) status.set("REJECTED", Ui.DANGER);
         else status.set("", Ui.TEXT_3);
@@ -73,7 +80,7 @@ final class RideDetailPanel extends Panel {
         routeCard.addView(placeholder);
         content.addView(routeCard, Ui.matchWrap());
         final int gen = ++generation;
-        final File gpx = new File(RideStore.dir(c), file);
+        final File gpx = received != null ? received.route : new File(RideStore.dir(c), file);
         IO.execute(() -> {
             final List<double[]> points = readTrack(gpx);
             MAIN.post(() -> {
@@ -124,6 +131,11 @@ final class RideDetailPanel extends Panel {
         if (r.has("leanLeft")) {
             addMeta(meta, "Max lean", "L " + r.optInt("leanLeft") + "\u00B0   R "
                     + r.optInt("leanRight") + "\u00B0", true);
+        }
+        if (received != null) {
+            addMeta(meta, "From", received.source, true);
+            content.addView(meta, Ui.top(c, Ui.matchWrap(), 12));
+            return;
         }
         addMeta(meta, "Strava", RidesPanel.stravaLine(r), true);
         if (Health.isOn(c) || Health.SENT.equals(r.optString("health"))) {
@@ -250,14 +262,29 @@ final class RideDetailPanel extends Panel {
     /** Latitude / longitude pairs from a GPX file; empty if it cannot be read. */
     static List<double[]> readTrack(File gpx) {
         List<double[]> points = new ArrayList<>();
-        try {
-            String text = new String(Files.readAllBytes(gpx.toPath()), StandardCharsets.UTF_8);
-            Matcher m = TRKPT.matcher(text);
-            while (m.find()) {
-                points.add(new double[] {
-                        Double.parseDouble(m.group(1)), Double.parseDouble(m.group(2))});
+        try (InputStream input = Files.newInputStream(gpx.toPath())) {
+            XmlPullParser xml = android.util.Xml.newPullParser();
+            xml.setInput(input, null);
+            long index = 0, stride = 1;
+            double[] last = null;
+            for (int event = xml.next(); event != XmlPullParser.END_DOCUMENT; event = xml.next()) {
+                if (event != XmlPullParser.START_TAG || !"trkpt".equals(xml.getName())) continue;
+                String lat = xml.getAttributeValue(null, "lat");
+                String lon = xml.getAttributeValue(null, "lon");
+                if (lat == null || lon == null) continue;
+                double y = Double.parseDouble(lat), x = Double.parseDouble(lon);
+                if (!(Math.abs(y) <= 90 && Math.abs(x) <= 180)) continue;
+                last = new double[]{y, x};
+                if (index++ % stride != 0) continue;
+                points.add(last);
+                if (points.size() == 4096) {
+                    for (int i = 0; i < 2048; i++) points.set(i, points.get(i * 2));
+                    points.subList(2048, 4096).clear();
+                    stride *= 2;
+                }
             }
-        } catch (IOException | NumberFormatException e) {
+            if (last != null && last != points.get(points.size() - 1)) points.add(last);
+        } catch (IOException | XmlPullParserException | NumberFormatException e) {
             points.clear();
         }
         return points;

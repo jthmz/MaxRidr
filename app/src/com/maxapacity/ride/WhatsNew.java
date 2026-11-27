@@ -66,6 +66,10 @@ final class WhatsNew {
 
     /** Newest first. */
     static final Note[] NOTES = {
+        new Note(9, "November 2026",
+                new Item(Icons.MONITOR, "Your rides made it home",
+                        "Open Deck on either phone to see auto-sync. On your home phone, tap a ride"
+                                + " in the inbox to see its route and recorded stats.")),
         new Note(8, "November 2026",
                 new Item(Icons.BATTERY_MEDIUM, "Battery warnings and protections",
                         "Bike shows ANT warnings separately from active protections, and battery health"

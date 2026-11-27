@@ -64,6 +64,8 @@ interface Host {
 
     void showRide(JSONObject ride);
 
+    void showReceivedRide(DeckInbox.Ride ride);
+
     /** Starts recording a ride, asking to use location first if that has not been allowed. */
     void beginRide();
 

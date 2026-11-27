@@ -130,6 +130,7 @@ final class Deck {
     private boolean lookAgain;
     private boolean sending;
     private long lastSendAt;
+    private volatile String progress = "";
     private String lastProblem = "";
     private String problem = "";
 
@@ -223,8 +224,28 @@ final class Deck {
 
     /** How many rides are still only on this phone. */
     int ridesWaiting() {
-        return unsent().size();
+        int count = 0;
+        JSONArray rides = RideStore.load(app);
+        for (int i = 0; i < rides.length(); i++) {
+            JSONObject r = rides.optJSONObject(i);
+            if (r != null && !RideStore.ON_MAC.equals(r.optString("deck"))
+                    && new File(RideStore.dir(app), r.optString("file")).isFile()) count++;
+        }
+        return count;
     }
+
+    String syncStatus() {
+        if (sending) return progress;
+        int n = ridesWaiting();
+        if (n == 0) return "Everything synced";
+        String queued = n + (n == 1 ? " ride" : " rides");
+        if (state != LINKED) return queued + " waiting for your home Deck";
+        if (!uploads) return queued + " queued · Deck uploads are off";
+        if (!problem.isEmpty()) return queued + " queued · Sync interrupted";
+        return queued + " ready to sync";
+    }
+
+    long lastSync() { return prefs.getLong("deck_last_sync", 0); }
 
     /** This phone's own address on that network, such as "192.168.1.57", or empty. */
     String phoneAddress() {
@@ -843,7 +864,7 @@ final class Deck {
         try {
             s.put("app", "MAXAPACITY Ride");
             String[] keep = {"file", "start", "distanceM", "movingMs", "elapsedMs", "topMps",
-                    "climbM", "stops", "leanLeft", "leanRight"};
+                    "climbM", "stops", "leanLeft", "leanRight", RideStore.BIKE, "bikeName"};
             for (String k : keep) {
                 if (ride.has(k)) s.put(k, ride.get(k));
             }
@@ -908,17 +929,21 @@ final class Deck {
             sent(true, null);
             return;
         }
+        progress = "Checking " + work.size() + (work.size() == 1 ? " ride" : " rides");
         sending = true;
+        changed();
         final String to = address;
         final String key = requestKey();
         final String device = device();
         io.execute(() -> {
             List<DeckLink.Item> items = new ArrayList<>();
+            int index = 0;
             for (final Work w : work) {
+                final String label = "Sending ride " + (++index) + " of " + work.size();
                 items.add(new DeckLink.Item(w.file, w.gpx.length(), w.mtimeSec, "ride",
-                        () -> new FileInputStream(w.gpx)));
+                        () -> { progress = label; return new FileInputStream(w.gpx); }));
                 items.add(new DeckLink.Item(w.summaryName, w.summary.length, w.mtimeSec, "ride",
-                        () -> new ByteArrayInputStream(w.summary)));
+                        () -> { progress = label; return new ByteArrayInputStream(w.summary); }));
             }
             final DeckLink.Outcome o = DeckLink.send(to, key, device, items);
             main.post(() -> {
@@ -931,6 +956,7 @@ final class Deck {
                         arrived++;
                     }
                 }
+                if (arrived > 0) prefs.edit().putLong("deck_last_sync", System.currentTimeMillis()).apply();
                 String trouble = "";
                 if (o.stopped != null) {
                     trouble = o.stopped;
